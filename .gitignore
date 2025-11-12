@@ -1,0 +1,22 @@
+# venvs
+backend/.venv/
+frontend/.venv/
+
+# Python cache / compiled
+**/__pycache__/
+**/*.pyc
+
+# Streamlit outputs
+frontend/runs/
+frontend/runs_uploads/
+frontend/.streamlit/
+
+# Preprocessed data
+data_preprocessed/
+
+# Local path cache
+frontend/.tg_paths.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
