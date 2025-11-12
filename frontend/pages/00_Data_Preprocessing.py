@@ -61,8 +61,9 @@ if st.button("▶️ Run preprocessing", type="primary"):
         st.error("Upload a file or enter a path.")
         st.stop()
 
-    run_id, run_dir, out_dir = new_run_folders("run_PREPROC_" + Path(input_path).stem)
-    pp_out_root = str((Path(backend_dir).parent / "data_preprocessed").resolve())
+    run_id, run_dir, out_dir = new_run_folders()
+    repo_root = Path(backend_dir).parent       # backend/.. = repo root
+    pp_out_root = str((repo_root / "data_preprocessed").resolve())
 
     env = {
         "PP_INPUT_PATH": input_path,
@@ -71,10 +72,13 @@ if st.button("▶️ Run preprocessing", type="primary"):
         "PP_VARIANT": variant,
         "PP_BUSINESS_ZERO_FLOWS": str(business_zero).lower(),
         "PP_WEEKDAY_WEEKS": str(int(weekday_weeks)),
-        "PP_OUT_ROOT": pp_out_root,
+        "PP_OUT_ROOT": pp_out_root,               # <- HERE
         "PP_RUN_OUTPUTS": str(out_dir),
         "PP_EXPECTED_CSV": expected_csv.strip(),
         "PP_SAVE_PARQUET": str(save_parquet).lower(),
+        # optional:
+        "PP_SHEET_NAME": "",
+        "PP_HEADER_ROW": "",
     }
 
     rc, elapsed, log_file, _ = launch_backend(
