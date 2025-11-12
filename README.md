@@ -3,7 +3,7 @@
 A production-grade sandbox for testing multiple forecasting model families on Treasury time-series, including Statistical, Machine Learning, Deep Learning, and Quantile models.  
 Built for Georgia Treasury operations to support modernized cash-flow forecasting, model comparison, and capacity building.
 
-## 📁 Repository Overview
+## Repository Overview
 ```
 georgia-treasury-prototype/
 │
@@ -42,7 +42,7 @@ georgia-treasury-prototype/
 
 ---
 
-## 🧩 Model Families Supported
+## Model Families Supported
 
 | Family | Description |
 |-------|-------------|
@@ -60,7 +60,7 @@ Each experiment produces:
 
 ---
 
-## 🚀 1. Requirements (Beginner-Friendly)
+## 1. Requirements (Beginner-Friendly)
 
 Treasury staff do **not** need Python knowledge. The setup scripts handle everything.
 
@@ -92,7 +92,7 @@ Python is still required.
 
 ---
 
-## ⚙️ 2. Installation (Windows)
+## 2. Installation (Windows)
 
 This installation is fully automatic.
 
@@ -114,11 +114,11 @@ scripts\run_app_windows.bat
 ```
 
 App opens at:  
-👉 http://localhost:8501
+http://localhost:8501
 
 ---
 
-## 🧪 3. Installation (macOS / Linux)
+## 3. Installation (macOS / Linux)
 
 ```
 cd ~/Documents
@@ -130,7 +130,7 @@ cd georgia-treasury-prototype
 
 ---
 
-## 🖥️ 4. Using the Streamlit App
+## 4. Using the Streamlit App
 
 ### **4.1 Overview Page**
 - Quick links  
@@ -172,7 +172,7 @@ Outputs saved in:
 
 ---
 
-## 📊 5. Example Experiments (UI)
+## 5. Example Experiments (UI)
 
 ### **Example 1 — A · Statistical (ETS)**
 Target: Revenues  
@@ -226,7 +226,7 @@ Outputs appear in `frontend/runs/`.
 
 ---
 
-## 🗂️ 7. Accessing Run Outputs
+## 7. Accessing Run Outputs
 
 Each run contains:
 ```
@@ -241,7 +241,7 @@ outputs/
 
 ---
 
-## 🩺 8. Troubleshooting
+## 8. Troubleshooting
 
 ### Backend Python missing  
 Re-run `scripts/setup_windows.bat`.
@@ -257,7 +257,7 @@ Use CPU wheel from: https://pytorch.org/get-started/locally/
 
 ---
 
-## 🎯 Summary
+## Summary
 This prototype provides:
 
 - Fully automated installation  
