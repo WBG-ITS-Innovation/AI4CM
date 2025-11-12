@@ -1,13 +1,11 @@
-# utils_frontend.py — shared helpers (paths, runs, uploads, zipping) • WINDOWS-SAFE
+# frontend/utils_frontend.py
 from __future__ import annotations
 import io, json, os, re
 from pathlib import Path
 import zipfile
 
-# IMPORTANT: utils_frontend.py sits in the frontend root.
-# Use .parent (NOT parents[1]) so RUNS/UPLOADS live under the frontend folder.
-APPROOT   = Path(__file__).resolve().parent         # …/TreasuryGeorgiaFrontEnd
-RUNS_ROOT = APPROOT / "runs"
+APPROOT      = Path(__file__).resolve().parent      # frontend/
+RUNS_ROOT    = APPROOT / "runs"
 UPLOADS_ROOT = APPROOT / "runs_uploads"
 RUNS_ROOT.mkdir(parents=True, exist_ok=True)
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -22,13 +20,6 @@ RUNNER_SENTINELS = {
     "run_preprocess.py",
 }
 
-def _fix_venv_backslash(p: str) -> str:
-    """Windows convenience: turn ...BackEnd.venv... into ...BackEnd\.venv..."""
-    if not p:
-        return p
-    fixed = re.sub(r"(BackEnd)(\.venv)", r"\1\\\.venv", p)
-    return fixed.replace("\\\\", "\\")
-
 def _is_backend_dir(d: Path) -> bool:
     try:
         if not d.exists() or not d.is_dir():
@@ -39,47 +30,39 @@ def _is_backend_dir(d: Path) -> bool:
         return False
 
 def _auto_guess_backend_dir() -> str:
-    """Prefer …/TreasuryGeorgiaBackEnd alongside this frontend; else shallow scan."""
-    sib = APPROOT.parent / "TreasuryGeorgiaBackEnd"
+    # Prefer monorepo sibling "backend"
+    sib = APPROOT.parent / "backend"
     if _is_backend_dir(sib):
         return str(sib.resolve())
-    # shallow scan 2 levels up for any folder that looks like the backend
-    for root in [APPROOT.parent, APPROOT.parent.parent]:
-        for cand in root.glob("**/TreasuryGeorgiaBackEnd"):
-            if _is_backend_dir(cand):
-                return str(cand.resolve())
+    # Back-compat: sibling "TreasuryGeorgiaBackEnd"
+    legacy = APPROOT.parent / "TreasuryGeorgiaBackEnd"
+    if _is_backend_dir(legacy):
+        return str(legacy.resolve())
     return ""
 
 def _auto_guess_python(backend_dir: str) -> str:
-    """Prefer the backend .venv python. Never silently fall back to the frontend venv."""
     if backend_dir:
         b = Path(backend_dir)
         for c in (b/".venv"/"Scripts"/"python.exe", b/".venv"/"bin"/"python"):
-            try:
-                if c.exists():
-                    return str(c.resolve())
-            except Exception:
-                pass
-    # If no backend venv, return empty and let the UI show a clear error
-    return ""
+            if c.exists():
+                return str(c.resolve())
+    return ""  # keep empty so UI can show a clear error
 
 def load_paths() -> dict:
-    """Load saved paths (if any). If invalid or missing, AUTODETECT the backend dir + its .venv python."""
-    data = {"backend_python": "", "backend_dir": ""}
+    # 1) Prefer saved JSON
+    bp = ""; bd = ""
     if PATHS_FILE.exists():
         try:
-            data.update(json.loads(PATHS_FILE.read_text(encoding="utf-8")))
+            data = json.loads(PATHS_FILE.read_text(encoding="utf-8"))
+            bp = data.get("backend_python","")
+            bd = data.get("backend_dir","")
         except Exception:
             pass
-
-    bd = data.get("backend_dir", "")
+    # 2) Autodetect if missing/invalid
     if not bd or not _is_backend_dir(Path(bd)):
         bd = _auto_guess_backend_dir()
-
-    bp = _fix_venv_backslash(data.get("backend_python", ""))
     if not bp or not Path(bp).exists():
         bp = _auto_guess_python(bd)
-
     return {"backend_python": bp, "backend_dir": bd}
 
 def save_paths(backend_python: str, backend_dir: str) -> None:
@@ -89,15 +72,11 @@ def save_paths(backend_python: str, backend_dir: str) -> None:
     )
 
 def new_run_folders(run_name: str | None = None):
-    """Create runs under the FRONTEND repo. If a name is given, use it; else generate a slug."""
     from uuid import uuid4
     if not run_name:
         run_id = f"run_{uuid4().hex[:8]}"
     else:
-        # sanitize for Windows
-        run_id = re.sub(r"[^A-Za-z0-9._-]+", "_", run_name)[:160]
-        if not run_id:
-            run_id = f"run_{uuid4().hex[:8]}"
+        run_id = re.sub(r"[^A-Za-z0-9._-]+", "_", run_name)[:160] or f"run_{uuid4().hex[:8]}"
     run_dir = RUNS_ROOT / run_id
     out_dir = run_dir / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
