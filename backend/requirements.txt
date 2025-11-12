@@ -1,0 +1,40 @@
+###############################################################################
+# Georgia Treasury Backend — Requirements
+# This file is meant for the BACKEND venv only:
+#   C:\Users\wb608081\Documents\TreasuryGeorgiaBackEnd\.venv
+###############################################################################
+
+# ---- Web demo / Dash app (optional, safe to keep) ----
+dash==2.17.1
+dash-bootstrap-components==1.6.0
+plotly>=6.4.0
+
+# ---- Core numerics ----
+numpy>=2.3.0
+pandas>=2.3.0
+scipy>=1.16.0
+
+# ---- Classical statistics (A · Statistical) ----
+statsmodels>=0.14.5
+
+# ---- ML stack (B · Machine Learning, E · Quantile) ----
+scikit-learn>=1.5.2
+matplotlib>=3.9
+
+# ---- Gradient-boosted libraries (optional but used if present) ----
+xgboost>=2.1
+lightgbm>=4.5
+
+# ---- Deep Learning (C · DL — PyTorch CPU build) ----
+# NOTE: versions here assume a relatively recent PyTorch CPU wheel.
+# If installation fails, see https://pytorch.org/get-started/locally/
+# and install torch/torchaudio/torchvision manually with their command.
+torch>=2.3.0
+torchaudio>=2.3.0
+torchvision>=0.18.0
+
+# ---- Excel & I/O (Data Pre-processing) ----
+openpyxl>=3.1
+
+# ---- Utilities ----
+diskcache>=5.6
