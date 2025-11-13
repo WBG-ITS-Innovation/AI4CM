@@ -1,6 +1,6 @@
 # Georgia Treasury • Forecast Lab
 
-A production-grade sandbox for testing multiple forecasting model families on Treasury time-series, including Statistical, Machine Learning, Deep Learning, and Quantile models.  
+A local sandbox for testing multiple forecasting model families on Treasury time-series, including Statistical, Machine Learning, Deep Learning, and Quantile models.  
 Built for Georgia Treasury operations to support modernized cash-flow forecasting, model comparison, and capacity building.
 
 ## Repository Overview
