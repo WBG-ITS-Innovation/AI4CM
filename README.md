@@ -1,11 +1,11 @@
-# Georgia Treasury • Forecast Lab
+# Ai4CM Forecast Lab
 
 A local sandbox for testing multiple forecasting model families on Treasury time-series, including Statistical, Machine Learning, Deep Learning, and Quantile models.  
-Built for Georgia Treasury operations to support modernized cash-flow forecasting, model comparison, and capacity building.
+Built to explore modernized cash-flow forecasting, model comparison, and capacity building.
 
 ## Repository Overview
 ```
-georgia-treasury-prototype/
+ai4cm/
 │
 ├── backend/                   # Model pipelines, runners, preprocessing
 │   ├── run_a_stat.py          # A · Statistical
