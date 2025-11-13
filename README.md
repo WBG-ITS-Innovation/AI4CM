@@ -60,8 +60,7 @@ Each experiment produces:
 
 ---
 
-## 1. Requirements (Beginner-Friendly)
-
+## 1. Requirements 
 Treasury staff do **not** need Python knowledge. The setup scripts handle everything.
 
 ### **Option A — Use Git (recommended)**  
@@ -198,7 +197,7 @@ Epochs: 3–20
 
 ---
 
-## 🧵 6. Running Pipelines Directly (Backend CLI)
+## 6. Running Pipelines Directly (Backend CLI)
 
 ### Activate backend environment
 ```
