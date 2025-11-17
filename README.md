@@ -52,11 +52,11 @@ ai4cm/
 | **E · Quantile** | Quantile boosting models outputting P10 / P50 / P90 |
 
 Each experiment produces:
-- ✔ `predictions_long.csv`
-- ✔ `metrics_long.csv`
-- ✔ `leaderboard.csv`
-- ✔ Plots in `plots/`
-- ✔ Config in `artifacts/`
+- `predictions_long.csv`
+- `metrics_long.csv`
+- `leaderboard.csv`
+- Plots in `plots/`
+- Config in `artifacts/`
 
 ---
 
