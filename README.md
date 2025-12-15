@@ -61,8 +61,6 @@ Each experiment produces:
 ---
 
 ## 1. Requirements 
-Treasury staff do **not** need Python knowledge. The setup scripts handle everything.
-
 ### **Option A — Use Git (recommended)**  
 **Install Git (Windows)**  
 Download: https://git-scm.com/download/win  
