@@ -1,4 +1,4 @@
-# Ai4CM Forecast Lab
+# AI4CM Forecast Lab
 
 A local sandbox for testing multiple forecasting model families on Treasury time-series, including Statistical, Machine Learning, Deep Learning, and Quantile models.  
 Built to explore modernized cash-flow forecasting, model comparison, and capacity building.
