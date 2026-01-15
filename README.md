@@ -1,246 +1,253 @@
 # AI4CM Forecast Lab
 
-A local sandbox to preprocess Treasury cash/balance time-series, run forecasting experiments (Stat/ML/DL/Quantile), and review results in a Streamlit UI.
+AI4CM is a local forecasting sandbox for Treasury time-series: upload a dataset, run multiple model families (Statistical, Machine Learning, Deep Learning, Quantile), and compare results in a Streamlit UI.  
+It is designed for hands-on exploration, model comparison, and capacity building.
 
 ---
 
-## What this repo does
+## What this repo does (in one minute)
 
-You can use this repo to:
-
-- turn a raw balance Excel/CSV into a clean daily dataset
-- run forecasting experiments (different model “families”)
-- compare models visually (charts + metrics + leaderboards)
-- keep a full record of each run (log + config + outputs)
-
-The project has two parts:
-
-- **backend/** → preprocessing + forecasting code
-- **frontend/** → Streamlit web app (the UI)
-
-They run in separate Python environments so installs are cleaner and more stable.
+1. **You bring a CSV** (or generate one via the Data Pre-processing tab).
+2. The **Streamlit frontend** helps you pick:
+   - the **target series** to forecast (e.g., revenue, balance, inflows)
+   - the **cadence** (daily/weekly/monthly)
+   - the **forecast horizon** (how far ahead)
+   - the **model family** (A/B/C/E)
+3. The UI launches the selected **backend runner** in a separate Python environment.
+4. Each run produces:
+   - forecasts (`predictions_long.csv`)
+   - evaluation metrics (`metrics_long.csv`, `leaderboard.csv`)
+   - plots and artifacts
+   - a log file (`backend_run.log`)
+5. You browse and download results from **Dashboard** and **History**.
 
 ---
-
 
 ## Repository Overview
+
 ```
-ai4cm/
+AI4CM/
 │
 ├── backend/                   # Model pipelines, runners, preprocessing
 │   ├── run_a_stat.py          # A · Statistical
 │   ├── run_b_ml_univariate.py # B · ML (uni)
 │   ├── run_c_dl_univariate.py # C · DL (uni)
 │   ├── run_e_quantile_*       # E · Quantile
-│   ├── preprocess_data.py     # Excel → Daily data converter
+│   ├── preprocess_data.py     # Excel → Daily data converter (used by UI)
 │   ├── requirements.txt       # Backend dependencies
-│   └── ...                    # Pipelines, utilities, data templates
+│   └── ...                    # Pipelines, utilities, templates
 │
 ├── frontend/                  # Streamlit application
-│   ├── Overview.py            # Landing page
+│   ├── Overview.py            # Landing page (start here)
 │   ├── pages/                 # Lab, Dashboard, History, Preprocessing, Models
-│   ├── utils_frontend.py      # Run folders, backend linking
+│   ├── utils_frontend.py      # Run folders + backend linking
 │   ├── backend_bridge.py      # Launch backend processes
-│   ├── runs/                  # GENERATED: each experiment is saved here
-│   ├── runs_uploads/          # GENERATED: uploaded data files
+│   ├── runs/                  # GENERATED: each experiment saved here
+│   ├── runs_uploads/          # GENERATED: uploaded datasets
 │   ├── requirements.txt       # Frontend dependencies
 │   └── .tg_paths.json         # GENERATED: backend python + directory
 │
-├── scripts/                   # Setup & run scripts
+├── scripts/                   # Setup & run scripts (fastest path)
 │   ├── setup_windows.bat
 │   ├── run_app_windows.bat
 │   ├── setup_unix.sh
 │   ├── run_app_unix.sh
 │   └── verify_backend_env.py
 │
-├── data_preprocessed/         # GENERATED: cleaned daily datasets
+├── data_preprocessed/         # GENERATED: cleaned daily datasets from Excel
 ├── .gitignore
 └── README.md
 ```
 
-> Important: Directories like `.venv/`, `frontend/runs/`, `frontend/runs_uploads/`, `data_preprocessed/`, and `frontend/.tg_paths.json` are generated automatically and should **NOT** be committed to Git.
+> Important: directories like `.venv/`, `frontend/runs/`, `frontend/runs_uploads/`, `data_preprocessed/`, and `frontend/.tg_paths.json` are generated automatically and should **NOT** be committed to Git.
 
 ---
 
 ## Model Families Supported
 
-| Family | Description |
-|-------|-------------|
-| **A · Statistical** | ETS, SARIMAX, STL-ARIMA, Theta, moving-average/weekday baselines |
-| **B · Machine Learning** | Ridge, Lasso, ElasticNet, Random Forest, Extra Trees, HistGBDT, XGBoost, LightGBM |
-| **C · Deep Learning** | LSTM, GRU, TCN, Transformer-style networks (with conformal prediction intervals) |
-| **E · Quantile** | Quantile boosting models outputting P10 / P50 / P90 |
+| Family | What it is | Typical use |
+|---|---|---|
+| **A · Statistical** | ETS, SARIMAX, STL-ARIMA, Theta, simple baselines | Strong, explainable baselines; good first pass |
+| **B · Machine Learning** | Ridge/Lasso/ElasticNet, RandomForest, ExtraTrees, HistGBDT, XGBoost, LightGBM | Uses lag/rolling features; good when signals are nonlinear |
+| **C · Deep Learning** | LSTM, GRU, TCN, Transformer-like nets | Sequence models; useful when enough history exists |
+| **E · Quantile** | Quantile boosting models (P10/P50/P90) | Risk-aware ranges rather than a single point |
 
 Each experiment produces:
 - `predictions_long.csv`
 - `metrics_long.csv`
 - `leaderboard.csv`
-- Plots in `plots/`
-- Config in `artifacts/`
+- plots under `plots/`
+- config + artifacts under `artifacts/`
 
 ---
 
-# Setup overview (3 steps)
+## 1) Prerequisites (install once)
 
-1) Install Python (+ Git if you want the easy “clone” option)  
-2) Get the code (clone or download zip)  
-3) Create 2 environments (backend + frontend) and run Streamlit
+### 1.1 Install Python (macOS + Windows)
 
----
+**Recommended version:** Python **3.11** (3.12 also works).  
+Avoid Python 3.13 unless you know you need it.
 
-# Step 0 — Install the basics
+**Windows**
+1. Download Python from python.org
+2. During installation, check **“Add Python to PATH”**
+3. Verify in PowerShell:
+   ```powershell
+   python --version
+   ```
+   or
+   ```powershell
+   py --version
+   ```
 
-## 0.1 Install Python
+**macOS**
+You have 3 good options:
+- **Option A (easiest):** Install Python 3.11 from python.org
+- **Option B:** Install Homebrew, then `brew install python@3.11`
+- **Option C:** Use conda (Miniconda/Anaconda)
 
-### Windows
-1. Go to: https://www.python.org/downloads/windows/  
-2. Download **Python 3.11.x**  
-3. Run the installer and **check**:
-   - **Add python.exe to PATH**
-4. Finish install
-
-Quick check:
-- Open **Start Menu** → type **PowerShell** → open it
-- Paste:
-```powershell
-python --version
-pip --version
-```
-
-If `python` is “not recognized”, you likely didn’t check “Add to PATH”. Re-run the installer.
-
-### macOS
-1. Go to: https://www.python.org/downloads/macos/  
-2. Download **Python 3.11.x** for macOS  
-3. Install it
-4. Quick check:
-   - Open **Applications → Utilities → Terminal**
-   - Paste:
+Verify in Terminal:
 ```bash
 python3 --version
-pip3 --version
 ```
 
-If your Mac asks to install developer tools, accept. (That installs command-line helpers.)
+### 1.2 Install Git (optional but recommended)
+
+You only need Git if you want to **clone** and later **pull updates**.  
+If you prefer, you can download a ZIP instead (see below).
+
+**Windows**
+- Download Git for Windows, install with defaults.
+- Verify:
+  ```powershell
+  git --version
+  ```
+
+**macOS**
+- Option A: Install Xcode Command Line Tools (includes git):
+  ```bash
+  xcode-select --install
+  ```
+- Verify:
+  ```bash
+  git --version
+  ```
+
+### 1.3 What is “Terminal” / “PowerShell”?
+
+Some steps below require running commands.
+
+**Windows**
+- Use **PowerShell**:
+  - Start menu → type **PowerShell** → open
+- You can also use “Terminal” (Windows 11), but PowerShell is fine.
+
+**macOS**
+- Use **Terminal**:
+  - Applications → Utilities → **Terminal**
+  - Or Spotlight search: “Terminal”
 
 ---
 
-## 0.2 Install Git (recommended, but optional)
+## 2) Get the code
 
-Git makes it easy to download updates, but you can also use ZIP.
+### Option A — Clone with Git (recommended)
 
-### Windows
-1. Install Git: https://git-scm.com/download/win
-2. Check in PowerShell:
-```powershell
-git --version
-```
-
-### macOS
-Git is usually installed. If not:
-```bash
-xcode-select --install
-git --version
-```
-
----
-
-## 0.3 Optional: Install VS Code (recommended)
-VS Code is handy for editing files and reading logs.  
-Download: https://code.visualstudio.com/
-
----
-
-# Step 1 — Get the code
-
-Choose ONE option.
-
-## Option A (recommended): Clone with Git
-
-### Windows
-1. Open **PowerShell**:
-   - Start Menu → type **PowerShell** → open
-2. Paste:
+**Windows (PowerShell)**
 ```powershell
 cd $HOME\Documents
-git clone https://github.com/WBG-ITS-Innovation/AI4CM.git
+git clone https://github.com/WBG-ITS-Innovation/georgia-treasury-prototype.git AI4CM
 cd AI4CM
 ```
 
-### macOS
-1. Open **Terminal**:
-   - Applications → Utilities → Terminal
-2. Paste:
+**macOS (Terminal)**
 ```bash
 cd ~/Documents
-git clone https://github.com/WBG-ITS-Innovation/AI4CM.git
+git clone https://github.com/WBG-ITS-Innovation/georgia-treasury-prototype.git AI4CM
 cd AI4CM
 ```
 
-## Option B: Download ZIP (no Git)
+### Option B — Download ZIP (no Git required)
 
-1. On GitHub: **Code → Download ZIP**
-2. Unzip it into:
-   - Windows: `C:\Users\<you>\Documents\AI4CM`
-   - macOS: `~/Documents/AI4CM`
-3. Make sure the folder contains `backend/` and `frontend/`.
+1. In GitHub: click **Code → Download ZIP**
+2. Unzip to a simple path, for example:
+   - **Windows:** `C:\Users\<you>\Documents\AI4CM`
+   - **macOS:** `~/Documents/AI4CM`
 
-Tip: if possible, avoid working from a OneDrive-synced folder (it can sometimes lock files).
-
----
-
-# Step 2 — Open a terminal in the project folder
-
-Here's how to do it:
-
-## Windows
-- Option 1: **PowerShell**
-  1. Start Menu → PowerShell
-  2. Then paste:
-     ```powershell
-     cd $HOME\Documents\AI4CM
-     ```
-- Option 2: **File Explorer**
-  1. Open the AI4CM folder in File Explorer
-  2. Click the address bar, type `powershell`, press Enter
-
-## macOS
-- Option 1: **Terminal**
-  1. Applications → Utilities → Terminal
-  2. Then paste:
-     ```bash
-     cd ~/Documents/AI4CM
-     ```
-- Option 2: Finder shortcut
-  1. Finder → open the AI4CM folder
-  2. Right-click inside folder → **New Terminal at Folder** (if enabled)
-
-From here onward, all commands assume your terminal is in the AI4CM folder.
+> Make sure you end up with folders like `backend/`, `frontend/`, `scripts/` directly under `AI4CM/`.
 
 ---
 
-# Step 3 — Create the backend environment (required)
+## 3) Install & Run (recommended: use scripts)
 
-The backend environment contains the forecasting + preprocessing dependencies.
+This is the easiest and most reliable option. It creates both virtual environments and wires the frontend to the backend automatically.
 
-## Windows (PowerShell)
-If you ever see a script execution warning when activating, run once:
+### Windows (PowerShell)
+
+**Step 1 — Go to the repo**
 ```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+cd $HOME\Documents\AI4CM
 ```
 
-Then run:
+**Step 2 — Setup (one time)**
 ```powershell
-cd .\backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-deactivate
-cd ..
+scripts\setup_windows.bat
 ```
 
-## macOS (Terminal)
+**Step 3 — Run the app**
+```powershell
+scripts\run_app_windows.bat
+```
+
+Open:
+- http://localhost:8501
+
+### macOS / Linux (Terminal)
+
+**Step 1 — Go to the repo**
+```bash
+cd ~/Documents/AI4CM
+```
+
+**Step 2 — Setup (one time)**
+```bash
+chmod +x scripts/setup_unix.sh scripts/run_app_unix.sh
+./scripts/setup_unix.sh
+```
+
+**Step 3 — Run the app**
+```bash
+./scripts/run_app_unix.sh
+```
+
+Open:
+- http://localhost:8501
+
+---
+
+## 4) Optional: verify backend environment
+
+If you want to confirm the backend venv has everything installed:
+
+### Windows (PowerShell)
+```powershell
+.\backend\.venv\Scripts\python.exe scripts\verify_backend_env.py
+```
+
+### macOS / Linux (Terminal)
+```bash
+./backend/.venv/bin/python scripts/verify_backend_env.py
+```
+
+---
+
+## 5) Manual installation (advanced / no scripts)
+
+Use this only if you cannot run the scripts.
+
+### 5.1 Backend venv
+
+**macOS / Linux**
 ```bash
 cd backend
 python3 -m venv .venv
@@ -251,35 +258,20 @@ deactivate
 cd ..
 ```
 
-Quick sanity check:
-
-- Windows:
+**Windows (PowerShell)**
 ```powershell
-.\backend\.venv\Scripts\python.exe --version
-```
-
-- macOS:
-```bash
-./backend/.venv/bin/python --version
-```
-
----
-
-# Step 4 — Create the frontend environment + run the app
-
-The frontend environment contains Streamlit (the UI).
-
-## Windows (PowerShell)
-```powershell
-cd .\frontend
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-streamlit run Overview.py
+deactivate
+cd ..
 ```
 
-## macOS (Terminal)
+### 5.2 Frontend venv + run Streamlit
+
+**macOS / Linux**
 ```bash
 cd frontend
 python3 -m venv .venv
@@ -289,114 +281,155 @@ pip install -r requirements.txt
 streamlit run Overview.py
 ```
 
-Your browser should open automatically. If not, go to:
-- http://localhost:8501
-
-Leave this terminal running while you use the app.
-
----
-
-# One-time setup inside the app (backend path)
-
-The UI needs to know where the backend Python is so it can launch jobs.
-
-In the Streamlit **Overview** page:
-1. Set **Backend directory** to:
-   - `<repo_root>/backend`
-2. Set **Backend python** to:
-   - macOS: `<repo_root>/backend/.venv/bin/python`
-   - Windows: `<repo_root>\backend\.venv\Scripts\python.exe`
-3. Click **Save**
-
-This writes a local file: `frontend/.tg_paths.json` (not committed).
-
----
-
-# Using the app
-
-## Data Pre-processing
-Use this page to convert raw balance files into standardized daily data.
-
-Typical flow:
-1. Upload your Excel/CSV (e.g., `Balance_by_Day_2015-2025.xlsx`)
-2. If needed, specify date and balance columns
-3. Choose a variant:
-   - `raw`
-   - `clean_conservative`
-   - `clean_treasury`
-4. Run preprocessing
-
-Outputs are written under:
-- `data_preprocessed/<variant>/...`
-
-Uploads are stored under:
-- `frontend/runs_uploads/`
-
-## Lab
-The Lab page runs forecasting experiments.
-
-You choose:
-- dataset (CSV)
-- target column
-- cadence (Daily / Weekly / Monthly)
-- horizon
-- family + model
-- optional advanced overrides
-
-Each run is saved under:
-- `frontend/runs/run_<...timestamp...>/`
-
-## Dashboard + History
-- Dashboard: plots, metrics, leaderboards
-- History: browse runs, inspect logs, download output bundles
-
----
-
-# Outputs (what to expect)
-
-Each run folder typically contains:
-```
-backend_run.log
-outputs/
-  predictions_long.csv
-  metrics_long.csv
-  leaderboard.csv
-  plots/
-  artifacts/
+**Windows (PowerShell)**
+```powershell
+cd frontend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+streamlit run Overview.py
 ```
 
-Start with `backend_run.log` if anything fails.
+### 5.3 Wire the frontend to the backend
 
----
+The UI reads `frontend/.tg_paths.json` to locate the backend environment.
 
-# Common issues (and fast fixes)
+Create it manually from the repo root.
 
-## “File does not exist: frontend/Overview.py”
-You ran Streamlit from the wrong folder.
-From the repo root, you can always run:
+**macOS / Linux**
 ```bash
+python3 - <<'PY'
+import json, pathlib
+repo = pathlib.Path.cwd()
+frontend = repo / "frontend" / ".tg_paths.json"
+data = {
+  "backend_python": str((repo/"backend"/".venv"/"bin"/"python").resolve()),
+  "backend_dir": str((repo/"backend").resolve())
+}
+frontend.write_text(json.dumps(data, indent=2), encoding="utf-8")
+print("Wrote", frontend)
+PY
+```
+
+**Windows (PowerShell)**
+```powershell
+python - <<'PY'
+import json, pathlib
+repo = pathlib.Path.cwd()
+frontend = repo / "frontend" / ".tg_paths.json"
+data = {
+  "backend_python": str((repo/"backend"/".venv"/"Scripts"/"python.exe").resolve()),
+  "backend_dir": str((repo/"backend").resolve())
+}
+frontend.write_text(json.dumps(data, indent=2), encoding="utf-8")
+print("Wrote", frontend)
+PY
+```
+
+---
+
+## 6) Using the Streamlit app (what each tab is for)
+
+### Overview
+- confirms backend connection (auto-detected from `.tg_paths.json`)
+- shows recent runs
+- quick access to run logs and downloads
+
+### Data Pre-processing
+Converts **Balance_by_Day_*.xlsx** into a standardized daily dataset.
+
+Typical steps:
+1. Upload an Excel file
+2. Choose variant: `raw / clean_conservative / clean_treasury`
+3. Run preprocessing  
+Outputs go to `data_preprocessed/<variant>/` and are available for the Lab.
+
+### Lab
+The main “experiment runner”:
+- Choose **target**, **cadence**, **horizon**
+- Choose **family** (A/B/C/E) + **model**
+- Optionally set hyperparameters / overrides
+- Run and watch the log live
+Outputs go to:
+`frontend/runs/run_<family>_<model>_<target>_<cadence>_h<h>_<timestamp>/`
+
+### Dashboard
+Visual analysis:
+- actual vs predicted overlays
+- metrics + leaderboard
+- residual diagnostics
+- intervals (if produced)
+
+### History
+Archive of all runs:
+- open a run folder
+- view logs
+- download CSVs and artifacts
+
+### Models
+Reference page for model families + parameter definitions.
+
+---
+
+## 7) Running pipelines directly (Backend CLI)
+
+This is for developers / advanced usage.
+
+### Activate backend environment
+
+**Windows (PowerShell)**
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+```
+
+**macOS / Linux**
+```bash
+cd backend
+source .venv/bin/activate
+```
+
+### Examples
+```bash
+python run_a_stat.py
+python run_b_ml_univariate.py
+python run_c_dl_univariate.py
+```
+
+Outputs appear under `frontend/runs/`.
+
+---
+
+## 8) Troubleshooting
+
+### “Backend Python missing/invalid”
+- Run the setup script again (`scripts/setup_*`)
+- Confirm `frontend/.tg_paths.json` exists
+- Confirm `backend/.venv` exists
+
+### “File does not exist: frontend/Overview.py”
+You are running Streamlit from the wrong folder.  
+Run from the repo root:
+```bash
+cd ~/Documents/AI4CM
 python -m streamlit run frontend/Overview.py
 ```
 
-## “Backend Python missing/invalid” (in Lab or Pre-processing)
-- Confirm `backend/.venv` exists
-- In Overview, re-save backend dir + backend python
-- Restart Streamlit
+### Excel pre-processing errors
+- confirm the date column is parseable as dates
+- confirm the balance column is numeric
+- try providing explicit column names in the UI
 
-## macOS Streamlit feels slow
-Install watchdog in the frontend venv:
-```bash
-pip install watchdog
-```
-
-## Torch install issues
-Use PyTorch’s official selector (CPU is fine for most runs):
-https://pytorch.org/get-started/locally/
+### PyTorch install issues
+The scripts install CPU wheels. If you need GPU (rare on Mac), follow PyTorch install instructions.
 
 ---
 
-## Notes for contributors
+## Summary
 
-- Prefer Python 3.11 for compatibility
-- Keep generated folders out of git (see `.gitignore`)
-- If you rename backend runner scripts, update the Streamlit pages that call them
+AI4CM provides:
+- a local, reproducible forecasting laboratory
+- a Streamlit UI for running + comparing model families
+- structured outputs (predictions, metrics, plots, logs)
+- setup scripts for Windows/macOS so others can run it easily
