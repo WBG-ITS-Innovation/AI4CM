@@ -4,7 +4,7 @@ A local sandbox to preprocess Treasury cash/balance time-series, run forecasting
 
 ---
 
-## What this repo does (in plain language)
+## What this repo does
 
 You can use this repo to:
 
@@ -96,7 +96,7 @@ Each experiment produces:
 1. Go to: https://www.python.org/downloads/windows/  
 2. Download **Python 3.11.x**  
 3. Run the installer and **check**:
-   - ✅ **Add python.exe to PATH**
+   - **Add python.exe to PATH**
 4. Finish install
 
 Quick check:
