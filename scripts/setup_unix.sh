@@ -32,7 +32,7 @@ else
   echo "[Frontend] venv already exists."
 fi
 "$FRONTEND_DIR/.venv/bin/python" -m pip install --upgrade pip
-"$FRONTEND_DIR/.venv/bin/python" -m pip install streamlit pandas plotly
+"$FRONTEND_DIR/.venv/bin/python" -m pip install -r "$FRONTEND_DIR/requirements.txt"
 
 # ---- Wire frontend -> backend
 python3 - <<PY
