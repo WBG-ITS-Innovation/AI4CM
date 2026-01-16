@@ -1,11 +1,11 @@
-# pages/00_Lab.py — Lab (run models + live log + overlay)
+# pages/00_Lab.py — Lab (run models + live log + overlay + REAL hover help + batch runs)
 from __future__ import annotations
 
 import html
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import pandas as pd
 import plotly.express as px
@@ -229,6 +229,10 @@ def _scroll_term(container, text: str, height: int = 360):
 
 
 def _baseline_series(out_root: Path, target: str, cadence: str) -> Optional[pd.Series]:
+    """
+    Tries to load Ops baseline forecast series if present.
+    Supports both daily baseline and monthly baseline that can be spread over business days.
+    """
     cad = cadence.lower()
 
     def _read(p: Path):
@@ -583,7 +587,8 @@ short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E"}[family]
 short_var = "uni" if variant == "Univariate" else "multi"
 run_label = f"run_{short_fam}_{short_var}_{model}_{target}_{cadence}_h{int(horizon)}_{ts}"
 
-run_id, run_dir, out_root = new_run_folders(run_label)
+# ---------------------------- 3) Launch & live log ----------------------------
+st.header("3) Launch & live log")
 
 # Choose runner script
 if family == "A_STAT":
@@ -637,8 +642,12 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         on_progress=_on_progress,
     )
 
-    if rc != 0:
-        st.error(f"Run failed (rc={rc}). See log below.")
+    # Overlay comparison across runs
+    st.subheader("Overlay preview — compare models")
+    ok_runs = [r for r in results if r["rc"] == 0]
+
+    if not ok_runs:
+        st.warning("No successful runs to visualize.")
     else:
         st.success(f"Finished in {elapsed:.1f}s • outputs in `{out_real}`")
 
