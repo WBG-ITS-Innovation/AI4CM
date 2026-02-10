@@ -176,13 +176,22 @@ elif gran == "Monthly (EOM)": _freq = "ME"
 has_pi = {"y_lo","y_hi"}.issubset(set(df_t.columns))
 
 # -------------------- Tabs --------------------
-tab_overlay, tab_leader, tab_errors, tab_intervals, tab_downloads = st.tabs(
-    ["Overlay", "Leaderboard", "Errors & Residuals", "Interval Diagnostics", "Downloads"]
+tab_overlay, tab_leader, tab_errors, tab_intervals, tab_integrity, tab_downloads = st.tabs(
+    ["Overlay", "Leaderboard", "Errors & Residuals", "Interval Diagnostics", "Forecast Integrity", "Downloads"]
 )
 
 # -------------------- Overlay (native daily/weekly) --------------------
 with tab_overlay:
     st.subheader("Actual vs Model(s) vs Treasury baseline")
+    
+    # ✅ Forecast integrity note
+    if "horizon" in df_t.columns and df_t["horizon"].nunique() > 0:
+        h_sample = int(df_t["horizon"].iloc[0]) if len(df_t) > 0 else 1
+        st.caption(
+            f"ℹ️ **Forecast indexing**: Predictions shown at **target dates** (origin + h={h_sample} days). "
+            f"Each prediction uses only information available at its forecast origin."
+        )
+    
     show_pi = st.checkbox("Show prediction intervals (only if one model selected)", value=False)
     treat_as_flow = st.checkbox("Treat series as **flow** when resampling (sum). Uncheck for **stock** (EOP).", value=("balance" not in tgt.lower()))
 
@@ -215,6 +224,11 @@ with tab_overlay:
         gm = df_t[df_t["model"] == m].copy().sort_values("date")
         if gm.empty: 
             continue
+        # ✅ Only plot true out-of-sample predictions - drop rows where y_true is NaN
+        # This prevents misleading charts from including training data or missing values filled with 0
+        gm = gm.dropna(subset=["y_true", "y_pred"])  # Drop NaNs, don't fill with 0
+        if gm.empty:
+            continue
         s_pred = gm.set_index("date")["y_pred"]
         s_pi_lo = gm.set_index("date")["y_lo"] if has_pi else None
         s_pi_hi = gm.set_index("date")["y_hi"] if has_pi else None
@@ -223,6 +237,8 @@ with tab_overlay:
             if has_pi:
                 s_pi_lo = s_pi_lo.resample(_freq).sum() if treat_as_flow else s_pi_lo.resample(_freq).last()
                 s_pi_hi = s_pi_hi.resample(_freq).sum() if treat_as_flow else s_pi_hi.resample(_freq).last()
+        # Drop NaNs after resampling too
+        s_pred = s_pred.dropna()
         fig.add_scatter(x=s_pred.index, y=s_pred.values, name=m, mode="lines")
 
         # Optional interval band (only if a single model is selected & PI columns present)
@@ -335,6 +351,172 @@ with tab_intervals:
             bw = dfpi.groupby("model", as_index=False)["bandwidth"].mean()
             fig_bw = px.bar(bw, x="model", y="bandwidth", title="Average PI width", height=320)
             st.plotly_chart(fig_bw, use_container_width=True, config={"displaylogo": False})
+
+# -------------------- Forecast Integrity --------------------
+with tab_integrity:
+    st.subheader("Forecast Integrity Diagnostics")
+    st.write(
+        "These checks verify that forecasts are **real** (no horizon misalignment, no leakage, correct indexing) "
+        "and **useful** (better than naive baselines)."
+    )
+    
+    # Try to load integrity report
+    integrity_path = base_dir / "artifacts" / "integrity_report.json"
+    if not integrity_path.exists():
+        # Also check parent directories
+        integrity_path = out_root / "artifacts" / "integrity_report.json"
+    
+    if integrity_path.exists():
+        import json
+        try:
+            with open(integrity_path, "r") as f:
+                integrity = json.load(f)
+            
+            # ✅ Trust & Usefulness Panel
+            st.markdown("---")
+            st.subheader("🔒 Trust & Usefulness")
+            
+            alignment_ok = integrity.get("alignment_ok", True)
+            skill_pct = integrity.get("skill_pct", np.nan)
+            skill_threshold = 2.0  # 2% minimum skill required
+            
+            # Determine verdict
+            if not alignment_ok:
+                verdict = "❌ NOT OK — Alignment Error"
+                verdict_color = "error"
+            elif np.isnan(skill_pct):
+                verdict = "⚠️ UNKNOWN — Skill cannot be computed"
+                verdict_color = "warning"
+            elif skill_pct < skill_threshold:
+                verdict = f"❌ NOT USEFUL — Skill ({skill_pct:.2f}%) below threshold ({skill_threshold}%)"
+                verdict_color = "error"
+            else:
+                verdict = f"✅ OK TO USE — Skill {skill_pct:.2f}% >= {skill_threshold}%"
+                verdict_color = "success"
+            
+            # Display verdict prominently
+            if verdict_color == "success":
+                st.success(f"**Verdict:** {verdict}")
+            elif verdict_color == "error":
+                st.error(f"**Verdict:** {verdict}")
+            else:
+                st.warning(f"**Verdict:** {verdict}")
+            
+            # Key metrics in columns
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                alignment_status = "✅ OK" if alignment_ok else f"❌ {integrity.get('n_misaligned', 0)} misaligned"
+                st.metric("Alignment", alignment_status)
+                if not alignment_ok and integrity.get("misaligned_examples"):
+                    with st.expander("Misaligned examples"):
+                        st.json(integrity["misaligned_examples"][:3])
+            
+            with col2:
+                mae_model = integrity.get("mae_model", np.nan)
+                st.metric("Model MAE", f"{mae_model:,.0f}" if not np.isnan(mae_model) else "N/A")
+            
+            with col3:
+                mae_persist = integrity.get("mae_persistence", np.nan)
+                st.metric("Baseline MAE", f"{mae_persist:,.0f}" if not np.isnan(mae_persist) else "N/A",
+                         delta=f"{(mae_persist - mae_model):,.0f}" if not (np.isnan(mae_persist) or np.isnan(mae_model)) else None)
+            
+            with col4:
+                skill_display = f"{skill_pct:.2f}%" if not np.isnan(skill_pct) else "N/A"
+                skill_delta = f"{skill_pct - skill_threshold:.2f}%" if not np.isnan(skill_pct) else None
+                st.metric("Skill %", skill_display, 
+                         delta=skill_delta if skill_delta and float(skill_delta.replace("%", "")) >= 0 else None,
+                         delta_color="normal" if (not np.isnan(skill_pct) and skill_pct >= skill_threshold) else "inverse")
+            
+            # Run status
+            run_status = integrity.get("run_status", "UNKNOWN")
+            if run_status == "FAILED_QUALITY":
+                st.error(f"**Run Status:** {run_status} — Model does not beat persistence baseline at horizon {integrity.get('horizon', 'N/A')}")
+            elif run_status == "SUCCESS":
+                st.success(f"**Run Status:** {run_status}")
+            else:
+                st.info(f"**Run Status:** {run_status}")
+            
+            st.markdown("---")
+            st.subheader("Detailed Diagnostics")
+            
+            # Display key metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Horizon", integrity.get("horizon", "N/A"))
+                st.metric("Best Shift", integrity.get("best_shift", 0))
+            with col2:
+                rmse_model = integrity.get("rmse_model", np.nan)
+                rmse_persist = integrity.get("rmse_persistence", np.nan)
+                st.metric("Model RMSE", f"{rmse_model:.2f}" if not np.isnan(rmse_model) else "N/A")
+                st.metric("Baseline RMSE", f"{rmse_persist:.2f}" if not np.isnan(rmse_persist) else "N/A")
+            with col3:
+                r2_model = integrity.get("r2_model", np.nan)
+                r2_persist = integrity.get("r2_persistence", np.nan)
+                st.metric("Model R²", f"{r2_model:.3f}" if not np.isnan(r2_model) else "N/A")
+                st.metric("Baseline R²", f"{r2_persist:.3f}" if not np.isnan(r2_persist) else "N/A")
+            
+            # Warnings
+            if integrity.get("lag_warning", False):
+                st.error(
+                    f"⚠️ **Lag Warning**: Best error occurs at shift={integrity.get('best_shift', 0)} "
+                    f"(should be 0). This suggests horizon misalignment or plotting offset."
+                )
+            else:
+                st.success("✓ **Shift Check**: Best alignment at shift=0 (correct)")
+            
+            if integrity.get("leakage_warning", False):
+                st.error(
+                    f"⚠️ **Leakage Warning**: Shuffled target performance is suspiciously close to normal. "
+                    f"This may indicate data leakage."
+                )
+            else:
+                shuffled_mae = integrity.get("mae_shuffled_target", np.nan)
+                if not np.isnan(shuffled_mae):
+                    st.success("✓ **Leakage Check**: Shuffled target test passed (no leakage detected)")
+            
+            # Baseline comparison table
+            st.subheader("Baseline Comparisons")
+            baseline_data = {
+                "Metric": ["MAE", "RMSE", "R²"],
+                "Model": [
+                    f"{integrity.get('mae_model', np.nan):,.0f}" if not np.isnan(integrity.get('mae_model', np.nan)) else "N/A",
+                    f"{integrity.get('rmse_model', np.nan):.2f}" if not np.isnan(integrity.get('rmse_model', np.nan)) else "N/A",
+                    f"{integrity.get('r2_model', np.nan):.3f}" if not np.isnan(integrity.get('r2_model', np.nan)) else "N/A",
+                ],
+                "Persistence Baseline": [
+                    f"{integrity.get('mae_persistence', np.nan):,.0f}" if not np.isnan(integrity.get('mae_persistence', np.nan)) else "N/A",
+                    f"{integrity.get('rmse_persistence', np.nan):.2f}" if not np.isnan(integrity.get('rmse_persistence', np.nan)) else "N/A",
+                    f"{integrity.get('r2_persistence', np.nan):.3f}" if not np.isnan(integrity.get('r2_persistence', np.nan)) else "N/A",
+                ],
+                "Seasonal Naive": [
+                    f"{integrity.get('mae_seasonal_naive', np.nan):,.0f}" if not np.isnan(integrity.get('mae_seasonal_naive', np.nan)) else "N/A",
+                    "N/A",  # RMSE not computed for seasonal naive
+                    "N/A",  # R² not computed for seasonal naive
+                ],
+            }
+            baseline_df = pd.DataFrame(baseline_data)
+            st.dataframe(baseline_df, use_container_width=True, hide_index=True)
+            
+            # Full report
+            with st.expander("View full integrity report (JSON)"):
+                st.json(integrity)
+                
+        except Exception as e:
+            st.warning(f"Could not parse integrity report: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.info(
+            "No **integrity_report.json** found. This report is generated by ML pipelines "
+            "(b_ml_pipeline.py) and includes shift sanity checks, baseline comparisons, and leakage tests."
+        )
+        st.caption(
+            "The integrity report helps verify that:\n"
+            "- Forecasts are correctly aligned (no lag/offset)\n"
+            "- Predictions use only information available at forecast origin\n"
+            "- Model beats simple baselines (persistence, seasonal naive)\n"
+            "- No data leakage is present"
+        )
 
 # -------------------- Downloads --------------------
 with tab_downloads:
