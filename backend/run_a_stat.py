@@ -94,7 +94,7 @@ def _ops_daily_from_monthly(daily_hist: pd.Series, monthly_forecast: pd.Series) 
         pieces.append(pd.Series(float(mv) * prof, index=days))
     return pd.concat(pieces) if pieces else pd.Series(dtype=float)
 
-def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: int) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
+def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[int]) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
     years = sorted(set(idx.year))
     folds=[]
     for Y in years:
@@ -106,7 +106,8 @@ def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: int) -> Lis
         ts_span = idx[(idx >= pd.Timestamp(f"{Y}-01-01")) & (idx <= pd.Timestamp(f"{Y}-12-31"))]
         if ts_span.empty: continue
         folds.append((tr_end, ts_span[0], ts_span[-1]))
-    if want_folds>0 and len(folds)>want_folds:
+    # If want_folds is None, use ALL folds (thorough mode). Otherwise limit to last N folds.
+    if want_folds is not None and want_folds > 0 and len(folds) > want_folds:
         folds = folds[-want_folds:]
     return folds
 
@@ -194,7 +195,8 @@ def main():
     data    = env["TG_DATA_PATH"]
     dcol    = env["TG_DATE_COL"] or "date"
     outroot = Path(env["TG_OUT_ROOT"]).resolve()
-    folds   = int(ov.get("folds", 3))
+    folds_raw = ov.get("folds", 3)
+    folds = None if folds_raw is None else int(folds_raw)  # None = use ALL folds (thorough mode)
     minyrs  = int(ov.get("min_train_years", 4))
     demo    = ov.get("demo_clip_months")
 

@@ -21,7 +21,7 @@ class Config:
     horizon: int
     data_path: str
     date_col: str = "date"
-    folds: int = 3
+    folds: Optional[int] = 3   # None = use ALL possible folds (thorough mode)
     min_train_years: int = 4
     model_filter: Optional[str] = None   # "GBQuantile", "ResidualRF" | None => all
     quantiles: Tuple[float, ...] = (0.10, 0.50, 0.90)

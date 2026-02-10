@@ -5,6 +5,10 @@ from typing import Optional, Dict, Any, List
 DB_PATH = os.environ.get("CF_DB_PATH", "data/experiments.db")
 
 def connect():
+    # Ensure parent directory exists (prevents sqlite "unable to open database file").
+    parent = os.path.dirname(DB_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_db():
