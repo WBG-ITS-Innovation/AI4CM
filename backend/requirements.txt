@@ -38,3 +38,6 @@ openpyxl>=3.1
 
 # ---- Utilities ----
 diskcache>=5.6
+
+# Needed by Dash long callbacks when using DiskcacheLongCallbackManager (dash[diskcache])
+psutil>=5.9

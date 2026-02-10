@@ -320,7 +320,7 @@ profile = st.radio(
 
 # base overrides from profile
 ov: Dict[str, Any] = {
-    "folds": 0 if profile == "Demo (fast)" else (3 if profile == "Balanced" else 5),
+    "folds": 1 if profile == "Demo (fast)" else (3 if profile == "Balanced" else 5),  # Thorough = 5 folds
     "min_train_years": 0 if profile == "Demo (fast)" else (2 if profile == "Balanced" else 4),
     "demo_clip_months": 12 if profile == "Demo (fast)" else None,
 }
@@ -612,8 +612,31 @@ if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True)
         res = _run_one(m)
         results.append(res)
 
-        if res["rc"] != 0:
-            st.error(f"❌ {m} failed (rc={res['rc']}).")
+        # ✅ FIX 5: Check for failure: return code != 0 OR error.json exists OR FAILED_QUALITY
+        error_json_path = Path(res["out_real"]) / "artifacts" / "error.json"
+        integrity_json_path = Path(res["out_real"]) / "artifacts" / "integrity_report.json"
+        has_error_file = error_json_path.exists()
+        
+        # Check integrity report for FAILED_QUALITY status
+        run_status = None
+        if integrity_json_path.exists():
+            try:
+                integrity = json.loads(integrity_json_path.read_text(encoding="utf-8"))
+                run_status = integrity.get("run_status", "UNKNOWN")
+            except Exception:
+                pass
+        
+        if res["rc"] != 0 or has_error_file:
+            status_msg = f"❌ {m} failed"
+            if res["rc"] != 0:
+                status_msg += f" (rc={res['rc']})"
+            if has_error_file:
+                status_msg += " (error.json found)"
+            st.error(status_msg)
+        elif run_status == "FAILED_QUALITY":
+            # ✅ FIX 5: Show FAILED_QUALITY status (outputs still written, but quality gate failed)
+            st.warning(f"⚠️ {m} finished but FAILED_QUALITY — Model does not beat persistence baseline. "
+                      f"Outputs written to `{res['out_real']}` (elapsed: {res['elapsed']:.1f}s)")
         else:
             st.success(f"✅ {m} finished in {res['elapsed']:.1f}s • outputs in `{res['out_real']}`")
 
@@ -621,20 +644,55 @@ if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True)
 
     # Summary table
     st.subheader("Run summary")
-    st.dataframe(
-        pd.DataFrame([{
+    summary_rows = []
+    for r in results:
+        error_json_path = Path(r["out_real"]) / "artifacts" / "error.json"
+        integrity_json_path = Path(r["out_real"]) / "artifacts" / "integrity_report.json"
+        has_error = error_json_path.exists()
+        run_status = None
+        if integrity_json_path.exists():
+            try:
+                integrity = json.loads(integrity_json_path.read_text(encoding="utf-8"))
+                run_status = integrity.get("run_status", "UNKNOWN")
+            except Exception:
+                pass
+        
+        if r["rc"] != 0 or has_error:
+            status = f"FAIL (rc={r['rc']})"
+        elif run_status == "FAILED_QUALITY":
+            status = "FAILED_QUALITY"  # ✅ FIX 5: Show quality gate failure
+        else:
+            status = "OK"
+        
+        summary_rows.append({
             "model": r["model"],
-            "status": "OK" if r["rc"] == 0 else f"FAIL (rc={r['rc']})",
+            "status": status,
             "elapsed_sec": round(float(r["elapsed"]), 2),
             "run_label": r["run_label"],
             "out_dir": r["out_real"],
-        } for r in results]),
-        use_container_width=True,
-    )
+        })
+    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
 
     # Overlay comparison across runs
     st.subheader("Overlay preview — compare models")
-    ok_runs = [r for r in results if r["rc"] == 0]
+    # ✅ FIX 5: Include FAILED_QUALITY runs in overlay (outputs still exist)
+    ok_runs = [r for r in results if r["rc"] == 0 and not (Path(r["out_real"]) / "artifacts" / "error.json").exists()]
+    
+    # Check for FAILED_QUALITY and show warning banner
+    failed_quality_runs = []
+    for r in ok_runs:
+        integrity_json_path = Path(r["out_real"]) / "artifacts" / "integrity_report.json"
+        if integrity_json_path.exists():
+            try:
+                integrity = json.loads(integrity_json_path.read_text(encoding="utf-8"))
+                if integrity.get("run_status") == "FAILED_QUALITY":
+                    failed_quality_runs.append(r["model"])
+            except Exception:
+                pass
+    
+    if failed_quality_runs:
+        st.warning(f"⚠️ **Model underperforms baseline:** {', '.join(failed_quality_runs)}. "
+                  f"Plots shown below, but model does not beat persistence baseline.")
 
     if not ok_runs:
         st.warning("No successful runs to visualize.")
@@ -661,7 +719,9 @@ if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True)
 
             # Use first selected model's y_true as "Actual" (they should all be identical if same target/cadence)
             first_key = compare_models[0] if compare_models else list(preds_by_model.keys())[0]
-            base_pred = preds_by_model[first_key]
+            base_pred = preds_by_model[first_key].copy()
+            # ✅ Only plot true out-of-sample predictions - drop rows where y_true is NaN
+            base_pred = base_pred.dropna(subset=["y_true"])  # Don't fill with 0
             fig.add_scatter(
                 x=base_pred["date"],
                 y=base_pred["y_true"],
@@ -671,7 +731,11 @@ if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True)
             )
 
             for m in compare_models:
-                p = preds_by_model[m]
+                p = preds_by_model[m].copy()
+                # ✅ Only plot true out-of-sample predictions - drop rows where y_true or y_pred is NaN
+                p = p.dropna(subset=["y_true", "y_pred"])  # Don't fill with 0
+                if p.empty:
+                    continue
                 # In your output format, column "model" often contains internal model name; we label by run model selection
                 fig.add_scatter(
                     x=p["date"],

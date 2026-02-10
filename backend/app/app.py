@@ -1,7 +1,12 @@
 
-import os, io, base64, json, time, uuid, pathlib
+import os, io, base64, json, time, uuid, pathlib, sys
 import pandas as pd
 import numpy as np
+
+# Ensure backend root is on sys.path so imports work when running this file directly.
+BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, BACKEND_ROOT)
 
 from dash import Dash, dcc, html, Input, Output, State, dash_table, no_update
 import dash_bootstrap_components as dbc
@@ -14,14 +19,26 @@ from models import registry
 # persistence
 from core import db
 
-# async
-import diskcache
-cache = diskcache.Cache("./.cache")
-from dash.long_callback import DiskcacheLongCallbackManager
-long_callback_manager = DiskcacheLongCallbackManager(cache)
+# async (optional)
+# Dash long callbacks via diskcache require extra deps (dash[diskcache]) which includes psutil.
+# If not installed, we gracefully fall back to synchronous callbacks.
+try:
+    import diskcache
+    from dash.long_callback import DiskcacheLongCallbackManager
+
+    cache = diskcache.Cache("./.cache")
+    long_callback_manager = DiskcacheLongCallbackManager(cache)
+except Exception:
+    cache = None
+    long_callback_manager = None
 
 external_stylesheets = [dbc.themes.BOOTSTRAP]
-app = Dash(__name__, external_stylesheets=external_stylesheets, title="Cashflow Experiments", long_callback_manager=long_callback_manager)
+app = Dash(
+    __name__,
+    external_stylesheets=external_stylesheets,
+    title="Cashflow Experiments",
+    long_callback_manager=long_callback_manager,
+)
 server = app.server
 
 # Ensure DB exists
@@ -161,17 +178,50 @@ def on_dataset_change(ds_id):
         dbc.Col(kpi_card("Volatility (90d)", k.get("volatility")), md=3)
     ]
 
-# Create and run experiment (async)
-@app.long_callback(
-    output=Output("run-status","children"),
-    inputs=[Input("run-btn","n_clicks")],
-    state=[State("dataset-dd","value"), State("model-dd","value"), State("horizon","value"),
-           State("param-window","value"), State("param-p","value"), State("param-d","value"),
-           State("param-q","value"), State("param-s","value")],
-    running=[(Output("run-btn","disabled"), True, False)],
-    prevent_initial_call=True
-)
-def run_experiment(set_progress, n, ds_id, model_name, horizon, window, p, d, q, s):
+# Create and run experiment (async if available; otherwise sync)
+if long_callback_manager:
+    _run_decorator = app.long_callback(
+        output=Output("run-status", "children"),
+        inputs=[Input("run-btn", "n_clicks")],
+        state=[
+            State("dataset-dd", "value"),
+            State("model-dd", "value"),
+            State("horizon", "value"),
+            State("param-window", "value"),
+            State("param-p", "value"),
+            State("param-d", "value"),
+            State("param-q", "value"),
+            State("param-s", "value"),
+        ],
+        running=[(Output("run-btn", "disabled"), True, False)],
+        prevent_initial_call=True,
+    )
+else:
+    _run_decorator = app.callback(
+        Output("run-status", "children"),
+        Input("run-btn", "n_clicks"),
+        State("dataset-dd", "value"),
+        State("model-dd", "value"),
+        State("horizon", "value"),
+        State("param-window", "value"),
+        State("param-p", "value"),
+        State("param-d", "value"),
+        State("param-q", "value"),
+        State("param-s", "value"),
+        prevent_initial_call=True,
+    )
+
+
+@_run_decorator
+def run_experiment(*args):
+    # Long callback signature is (set_progress, n_clicks, ...states)
+    # Normal callback signature is (n_clicks, ...states)
+    if long_callback_manager:
+        set_progress, n, ds_id, model_name, horizon, window, p, d, q, s = args
+    else:
+        (n, ds_id, model_name, horizon, window, p, d, q, s) = args
+        set_progress = lambda *_a, **_k: None
+
     if not ds_id: 
         return dbc.Alert("Select a dataset first.", color="warning")
     rows = db.list_datasets()
