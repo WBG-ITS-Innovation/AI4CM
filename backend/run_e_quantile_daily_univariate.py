@@ -16,7 +16,7 @@ def main():
         horizon=int(_getenv("TG_HORIZON", "5")),
         data_path=_getenv("TG_DATA_PATH"),
         date_col=_getenv("TG_DATE_COL", "date"),
-        folds=int(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("folds", 3)),
+        folds=json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("folds", 3),  # None = use ALL folds (thorough mode)
         min_train_years=int(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("min_train_years", 4)),
         model_filter=_getenv("TG_MODEL_FILTER", "").strip() or None,
         quantiles=tuple(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("quantiles", [0.1,0.5,0.9])),

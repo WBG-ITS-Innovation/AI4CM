@@ -454,7 +454,7 @@ profile = st.radio(
 
 # Profile → default override payload
 ov: Dict[str, Any] = {
-    "folds": 0 if profile == "Demo (fast)" else (3 if profile == "Balanced" else 5),
+    "folds": 1 if profile == "Demo (fast)" else (3 if profile == "Balanced" else 5),  # Thorough = 5 folds
     "min_train_years": 0 if profile == "Demo (fast)" else (2 if profile == "Balanced" else 4),
     "demo_clip_months": 12 if profile == "Demo (fast)" else None,
 }
@@ -644,7 +644,24 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
 
     # Overlay comparison across runs
     st.subheader("Overlay preview — compare models")
-    ok_runs = [r for r in results if r["rc"] == 0]
+    # ✅ FIX 5: Include FAILED_QUALITY runs in overlay (outputs still exist)
+    ok_runs = [r for r in results if r["rc"] == 0 and not (Path(r["out_real"]) / "artifacts" / "error.json").exists()]
+    
+    # Check for FAILED_QUALITY and show warning banner
+    failed_quality_runs = []
+    for r in ok_runs:
+        integrity_json_path = Path(r["out_real"]) / "artifacts" / "integrity_report.json"
+        if integrity_json_path.exists():
+            try:
+                integrity = json.loads(integrity_json_path.read_text(encoding="utf-8"))
+                if integrity.get("run_status") == "FAILED_QUALITY":
+                    failed_quality_runs.append(r["model"])
+            except Exception:
+                pass
+    
+    if failed_quality_runs:
+        st.warning(f"⚠️ **Model underperforms baseline:** {', '.join(failed_quality_runs)}. "
+                  f"Plots shown below, but model does not beat persistence baseline.")
 
     if not ok_runs:
         st.warning("No successful runs to visualize.")
