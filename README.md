@@ -5,7 +5,7 @@ It is designed for hands-on exploration, model comparison, and capacity building
 
 ---
 
-## What this repo does (in one minute)
+## What this repo does
 
 1. **You bring a CSV** (or generate one via the Data Pre-processing tab).
 2. The **Streamlit frontend** helps you pick:
@@ -243,7 +243,7 @@ If you want to confirm the backend venv has everything installed:
 
 ## 5) Manual installation (advanced / no scripts)
 
-Use this only if you cannot run the scripts.
+Use this in dev mode to update scripts etc
 
 ### 5.1 Backend venv
 
