@@ -9,6 +9,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
+from backend_consts import QUALITY_GATE_SKILL_PCT
+from recommender import recommend_model, format_scorecard_markdown
+
 APPROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = APPROOT / "runs"
 
@@ -97,27 +100,6 @@ sel_run = st.selectbox("Select run", [r.name for r in runs], index=0)
 run_dir = RUNS_DIR / sel_run
 out_root = run_dir / "outputs"
 
-# AFTER you compute out_root = run_dir / "outputs"
-candidates = [("root", out_root), ("daily", out_root/"daily"), ("weekly", out_root/"weekly"), ("monthly", out_root/"monthly")]
-available = [(name, p) for name,p in candidates if (p/"predictions_long.csv").exists()]
-# default: first available; else fall back to root
-default_key = available[0][0] if available else "root"
-
-label_map = {"root": "outputs (root)", "daily": "outputs/daily", "weekly": "outputs/weekly", "monthly": "outputs/monthly"}
-choice = st.radio("Use outputs from",
-                  [label_map[k] for k,_ in candidates],
-                  index=["root","daily","weekly","monthly"].index(default_key),
-                  horizontal=True)
-chosen_key = [k for k,v in label_map.items() if v == choice][0]
-base_dir = dict(candidates)[chosen_key]
-
-# load
-p = base_dir / "predictions_long.csv"
-if not p.exists():
-    st.warning(f"No **predictions_long.csv** in {base_dir}")
-    st.stop()
-
-
 cads = _base_dirs(out_root)
 label_map = {"root": "outputs (root)", "daily": "outputs/daily", "weekly": "outputs/weekly", "monthly": "outputs/monthly"}
 cad_choice_label = st.radio("Use outputs from", [label_map[c] for c, _ in cads], horizontal=True)
@@ -155,6 +137,83 @@ with c4:
     gran = st.selectbox("Display granularity", ["Native", "Weekly (Fri)", "Monthly (EOM)"], index=0,
                         help="Only affects the chart view; CSVs remain at native cadence.")
 
+# -------------------- Pipeline trust badge --------------------
+# ✅ FIX SYSTEM-1: Show trust level prominently so users always know
+_integrity_path = base_dir / "artifacts" / "integrity_report.json"
+if not _integrity_path.exists():
+    _integrity_path = out_root / "artifacts" / "integrity_report.json"
+if _integrity_path.exists():
+    import json as _json_mod
+    try:
+        _integ = _json_mod.load(open(_integrity_path))
+        _pipeline = _integ.get("pipeline", "ML")
+        _status = _integ.get("run_status", "UNKNOWN")
+        _skill = _integ.get("skill_pct", None)
+        _qg = _integ.get("quality_gate_passed", None)
+        if _status == "SUCCESS" and _qg:
+            st.success(f"**{_pipeline} pipeline** — Quality gate PASSED (skill {_skill:.1f}%)")
+        elif _status == "FAILED_QUALITY":
+            st.warning(f"**{_pipeline} pipeline** — Quality gate FAILED "
+                       f"(skill {_skill:.1f}% < {QUALITY_GATE_SKILL_PCT}%). "
+                       f"Outputs are real but model does not beat persistence baseline.")
+        elif _status == "ERROR":
+            st.error(f"**{_pipeline} pipeline** — Integrity check error: {_integ.get('error','unknown')}")
+        else:
+            st.info(f"**{_pipeline} pipeline** — Status: {_status}")
+    except Exception:
+        pass
+else:
+    st.caption("No integrity report found for this run. Interpret outputs with caution.")
+
+# -------------------- Accuracy Scorecard + Recommendations --------------------
+_scorecard_cfg = {}
+_scorecard_cfg_path = base_dir / "artifacts" / "config.json"
+if not _scorecard_cfg_path.exists():
+    _scorecard_cfg_path = out_root / "artifacts" / "config.json"
+if _scorecard_cfg_path.exists():
+    try:
+        import json as _j2
+        _scorecard_cfg = _j2.loads(_scorecard_cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+_rec = recommend_model(pred, metr, lb, _scorecard_cfg, target=targets[0] if targets else "", horizon=horizons[0] if horizons else 1)
+
+with st.expander("Accuracy Scorecard & Recommendations", expanded=True):
+    _grade = _rec["accuracy_grade"]
+    _color = _rec["grade_color"]
+    _best = _rec["best_model"]
+
+    g1, g2, g3, g4 = st.columns([1, 1, 1, 1])
+    with g1:
+        _grade_emoji = {"A": "🟢", "B": "🟢", "C": "🟡", "D": "🟠", "F": "🔴"}.get(_grade, "⚪")
+        st.metric("Accuracy Grade", f"{_grade_emoji} {_grade}")
+    with g2:
+        st.metric("Best Model", _best or "N/A")
+    with g3:
+        _sc = _rec["scorecard"]
+        _mae_v = _sc.get("MAE", np.nan)
+        st.metric("MAE", f"{_mae_v:,.0f}" if not np.isnan(_mae_v) else "N/A")
+    with g4:
+        _r2_v = _sc.get("R2", np.nan)
+        st.metric("R²", f"{_r2_v:.4f}" if not np.isnan(_r2_v) else "N/A")
+
+    # Show scorecard table
+    if _rec["scorecard"]:
+        st.markdown(format_scorecard_markdown(_rec["scorecard"]))
+
+    # Tips
+    if _rec["risk_flags"]:
+        for rf in _rec["risk_flags"]:
+            st.error(f"**Risk:** {rf}")
+    if _rec["tips"]:
+        for tip in _rec["tips"]:
+            st.info(f"**Tip:** {tip}")
+    if _rec["next_steps"]:
+        st.markdown("**Next steps:**")
+        for ns in _rec["next_steps"]:
+            st.markdown(f"- {ns}")
+
 # Optional date filter
 df_t = pred[pred["target"] == tgt]
 dmin, dmax = df_t["date"].min().date(), df_t["date"].max().date()
@@ -172,12 +231,17 @@ _freq = None
 if gran == "Weekly (Fri)": _freq = "W-FRI"
 elif gran == "Monthly (EOM)": _freq = "ME"
 
-# Detect if PI columns present
-has_pi = {"y_lo","y_hi"}.issubset(set(df_t.columns))
+# Detect if PI columns present AND contain at least some non-NaN values
+has_pi_cols = {"y_lo","y_hi"}.issubset(set(df_t.columns))
+has_pi = has_pi_cols and df_t["y_lo"].notna().any() and df_t["y_hi"].notna().any()
+if has_pi_cols and not has_pi:
+    st.warning("⚠️ **Prediction interval columns exist but contain no values.** "
+               "This run did not produce prediction intervals (common for ML models "
+               "with insufficient validation data). Point forecasts are still valid.")
 
 # -------------------- Tabs --------------------
-tab_overlay, tab_leader, tab_errors, tab_intervals, tab_integrity, tab_downloads = st.tabs(
-    ["Overlay", "Leaderboard", "Errors & Residuals", "Interval Diagnostics", "Forecast Integrity", "Downloads"]
+tab_overlay, tab_leader, tab_errors, tab_intervals, tab_integrity, tab_feat_imp, tab_ensemble, tab_downloads = st.tabs(
+    ["Overlay", "Leaderboard", "Errors & Residuals", "Interval Diagnostics", "Forecast Integrity", "Feature Importance", "Ensemble", "Downloads"]
 )
 
 # -------------------- Overlay (native daily/weekly) --------------------
@@ -378,7 +442,7 @@ with tab_integrity:
             
             alignment_ok = integrity.get("alignment_ok", True)
             skill_pct = integrity.get("skill_pct", np.nan)
-            skill_threshold = 2.0  # 2% minimum skill required
+            skill_threshold = QUALITY_GATE_SKILL_PCT  # Must match backend gate
             
             # Determine verdict
             if not alignment_ok:
@@ -517,6 +581,134 @@ with tab_integrity:
             "- Model beats simple baselines (persistence, seasonal naive)\n"
             "- No data leakage is present"
         )
+
+# -------------------- Feature Importance --------------------
+with tab_feat_imp:
+    st.subheader("Feature Importance (ML pipelines)")
+    st.caption("Shows which input features the ML models rely on most. Available for tree-based and linear models.")
+
+    fi_path = base_dir / "artifacts" / "feature_importance.csv"
+    if not fi_path.exists():
+        fi_path = out_root / "artifacts" / "feature_importance.csv"
+
+    if fi_path.exists():
+        fi_df = pd.read_csv(fi_path)
+        if fi_df.empty:
+            st.info("Feature importance file is empty.")
+        else:
+            fi_models = sorted(fi_df["model"].unique())
+            fi_model_sel = st.selectbox("Model", fi_models, index=0, key="fi_model_sel")
+
+            fi_m = fi_df[fi_df["model"] == fi_model_sel].copy()
+            fi_m = fi_m.sort_values("importance", ascending=False)
+
+            # Top-N control
+            top_n = st.slider("Show top N features", 5, min(50, len(fi_m)), min(20, len(fi_m)), key="fi_topn")
+            fi_top = fi_m.head(top_n)
+
+            # Horizontal bar chart
+            fig_fi = px.bar(
+                fi_top, x="importance", y="feature",
+                orientation="h",
+                title=f"Top {top_n} features for {fi_model_sel}",
+                height=max(300, top_n * 22),
+                color="importance",
+                color_continuous_scale="Blues",
+            )
+            fig_fi.update_layout(yaxis=dict(autorange="reversed"), showlegend=False)
+            st.plotly_chart(fig_fi, use_container_width=True, config={"displaylogo": False})
+
+            # Data table
+            with st.expander("Full feature importance table"):
+                st.dataframe(fi_m[["feature", "importance"]], use_container_width=True, hide_index=True)
+
+            # Download
+            st.download_button(
+                "Download feature importance (CSV)",
+                data=fi_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"feature_importance_{sel_run}.csv",
+                key="fi_dl_btn",
+            )
+    else:
+        st.info(
+            "No **feature_importance.csv** found for this run. "
+            "Feature importance is extracted from ML pipeline (family B) runs. "
+            "Run a B-ML experiment to see this data."
+        )
+
+# -------------------- Ensemble --------------------
+with tab_ensemble:
+    st.subheader("Ensemble — Combine multiple runs")
+    st.write(
+        "Select 2+ runs below to create ensembles (median, top-K mean, inverse-MAE weighted). "
+        "The ensemble combines predictions from different models into a single, often more accurate, forecast."
+    )
+    _all_runs = _list_runs()
+    _run_names = [r.name for r in _all_runs]
+    _ens_selected = st.multiselect(
+        "Runs to combine", _run_names,
+        default=[_run_names[0]] if _run_names else [],
+        help="Select 2+ runs. Each should have predictions_long.csv.",
+        key="ens_run_selector",
+    )
+
+    _ens_topk = st.number_input("Top-K for mean ensemble", 1, 20, 3, key="ens_topk",
+                                help="How many best models to average in ens_mean_topK.")
+
+    if st.button("Build Ensemble", type="primary", key="ens_build_btn"):
+        if len(_ens_selected) < 2:
+            st.error("Select at least 2 runs to create an ensemble.")
+        else:
+            import sys
+            _backend_dir = APPROOT.parent / "backend"
+            if str(_backend_dir) not in sys.path:
+                sys.path.insert(0, str(_backend_dir))
+            try:
+                from ensemble_postprocess import run_ensemble_from_runs
+                _ens_dirs = [str(RUNS_DIR / rn) for rn in _ens_selected]
+                _ens_out = str(RUNS_DIR / f"_ensemble_{'_'.join(_ens_selected[:3])}")
+                with st.spinner("Building ensembles..."):
+                    result = run_ensemble_from_runs(_ens_dirs, _ens_out, cadence="daily", top_k=int(_ens_topk))
+                ens_preds = result.get("predictions", pd.DataFrame())
+                ens_metr = result.get("metrics", pd.DataFrame())
+                ens_lb = result.get("leaderboard", pd.DataFrame())
+
+                if ens_preds.empty:
+                    st.warning("No ensemble predictions could be generated. Check that runs have compatible predictions.")
+                else:
+                    st.success(f"Ensemble built with {len(ens_preds)} predictions across {ens_preds['model'].nunique()} methods.")
+
+                    # Overlay chart
+                    fig_ens = go.Figure()
+                    _first_model = ens_preds["model"].unique()[0]
+                    _base = ens_preds[ens_preds["model"] == _first_model].sort_values("date")
+                    fig_ens.add_scatter(x=pd.to_datetime(_base["date"]), y=_base["y_true"],
+                                        name="Actual", mode="lines", line=dict(color="black", width=2))
+                    for em in ens_preds["model"].unique():
+                        _eg = ens_preds[ens_preds["model"] == em].sort_values("date")
+                        fig_ens.add_scatter(x=pd.to_datetime(_eg["date"]), y=_eg["y_pred"],
+                                            name=em, mode="lines")
+                    fig_ens.update_layout(height=420, margin=dict(l=10, r=10, t=40, b=10),
+                                          legend=dict(orientation="h", yanchor="bottom", y=1.02))
+                    st.plotly_chart(fig_ens, use_container_width=True, config={"displaylogo": False})
+
+                    # Leaderboard
+                    if not ens_lb.empty:
+                        st.subheader("Ensemble Leaderboard")
+                        st.dataframe(ens_lb, use_container_width=True, hide_index=True)
+
+                    # Download
+                    st.download_button(
+                        "Download ensemble predictions (CSV)",
+                        data=ens_preds.to_csv(index=False).encode("utf-8"),
+                        file_name="predictions_ensemble.csv",
+                        key="ens_dl_btn",
+                    )
+            except Exception as e:
+                st.error(f"Ensemble failed: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
 
 # -------------------- Downloads --------------------
 with tab_downloads:
