@@ -332,9 +332,9 @@ PY
 ## 6) Using the Streamlit app (what each tab is for)
 
 ### Overview
-- confirms backend connection (auto-detected from `.tg_paths.json`)
-- shows recent runs
-- quick access to run logs and downloads
+- Confirms backend connection (auto-detected from `.tg_paths.json`)
+- Shows recent runs with quick access to logs and downloads
+- Links to all pages
 
 ### Data Pre-processing
 Converts **Balance_by_Day_*.xlsx** into a standardized daily dataset.
@@ -342,33 +342,49 @@ Converts **Balance_by_Day_*.xlsx** into a standardized daily dataset.
 Typical steps:
 1. Upload an Excel file
 2. Choose variant: `raw / clean_conservative / clean_treasury`
-3. Run preprocessing  
+3. Run preprocessing
 Outputs go to `data_preprocessed/<variant>/` and are available for the Lab.
 
-### Lab
-The main “experiment runner”:
-- Choose **target**, **cadence**, **horizon**
-- Choose **family** (A/B/C/E) + **model**
-- Optionally set hyperparameters / overrides
-- Run and watch the log live
+### Lab (Experiment Runner)
+The main experiment runner with enhanced features:
+- **Run profiles:** Demo (fast) / Balanced / Thorough with family-specific parameters
+- **Batch runs:** Run ALL models in a family or select multiple models
+- **Multi-horizon:** Run the same model(s) at several horizons in one go
+- **Data quality pre-flight:** Automatic blocker/warning/info checks before running
+- Choose **target**, **cadence**, **horizon**, **family** (A/B/C/E) + **model**
+- Watch the live backend log and see overlay previews after runs complete
+
 Outputs go to:
 `frontend/runs/run_<family>_<model>_<target>_<cadence>_h<h>_<timestamp>/`
 
 ### Dashboard
-Visual analysis:
-- actual vs predicted overlays
-- metrics + leaderboard
-- residual diagnostics
-- intervals (if produced)
+Comprehensive visual analysis with 8 tabs:
+- **Overlay:** Actual vs predicted with optional PI bands and resampling
+- **Leaderboard:** Bar chart and table ranking models by chosen metric
+- **Errors & Residuals:** Absolute error over time, residual histogram, rolling MAE
+- **Interval Diagnostics:** PI coverage and bandwidth analysis
+- **Forecast Integrity:** Alignment checks, leakage tests, baseline comparisons, quality gate
+- **Feature Importance:** Which input features the ML model relies on most (bar chart + table)
+- **Ensemble:** Combine 2+ runs into median/top-K/weighted ensembles (in-process)
+- **Downloads:** Filtered CSVs and static plot ZIPs
+
+Also includes an **Accuracy Scorecard** with letter grade (A-F), best model, key metrics, and actionable recommendations.
+
+### Compare Runs
+Side-by-side comparison of 2-6 runs:
+- **Overlay Chart:** Multi-run forecast overlay against actuals
+- **Metric Comparison:** Bar chart and table of MAE/RMSE/sMAPE/R2 per run
+- **Winner Summary:** Podium ranking and recommendation of the best model
+- **Interval Comparison:** PI coverage and width across runs
 
 ### History
 Archive of all runs:
-- open a run folder
-- view logs
-- download CSVs and artifacts
+- Overview table with filters and column selection
+- Open any run folder to view logs, predictions, metrics, and leaderboard
+- Download CSVs and full artifact ZIPs
 
 ### Models
-Reference page for model families + parameter definitions.
+Reference page for model families + parameter definitions, including cheat sheets and copy-ready JSON overrides.
 
 ---
 
@@ -426,10 +442,29 @@ The scripts install CPU wheels. If you need GPU (rare on Mac), follow PyTorch in
 
 ---
 
+## Key Features
+
+| Feature | Description |
+|---|---|
+| **Run Profiles** | Demo / Balanced / Thorough with family-specific parameter tuning |
+| **Batch Runs** | Run ALL models in a family and/or multiple horizons in one session |
+| **Data Quality Pre-flight** | Automatic blocker/warning/info checks before launching a run |
+| **Native Prediction Intervals** | ETS/SARIMAX confidence intervals + conformal PIs for ML |
+| **Ensemble from UI** | Combine 2+ runs into median, top-K, or inverse-MAE weighted ensembles |
+| **Cross-Run Comparison** | Side-by-side overlay, metrics, winner podium, and PI comparison |
+| **Accuracy Scorecard** | Letter grade (A-F), key metrics, actionable tips, and next steps |
+| **Feature Importance** | Visualize which input features ML models rely on |
+| **Forecast Integrity** | Alignment checks, leakage tests, shift diagnostics, quality gate |
+
+---
+
 ## Summary
 
 AI4CM provides:
-- a local, reproducible forecasting laboratory
-- a Streamlit UI for running + comparing model families
-- structured outputs (predictions, metrics, plots, logs)
-- setup scripts for Windows/macOS so others can run it easily
+- A local, reproducible forecasting laboratory
+- A Streamlit UI for running and comparing model families (Statistical, ML, DL, Quantile)
+- Structured outputs (predictions, metrics, leaderboard, plots, artifacts)
+- Batch execution, multi-horizon support, and ensemble methods
+- Data quality validation, accuracy scoring, and smart recommendations
+- Cross-run comparison tools for informed decision-making
+- Setup scripts for Windows and macOS

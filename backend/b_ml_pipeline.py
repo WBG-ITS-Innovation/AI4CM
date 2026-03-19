@@ -88,13 +88,15 @@ class ConfigBML:
 
     def __post_init__(self):
         if self.lags_daily is None:
-            # ✅ FIX C: Include lag_0 (current value) - critical for horizon forecasting
-            self.lags_daily = [0, 1, 3, 7, 14]
-        else:
-            # ✅ FIX 1: Auto-add lag_0 if missing (prevent horizon shift artifacts)
-            if 0 not in self.lags_daily:
-                self.lags_daily = [0] + self.lags_daily
-                print(f"[WARN] lag_0 auto-added to lags_daily to prevent horizon shift artifacts. New lags: {self.lags_daily}")
+            # Lag_0 is the value at the origin date (y(t)).  For stock / level
+            # targets this dominates all other features and makes the model a
+            # trivial persistence predictor (y_hat = y_origin).  We therefore
+            # EXCLUDE lag_0 by default and instead expose origin_value as a
+            # separate input to the persistence baseline & integrity checks.
+            # For flow targets lag_0 is also excluded because it biases the
+            # model toward persistence and hides genuine learning.  Users who
+            # explicitly want it can add 0 to lags_daily via overrides.
+            self.lags_daily = [1, 3, 7, 14]
         if self.windows_daily is None:
             self.windows_daily = [3, 7, 14]
         if self.lags_weekly is None:
@@ -192,15 +194,15 @@ def ops_daily_from_monthly(series: pd.Series, monthly_baseline: pd.Series) -> pd
 def lag_window_features(s: pd.Series, lags: List[int], windows: List[int]) -> pd.DataFrame:
     """
     Build lag and rolling window features.
-    
-    ✅ FIX C: Supports lag_0 (current value at origin_date).
-    For lag=0, uses s directly (no shift). This is critical for horizon forecasting.
+
+    For lag=0 (if present) this is the current value at origin_date — equivalent
+    to a persistence anchor.  It is **no longer included by default** because it
+    dominates the model for stock targets.  See ``choose_recipe`` for details.
     """
     feats = pd.DataFrame(index=s.index)
     for L in lags:
         L = int(L)
         if L == 0:
-            # ✅ FIX C: lag_0 = current value (no shift)
             feats["lag_0"] = s
         else:
             feats[f"lag_{L}"] = s.shift(L)
@@ -212,24 +214,29 @@ def lag_window_features(s: pd.Series, lags: List[int], windows: List[int]) -> pd
 def choose_recipe(cfg: ConfigBML) -> Tuple[List[int], List[int]]:
     """
     Choose lag and window recipe based on cadence.
-    
-    ✅ FIX 1: Ensures lag_0 is included (auto-added in __post_init__ if missing).
+
+    NOTE: lag_0 is intentionally NOT auto-added.  Including lag_0 (the value
+    at origin date) makes the model a trivial persistence predictor for
+    stock/level targets and masks genuine learning for flow targets.
+    If users explicitly include 0 in their lag list via overrides it will be
+    honoured, but the pipeline will log a warning.
     """
     cad = cfg.cadence.lower()
     if cad == "daily":
-        lags, wins = cfg.lags_daily, cfg.windows_daily
+        lags, wins = list(cfg.lags_daily), list(cfg.windows_daily)
     elif cad == "weekly":
-        lags, wins = cfg.lags_weekly, cfg.windows_weekly
+        lags, wins = list(cfg.lags_weekly), list(cfg.windows_weekly)
     elif cad == "monthly":
-        lags, wins = cfg.lags_monthly, cfg.windows_monthly
+        lags, wins = list(cfg.lags_monthly), list(cfg.windows_monthly)
     else:
-        lags, wins = cfg.lags_daily, cfg.windows_daily
-    
-    # ✅ FIX 1: Final check - ensure lag_0 is present (defensive)
-    if 0 not in lags:
-        lags = [0] + lags
-        print(f"[WARN] lag_0 auto-added in choose_recipe to prevent horizon shift artifacts. New lags: {lags}")
-    
+        lags, wins = list(cfg.lags_daily), list(cfg.windows_daily)
+
+    # Warn if user explicitly included lag_0
+    if 0 in lags:
+        print(f"[WARN] lag_0 (origin value) is included in lags={lags}. "
+              f"This makes the model a near-persistence predictor for stock targets. "
+              f"Consider removing it unless you have a specific reason to keep it.")
+
     return lags, wins
 
 
@@ -301,6 +308,18 @@ def evaluate_block(df_pred: pd.DataFrame, target: str, horizon: int, ops_series:
             smp = float(np.mean(2 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred) + eps)))
 
         tol10 = float(np.mean((np.abs(m_true - m_pred) / np.maximum(np.abs(m_true), 1e-9)) <= 0.10)) if len(m_true) else np.nan
+
+        # Compute PI coverage if intervals exist
+        pi_cov = np.nan
+        pi_width = np.nan
+        if "y_lo" in g.columns and "y_hi" in g.columns:
+            lo = g["y_lo"].to_numpy()
+            hi = g["y_hi"].to_numpy()
+            valid_pi = np.isfinite(lo) & np.isfinite(hi)
+            if valid_pi.any():
+                pi_cov = float(np.mean((y_true[valid_pi] >= lo[valid_pi]) & (y_true[valid_pi] <= hi[valid_pi])))
+                pi_width = float(np.mean(hi[valid_pi] - lo[valid_pi]))
+
         rows.append({
             "target": target,
             "horizon": horizon,
@@ -310,8 +329,8 @@ def evaluate_block(df_pred: pd.DataFrame, target: str, horizon: int, ops_series:
             "sMAPE": smp,
             "MAPE": mape,
             "R2": r2,
-            "PI_coverage@90": np.nan,
-            "PI_width@90": np.nan,
+            "PI_coverage@90": pi_cov,
+            "PI_width@90": pi_width,
             "Monthly_TOL10_Accuracy": tol10,
             "MAE_skill_vs_Ops": np.nan,
         })
@@ -375,8 +394,12 @@ def plot_overlay_top(df_slice: pd.DataFrame, target: str, h: int, best_model: st
 
 def plot_leaderboard_bar(mdf: pd.DataFrame, target: str, h: int, out_png: Path):
     g = mdf.sort_values("MAE")
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.barh(g["model"], g["MAE"]); ax.invert_yaxis()
+    fig, ax = plt.subplots(figsize=(8, max(3, 0.5 * len(g) + 1)))
+    # Colour persistence baseline differently so it stands out as reference line
+    colours = ["#d62728" if "Persistence" in str(m) or "baseline" in str(m).lower()
+                else "#1f77b4" for m in g["model"]]
+    ax.barh(g["model"], g["MAE"], color=colours)
+    ax.invert_yaxis()
     ax.set_title(f"{target} | h=D+{h} | Leaderboard by MAE (ML)")
     ax.set_xlabel("MAE (lower is better)")
     fig.tight_layout(); fig.savefig(out_png); plt.close(fig)
@@ -555,7 +578,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         for model_name, estimator in all_models.items():
             import time
             model_start_time = time.time()
-            preds, ytrues, target_dates, origin_dates, origin_values = [], [], [], [], []
+            preds, ytrues, target_dates, origin_dates, origin_values, pi_radii = [], [], [], [], [], []
             n_fits = 0
             # ✅ FIX 7: Initialize overfitting metrics storage
             if not hasattr(estimator, '_overfit_metrics'):
@@ -654,12 +677,16 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                         print(f"[pipeline] Lasso convergence: n_iter={n_iter}, ||coef||={coef_norm:.2f} "
                               f"(origin={origin.date()}, n_features={X_tr_fit.shape[1]})")
                 
-                # ✅ FIX 7: Aggregate overfitting warnings (non-spammy)
-                # Store per-origin metrics for aggregation later
+                # ✅ FIX 7: Aggregate overfitting warnings + conformal PI
+                # Collect validation residuals for conformal prediction intervals
+                conformal_radius = np.nan
                 if X_tr_val is not None and len(X_tr_val) > 5:
                     y_pred_val = estimator.predict(X_tr_val)
-                    val_mae = float(np.mean(np.abs(y_tr_val - y_pred_val)))
+                    abs_residuals = np.abs(y_tr_val.values - y_pred_val)
+                    val_mae = float(np.mean(abs_residuals))
                     train_mae = float(np.mean(np.abs(y_tr_fit - estimator.predict(X_tr_fit))))
+                    # Conformal PI: use the nominal_pi quantile of |residuals|
+                    conformal_radius = float(np.quantile(abs_residuals, cfg.nominal_pi))
                     # Store for aggregation (will log once per model/fold)
                     if not hasattr(estimator, '_overfit_metrics'):
                         estimator._overfit_metrics = []
@@ -667,7 +694,8 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                         'origin': origin.date(),
                         'train_mae': train_mae,
                         'val_mae': val_mae,
-                        'ratio': val_mae / train_mae if train_mae > 0 else np.nan
+                        'ratio': val_mae / train_mae if train_mae > 0 else np.nan,
+                        'conformal_radius': conformal_radius,
                     })
                 delta_hat = float(estimator.predict(x_pred)[0])
                 
@@ -724,6 +752,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 target_dates.append(t)  # target_date = origin + h (step-based)
                 origin_dates.append(origin)  # origin_date
                 origin_values.append(origin_val)  # y at origin
+                pi_radii.append(conformal_radius)  # conformal PI radius (may be NaN)
                 n_fits += 1
 
             if target_dates:
@@ -732,11 +761,18 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                       f"({model_elapsed/max(1,n_fits):.3f}s per fit, {len(target_dates)} predictions)")
                 
                 # ✅ FIX 7: Aggregate and report overfitting warnings (once per model/fold)
+                fold_conformal_radius = np.nan
                 if hasattr(estimator, '_overfit_metrics') and len(estimator._overfit_metrics) > 0:
                     metrics = estimator._overfit_metrics
                     median_train_mae = np.median([m['train_mae'] for m in metrics])
                     median_val_mae = np.median([m['val_mae'] for m in metrics])
                     median_ratio = np.median([m['ratio'] for m in metrics if not np.isnan(m['ratio'])])
+                    valid_radii = [m['conformal_radius'] for m in metrics
+                                   if not np.isnan(m.get('conformal_radius', np.nan))]
+                    if valid_radii:
+                        fold_conformal_radius = float(np.median(valid_radii))
+                        print(f"[pipeline] {model_name} conformal PI radius (fold median): "
+                              f"{fold_conformal_radius:.2f} at {int(cfg.nominal_pi*100)}% level")
                     if median_ratio > 1.5:  # Validation 50% worse than training
                         print(f"[WARN] Generalization gap detected for {model_name}: "
                               f"median(train_mae)={median_train_mae:.2f}, median(val_mae)={median_val_mae:.2f}, "
@@ -744,6 +780,21 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                               f"This may indicate distribution shift or overfitting.")
                     # Clear metrics for next fold
                     estimator._overfit_metrics = []
+
+                # Build y_lo / y_hi from conformal radii (per-origin where
+                # available, else fall back to fold-level median radius)
+                y_lo_list, y_hi_list = [], []
+                preds_arr = np.array(preds)
+                radii_arr = np.array(pi_radii)
+                for i in range(len(preds)):
+                    r = radii_arr[i] if np.isfinite(radii_arr[i]) else fold_conformal_radius
+                    if np.isfinite(r):
+                        y_lo_list.append(preds_arr[i] - r)
+                        y_hi_list.append(preds_arr[i] + r)
+                    else:
+                        y_lo_list.append(np.nan)
+                        y_hi_list.append(np.nan)
+
                 df_m = pd.DataFrame({
                     "date": target_dates,  # target_date (existing column name for compatibility)
                     "target_date": target_dates,  # explicit target_date
@@ -754,8 +805,8 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     "model": model_name,
                     "y_true": ytrues,
                     "y_pred": preds,
-                    "y_lo": [np.nan] * len(target_dates),
-                    "y_hi": [np.nan] * len(target_dates),
+                    "y_lo": y_lo_list,
+                    "y_hi": y_hi_list,
                     "split_id": f"{train_end.date()}→{test_start.date()}..{test_end.date()}",
                     "defn_variant": "ML-Uni" if cfg.variant == "uni" else "ML-Multi",
                 })
@@ -829,28 +880,57 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         glb = (mdf.groupby("model", as_index=False)["MAE"].mean()
                   .sort_values("MAE")
                   .assign(target=cfg.target, horizon=cfg.horizon, rank=lambda g: np.arange(1, len(g) + 1)))
+
+        # ✅ FIX 11: Add persistence baseline row so users can compare directly
+        if "origin_value" in pred_long.columns:
+            _valid = pred_long.dropna(subset=["origin_value", "y_true"])
+            if len(_valid) > 0:
+                _mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+                persist_row = pd.DataFrame([{
+                    "target": cfg.target, "horizon": cfg.horizon,
+                    "model": "⚡ Persistence (baseline)", "MAE": _mae_persist, "rank": 0,
+                }])
+                glb = pd.concat([persist_row, glb], ignore_index=True)
+                # Re-rank: persistence gets rank 0 (reference), models start at 1
+                glb["rank"] = range(len(glb))
+                print(f"[leaderboard] Persistence baseline MAE = {_mae_persist:.4f}")
+
         glb[["target", "horizon", "model", "MAE", "rank"]].to_csv(out_root / "leaderboard.csv", index=False)
     
     # ✅ Forecast integrity checks with HARD GATE - run ALWAYS when predictions exist
     try:
         from preprocessing.integrity import compute_integrity_report, leakage_sentinel
         
-        # Compute integrity report - use first model if glb exists, otherwise use first model in predictions
+        # Compute integrity report — pick best *trained* model (skip baseline row)
         if glb is not None and len(glb) > 0:
-            best_model = glb.iloc[0]["model"]
+            _trained_for_integrity = glb[~glb["model"].str.contains("baseline", case=False, na=False)]
+            best_model = (_trained_for_integrity.iloc[0]["model"]
+                          if len(_trained_for_integrity) > 0
+                          else glb.iloc[0]["model"])
         else:
             # Fallback: use first model found in predictions
             models_in_preds = pred_long["model"].unique()
             best_model = models_in_preds[0] if len(models_in_preds) > 0 else None
         if best_model and len(pred_long) > 0:
-            # ✅ FIX 3: Use new forecast_integrity module for horizon-aware checks
+            # ✅ FIX 3 + FIX 16: Use horizon-aware integrity checks.
+            # Try both import paths: when cwd=backend/ (production via
+            # subprocess) the module is at top-level; when imported as a
+            # package it lives under backend.
             try:
-                from backend.forecast_integrity import (
-                    validate_alignment_step_based,
-                    shift_diagnostic_horizon_aware,
-                    compute_persistence_baseline,
-                    compute_skill_score,
-                )
+                try:
+                    from forecast_integrity import (
+                        validate_alignment_step_based,
+                        shift_diagnostic_horizon_aware,
+                        compute_persistence_baseline,
+                        compute_skill_score,
+                    )
+                except ImportError:
+                    from backend.forecast_integrity import (
+                        validate_alignment_step_based,
+                        shift_diagnostic_horizon_aware,
+                        compute_persistence_baseline,
+                        compute_skill_score,
+                    )
                 
                 # Alignment validation (step-based)
                 alignment_check = validate_alignment_step_based(pred_long, s.index, cfg.horizon)
@@ -993,7 +1073,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         print(f"Baseline comparison:")
         print(f"  - Model MAE: {mae_model:.2f}")
         print(f"  - Persistence MAE: {mae_persistence:.2f}")
-        print(f"  - Skill: {skill_pct:.2f}% {'(PASS)' if skill_pct >= 2.0 else '(FAILED_QUALITY)'}")
+        print(f"  - Skill: {skill_pct:.2f}% {'(PASS)' if skill_pct >= 5.0 else '(FAILED_QUALITY)'}")
         
         run_status = integrity_report.get("run_status", "SUCCESS")
         print(f"Run status: {run_status}")
@@ -1056,10 +1136,11 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
             # ✅ QUALITY GATE: Flag if skill < 2% but don't abort (outputs are still valid)
             skill_pct = integrity_report.get("skill_pct", np.nan)
             if not np.isnan(skill_pct):
-                if skill_pct < 2.0:
+                _QUALITY_GATE_SKILL_PCT = 5.0   # Minimum acceptable skill %
+                if skill_pct < _QUALITY_GATE_SKILL_PCT:
                     error_msg = (
                         f"Model does not beat persistence baseline at horizon {cfg.horizon}: "
-                        f"skill={skill_pct:.2f}% (threshold=2.0%). "
+                        f"skill={skill_pct:.2f}% (threshold={_QUALITY_GATE_SKILL_PCT}%). "
                         f"Outputs are real but not useful yet. "
                         f"MAE_model={integrity_report.get('mae_model', np.nan):.0f} vs "
                         f"MAE_persistence={integrity_report.get('mae_persistence', np.nan):.0f}."
@@ -1075,7 +1156,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 else:
                     integrity_report["run_status"] = "SUCCESS"
                     integrity_report["quality_gate_failed"] = False
-                    print(f"[OK] Quality gate passed: skill={skill_pct:.2f}% >= 2.0%")
+                    print(f"[OK] Quality gate passed: skill={skill_pct:.2f}% >= {_QUALITY_GATE_SKILL_PCT}%")
             else:
                 integrity_report["run_status"] = "SUCCESS" if not integrity_report.get("lag_warning", False) else "WARNING"
                 integrity_report["quality_gate_failed"] = False
@@ -1096,8 +1177,8 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 print(f"[BASELINE] Baseline(persist) MAE={mae_persistence:.2f}, Model MAE={mae_model:.2f}, Skill={skill_pct:.2f}%")
                 if skill_pct < 0:
                     print(f"[WARN] Model underperforms persistence baseline: skill={skill_pct:.2f}% (model is worse than naive)")
-                elif skill_pct < 2.0:
-                    print(f"[WARN] Model skill is low: skill={skill_pct:.2f}% (threshold=2.0% for Thorough mode)")
+                elif skill_pct < 5.0:
+                    print(f"[WARN] Model skill is low: skill={skill_pct:.2f}% (threshold=5.0% for Thorough mode)")
                 else:
                     print(f"[OK] Model beats persistence baseline: skill={skill_pct:.2f}%")
             
@@ -1158,8 +1239,11 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         except Exception:
             pass
 
-    # glb already initialized above
-    best_model = glb.iloc[0]["model"] if (glb is not None and len(glb) > 0) else None
+    # glb already initialized above — pick best *trained* model (skip baseline row)
+    best_model = None
+    if glb is not None and len(glb) > 0:
+        _trained = glb[~glb["model"].str.contains("baseline", case=False, na=False)]
+        best_model = _trained.iloc[0]["model"] if len(_trained) > 0 else glb.iloc[0]["model"]
     try:
         plot_overlay_all(pred_long, cfg.target, cfg.horizon, ops_series, out_root / f"{cfg.target.replace(' ','_')}_h{cfg.horizon}_overlay_all.png")
         if best_model:
@@ -1167,9 +1251,55 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                              out_root / f"{cfg.target.replace(' ','_')}_h{cfg.horizon}_overlay_top.png")
             plot_monthly_bars(pred_long[pred_long["model"] == best_model], cfg.target, cfg.horizon, ops_series,
                               out_root / f"{cfg.target.replace(' ','_')}_h{cfg.horizon}_monthly_bars_top_vs_ops.png")
-            plot_leaderboard_bar(mdf, cfg.target, cfg.horizon, out_root / f"{cfg.target.replace(' ','_')}_h{cfg.horizon}_leaderboard_mae.png")
+            # Use glb (which includes persistence baseline row) for leaderboard chart
+            _lb = glb if (glb is not None and len(glb) > 0) else mdf
+            plot_leaderboard_bar(_lb, cfg.target, cfg.horizon, out_root / f"{cfg.target.replace(' ','_')}_h{cfg.horizon}_leaderboard_mae.png")
     except Exception as e:
         print(f"[WARN] Plotting failed: {e}")
+
+    # ✅ Feature importance extraction (for tree-based models)
+    try:
+        fi_records = []
+        for model_name, estimator in all_models.items():
+            importances = None
+            feature_names = None
+
+            # Try to get feature names from last fit
+            if hasattr(estimator, 'feature_names_in_'):
+                feature_names = list(estimator.feature_names_in_)
+            elif hasattr(estimator, 'named_steps'):
+                last_step = list(estimator.named_steps.values())[-1]
+                if hasattr(last_step, 'feature_names_in_'):
+                    feature_names = list(last_step.feature_names_in_)
+
+            # Get importances
+            if hasattr(estimator, 'feature_importances_'):
+                importances = estimator.feature_importances_
+            elif hasattr(estimator, 'named_steps'):
+                last_step = list(estimator.named_steps.values())[-1]
+                if hasattr(last_step, 'feature_importances_'):
+                    importances = last_step.feature_importances_
+                elif hasattr(last_step, 'coef_'):
+                    importances = np.abs(last_step.coef_)
+
+            if importances is not None and len(importances) > 0:
+                if feature_names is None:
+                    feature_names = [f"feat_{i}" for i in range(len(importances))]
+                # Ensure same length
+                n = min(len(feature_names), len(importances))
+                for i in range(n):
+                    fi_records.append({
+                        "model": model_name,
+                        "feature": feature_names[i],
+                        "importance": float(importances[i]),
+                    })
+
+        if fi_records:
+            fi_df = pd.DataFrame(fi_records)
+            fi_df.to_csv(out_root / "artifacts" / "feature_importance.csv", index=False)
+            print(f"[OK] Feature importance saved: {len(fi_records)} entries across {fi_df['model'].nunique()} models")
+    except Exception as e:
+        print(f"[WARN] Feature importance extraction failed: {e}")
 
     # Artifacts
     with open(out_root / "artifacts" / "RUN.md", "w", encoding="utf-8") as f:
