@@ -27,12 +27,207 @@ APPROOT = Path(__file__).resolve().parent
 RUNS_DIR = APPROOT / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
 
+# -------------------------------------------------------------------
+# Help strings (used as widget hover tooltips)
+# -------------------------------------------------------------------
+HELP: Dict[str, str] = {
+    # Data
+    "upload_csv": (
+        "Upload a CSV file used for forecasting.\n\n"
+        "Requirements:\n"
+        "• A date column (e.g., 'date')\n"
+        "• At least one numeric column (your forecast Target)\n"
+        "• Optional: additional numeric columns (potential drivers / exogenous features)\n\n"
+        "Tip: for best results, ensure the date column is consistently formatted and sorted."
+    ),
+    "quick_sample": (
+        "Creates a smaller dataset from the end of the uploaded file (most recent rows).\n\n"
+        "Why it exists:\n"
+        "• Faster runs during demos\n"
+        "• Faster iteration while tuning parameters\n\n"
+        "This does not change the original uploaded dataset."
+    ),
+    "rows_keep": (
+        "Number of rows kept in the quick sample.\n\n"
+        "Practical guidance:\n"
+        "• 2,000–10,000 rows is typically enough for a demo\n"
+        "• Larger samples improve training signal but increase runtime"
+    ),
+    "data_source": (
+        "Select which dataset file to run.\n\n"
+        "• Full uploaded dataset: best fidelity, slower\n"
+        "• Quick sample: faster, best for demos and iteration"
+    ),
+    "preview": (
+        "Preview of the dataset. The chart preview below reflects your chosen cadence (Daily / Weekly / Monthly).\n\n"
+        "If you see gaps or invalid dates, check date parsing and column selection."
+    ),
+    # Configure
+    "date_col": (
+        "The column used as time index.\n\n"
+        "The runner:\n"
+        "• Parses this column into timestamps\n"
+        "• Sorts the data chronologically\n"
+        "• Aggregates to Weekly/Monthly if selected\n\n"
+        "Select the column that represents observation dates."
+    ),
+    "target": (
+        "The numeric series you want to forecast.\n\n"
+        "Examples:\n"
+        "• Revenues, Expenditures, Balance, Net flows\n\n"
+        "In Univariate mode, models use only the target history.\n"
+        "In Multivariate mode, models may use other columns as additional inputs."
+    ),
+    "cadence": (
+        "Controls the time resolution of forecasting.\n\n"
+        "• Daily: observations by day\n"
+        "• Weekly: aggregated by week (W-FRI)\n"
+        "• Monthly: aggregated by month-end (ME)\n\n"
+        "Cadence affects:\n"
+        "• seasonality settings (7/52/12)\n"
+        "• feature engineering choices (lags/windows)\n"
+        "• horizon interpretation (steps ahead)"
+    ),
+    "horizon": (
+        "How many steps ahead to forecast at the selected cadence.\n\n"
+        "Examples:\n"
+        "• Monthly horizon=6 → forecast 6 months ahead\n"
+        "• Daily horizon=14 → forecast 14 days ahead\n\n"
+        "Longer horizons are harder and typically increase error."
+    ),
+    "family": (
+        "Select the forecasting model family.\n\n"
+        "A · Statistical:\n"
+        "• ETS, SARIMAX, STL-ARIMA, Theta, baselines\n"
+        "• Transparent and strong baselines\n\n"
+        "B · Machine Learning:\n"
+        "• Regression/trees/boosting using engineered features\n\n"
+        "C · Deep Learning:\n"
+        "• LSTM/GRU/TCN/Transformer style models\n\n"
+        "E · Quantile:\n"
+        "• Produces P10/P50/P90 (risk-aware ranges)"
+    ),
+    "variant": (
+        "Univariate vs Multivariate.\n\n"
+        "• Univariate: uses only target history\n"
+        "• Multivariate: also uses additional columns as potential predictors\n\n"
+        "Multivariate can help when extra columns are meaningful drivers.\n"
+        "If extra columns are noisy, it can reduce generalization."
+    ),
+    "profile": (
+        "Defines how heavy the run is.\n\n"
+        "Demo (fast):\n"
+        "• minimal validation\n"
+        "• optional data clipping\n\n"
+        "Balanced:\n"
+        "• moderate cross-validation\n"
+        "• reasonable training history\n\n"
+        "Thorough:\n"
+        "• more cross-validation\n"
+        "• slower but more robust comparisons"
+    ),
+    # ML knobs
+    "lags": (
+        "Lags are past target values used as input features.\n\n"
+        "Example:\n"
+        "• lag 7 (daily) uses the value from 7 days ago.\n\n"
+        "Guidance:\n"
+        "• Include lags around seasonality: 7/14/28 (daily), 4/12 (weekly), 3/12 (monthly)\n"
+        "• Avoid excessively dense lag sets when data is limited"
+    ),
+    "windows": (
+        "Rolling windows are trailing summaries (e.g., rolling mean/std) used as features.\n\n"
+        "Example:\n"
+        "• window 7 (daily) uses stats over the last 7 days.\n\n"
+        "Guidance:\n"
+        "• Use a few windows that match business cycles\n"
+        "• Ensure windows are trailing (past-only) to prevent leakage"
+    ),
+    "exog_top_k": (
+        "In Multivariate mode, selects the top-K most useful exogenous columns.\n\n"
+        "Purpose:\n"
+        "• Controls feature explosion\n"
+        "• Helps reduce overfitting\n\n"
+        "Guidance:\n"
+        "• Start small (5–15)\n"
+        "• Increase only if models are stable and data is sufficiently large"
+    ),
+    # DL knobs
+    "lookback": (
+        "Deep learning: how much history is fed into the network per prediction.\n\n"
+        "Example:\n"
+        "• lookback 48 (daily) = use last 48 days to predict future.\n\n"
+        "Guidance:\n"
+        "• Cover at least 1–2 major seasonal cycles when possible\n"
+        "• Larger lookback increases runtime and memory"
+    ),
+    "batch_size": (
+        "Deep learning: mini-batch size used during training.\n\n"
+        "Higher:\n"
+        "• faster per epoch\n"
+        "• more memory usage\n\n"
+        "Lower:\n"
+        "• safer on CPU\n"
+        "• slower but stable"
+    ),
+    "max_epochs": (
+        "Deep learning: maximum training epochs.\n\n"
+        "Guidance:\n"
+        "• Use small values when iterating\n"
+        "• Increase when you have a stable configuration and want best accuracy\n\n"
+        "If training is unstable, reduce learning rate (configured in backend) or reduce model size."
+    ),
+    "valid_frac": (
+        "Deep learning: fraction of data reserved for validation monitoring.\n\n"
+        "Purpose:\n"
+        "• track generalization during training\n"
+        "• enable early stopping (if implemented in backend)"
+    ),
+    "conformal_calib": (
+        "Fraction reserved for calibrating prediction intervals (conformal).\n\n"
+        "Purpose:\n"
+        "• improves reliability of uncertainty bands\n\n"
+        "Tradeoff:\n"
+        "• more calibration data = less training data"
+    ),
+    "device": (
+        "Compute device selection.\n\n"
+        "• auto: choose best available\n"
+        "• cpu: safest / portable\n"
+        "• cuda: GPU (only if CUDA is available on the system)"
+    ),
+    # Quantile knobs
+    "quantiles": (
+        "Quantiles for risk-aware forecasts.\n\n"
+        "Example:\n"
+        "0.1,0.5,0.9 → P10 (low), P50 (median), P90 (high)\n\n"
+        "Use cases:\n"
+        "• planning under uncertainty\n"
+        "• conservative vs optimistic scenarios"
+    ),
+    # Advanced / Run
+    "overrides": (
+        "Advanced configuration payload passed to the backend as JSON.\n\n"
+        "This is exposed for transparency and power-users.\n"
+        "If you do not need custom tuning, keep defaults."
+    ),
+    "run_button": (
+        "Runs the selected experiment.\n\n"
+        "The system:\n"
+        "1) writes a run folder under frontend/runs/\n"
+        "2) launches the backend runner script\n"
+        "3) streams log output here\n"
+        "4) saves predictions, metrics, plots, and artifacts\n\n"
+        "If a run fails, check backend_run.log for details."
+    ),
+}
 
-# ---------------------------- small UI helpers ----------------------------
-def _scroll_term(container, text: str, height: int = 340):
-    """Scrollable terminal-style log box."""
+# -------------------------------------------------------------------
+# UI helpers
+# -------------------------------------------------------------------
+def _scroll_term(container, text: str, height: int = 360):
     container.markdown(
-        f"<div style='height:{height}px;overflow:auto;background:#0b0b0b;color:#e6e6e6; padding:8px; border-radius:8px;"
+        f"<div style='height:{height}px;overflow:auto;background:#0b0b0b;color:#e6e6e6; padding:10px; border-radius:10px;"
         "font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; white-space:pre;'>"
         f"{html.escape(text)}</div>",
         unsafe_allow_html=True,
@@ -73,107 +268,83 @@ def _baseline_series(out_root: Path, target: str, cadence: str) -> Optional[pd.S
     return None
 
 
-def _safe_date_col(df_cols: List[str], selected: str) -> str:
-    """Return exact column name in df that matches selected (case-insensitive)."""
-    for c in df_cols:
-        if c.lower() == selected.lower():
-            return c
-    return selected
-
-
-def _read_predictions_any(out_real: Path) -> Optional[pd.DataFrame]:
-    """
-    Find predictions_long.csv in standard locations (root or cadence folder).
-    Returns parsed dataframe with date parsed if found.
-    """
-    candidates = [
-        out_real / "predictions_long.csv",
-        out_real / "daily" / "predictions_long.csv",
-        out_real / "weekly" / "predictions_long.csv",
-        out_real / "monthly" / "predictions_long.csv",
-    ]
-    for p in candidates:
-        if p.exists():
-            pred = pd.read_csv(p)
-            if "date" in pred.columns:
-                pred["date"] = pd.to_datetime(pred["date"], errors="coerce")
-                pred = pred.dropna(subset=["date"]).sort_values("date")
-            return pred
-    return None
-
-
-# ---------------------------- Sidebar: backend auto paths ----------------------------
-st.sidebar.header("Backend (auto)")
+# -------------------------------------------------------------------
+# Sidebar: backend paths
+# -------------------------------------------------------------------
+st.sidebar.header("Backend (auto-detected)")
 paths = load_paths()
 st.session_state["backend_py"] = paths.get("backend_python", "") or st.session_state.get("backend_py", "")
 st.session_state["backend_dir"] = paths.get("backend_dir", "") or st.session_state.get("backend_dir", "")
+
 st.sidebar.caption(f"Python: `{st.session_state.get('backend_py','') or 'MISSING'}`")
 st.sidebar.caption(f"Backend: `{st.session_state.get('backend_dir','') or 'MISSING'}`")
 
-
-# ---------------------------- Page intro ----------------------------
-st.title("🧪 Forecast Lab")
-st.write(
-    """
-This page is where you run forecasting experiments.
-
-**What happens when you click Run:**
-1) We take your dataset + configuration (target, cadence, horizon, model parameters)  
-2) We launch a backend runner script using the backend virtual environment  
-3) The run produces logs + outputs (predictions, metrics, plots) saved under `frontend/runs/`  
-4) You can compare runs later in **Dashboard** and **History**
-"""
-)
-
-with st.expander("How to use this tab (quick overview)", expanded=False):
+with st.sidebar.expander("What the backend settings mean", expanded=False):
     st.markdown(
         """
-**Typical workflow**
-- Upload your CSV (or use the quick sample)
-- Choose a target and cadence
-- Pick a model family + model
-- (Optional) adjust parameters (lags/lookback/epochs etc.)
-- Run the experiment and review the overlay + logs
+The UI launches model runs by calling a **backend Python environment**.
 
-**Important note**
-- The Lab runs do **not** overwrite each other. Every run is saved with a timestamped folder.
+- **Python** points to the backend virtual environment interpreter (backend/.venv)
+- **Backend** is the directory containing the runner scripts (run_a_stat.py, run_b_ml_*.py, ...)
+
+If either path is missing, go to the **Overview** page and re-run setup scripts.
 """
     )
 
-
-# ---------------------------- 1) Data ----------------------------
-st.header("1) Data")
-
-up = st.file_uploader(
-    "Upload CSV",
-    type=["csv"],
-    help=(
-        "Upload a CSV file that includes a date column and at least one numeric column to forecast.\n\n"
-        "Minimum requirement:\n"
-        "- one column representing dates (usually named 'date')\n"
-        "- one numeric column (your target)\n"
-        "- optional additional numeric columns (exogenous inputs for multivariate ML/DL)\n"
-    ),
+# -------------------------------------------------------------------
+# Page header
+# -------------------------------------------------------------------
+st.title("🧪 Forecast Lab")
+st.caption(
+    "Run forecasting experiments (statistical, ML, deep learning, quantiles) and review outputs immediately. "
+    "Each experiment is saved as a run folder for reproducibility."
 )
 
+with st.expander("How this page is structured", expanded=True):
+    st.markdown(
+        """
+This page is organized into three steps:
+
+**1) Data**  
+Upload a dataset and choose which file (full vs quick sample) to run.
+
+**2) Configure**  
+Select the target series, cadence, horizon, model family, and model-specific parameters.
+
+**3) Launch & live log**  
+Run the experiment, monitor logs in real-time, and review an immediate overlay plot (Actual vs predictions).
+
+Outputs are saved under `frontend/runs/` in a time-stamped run folder.
+"""
+    )
+
+# -------------------------------------------------------------------
+# 1) Data
+# -------------------------------------------------------------------
+st.header("1) Data")
+
+st.markdown(
+    """
+Upload a CSV used as input for forecasting.  
+If you are iterating or running a live demo, consider creating a quick sample for faster execution.
+"""
+)
+
+up = st.file_uploader("Upload CSV", type=["csv"], help=HELP["upload_csv"])
 if up:
     dest = UPLOADS_ROOT / "uploaded.csv"
     dest.write_bytes(up.read())
     st.success(f"Saved: `{dest}`")
 
-with st.expander("Create a quick sample from the uploaded CSV (optional)", expanded=False):
-    st.write(
-        "This creates a smaller dataset (last N rows) so demo runs finish quickly while keeping recent behavior."
+with st.expander("Optional: create a quick sample for faster runs", expanded=False):
+    st.markdown(
+        """
+This creates a smaller dataset from the end of your upload (the most recent rows).  
+It is intended for faster experimentation and demonstrations.
+"""
     )
-    n = st.slider(
-        "Rows to keep (from end)",
-        200,
-        200_000,
-        2_000,
-        step=200,
-        help="Keeps only the most recent N rows from uploaded.csv and saves as quick_sample.csv.",
-    )
-    if st.button("Create / Refresh sample", help="Creates frontend/runs_uploads/quick_sample.csv"):
+    n = st.slider("Rows to keep (from end)", 200, 200_000, 2_000, step=200, help=HELP["rows_keep"])
+    if st.button("Create / Refresh sample from uploaded.csv", help=HELP["quick_sample"]):
         src = UPLOADS_ROOT / "uploaded.csv"
         if not src.exists():
             st.warning("Please upload a CSV first.")
@@ -188,7 +359,7 @@ if (UPLOADS_ROOT / "quick_sample.csv").exists():
     sources.append(("Quick sample", str((UPLOADS_ROOT / "quick_sample.csv").resolve())))
 
 if not sources:
-    st.info("Upload a CSV to begin (or generate quick_sample.csv).")
+    st.warning("Upload a CSV to continue.")
     st.stop()
 
 use_label = st.radio(
@@ -196,78 +367,57 @@ use_label = st.radio(
     [lbl for lbl, _ in sources],
     index=0,
     horizontal=True,
-    help="Choose whether to run on the full dataset or the smaller quick sample.",
+    help=HELP["data_source"],
 )
+
 data_path = Path(dict(sources)[use_label])
 df = pd.read_csv(data_path)
 
-with st.expander("Preview data (first 200 rows)", expanded=True):
+with st.expander("Dataset preview", expanded=True):
+    st.caption("Preview is limited to the first 200 rows. The full dataset is used in the run.")
     head = df.head(200).copy()
     dcol_guess = "date" if "date" in head.columns else head.columns[0]
     dtry = pd.to_datetime(head[dcol_guess], errors="coerce")
-    st.caption(f"Rows: {len(df):,} • date span (first 200 rows): {dtry.min()} → {dtry.max()}")
+    st.caption(f"Rows: {len(df):,} • date span (preview parse): {dtry.min()} → {dtry.max()}")
     st.dataframe(head, use_container_width=True)
 
-
-# ---------------------------- 2) Configure ----------------------------
+# -------------------------------------------------------------------
+# 2) Configure
+# -------------------------------------------------------------------
 st.header("2) Configure")
+
+st.markdown(
+    """
+Select the forecast target and run configuration.  
+Key choices that most strongly affect runtime and outputs:
+- **Cadence** (Daily/Weekly/Monthly)
+- **Horizon** (steps ahead)
+- **Family** and **Model**
+- **Run profile** (validation depth)
+"""
+)
 
 L, R = st.columns([1.08, 0.92], gap="large")
 
 with L:
-    cols = list(df.columns)
-
     date_col = st.selectbox(
         "Date column",
-        cols,
-        index=(cols.index("date") if "date" in cols else 0),
-        help="Which column contains the dates. This will be parsed into a time index.",
+        list(df.columns),
+        index=(list(df.columns).index("date") if "date" in df.columns else 0),
+        help=HELP["date_col"],
     )
 
-    num_cols = [c for c in cols if c != date_col]
-    target = st.selectbox(
-        "Target (what we forecast)",
-        num_cols,
-        help=(
-            "The numeric series the model will predict.\n\n"
-            "Examples: daily revenue flow, daily expense flow, a balance level, etc."
-        ),
-    )
+    num_cols = [c for c in df.columns if c != date_col]
+    target = st.selectbox("Target", num_cols, help=HELP["target"])
+    cadence = st.selectbox("Cadence", ["Daily", "Weekly", "Monthly"], index=0, help=HELP["cadence"])
+    horizon = st.slider("Horizon", 1, 24, 6, help=HELP["horizon"])
 
-    cadence = st.selectbox(
-        "Cadence (aggregation level)",
-        ["Daily", "Weekly", "Monthly"],
-        index=0,
-        help=(
-            "How we aggregate the data before training/forecasting.\n\n"
-            "- Daily: uses each day\n"
-            "- Weekly: resamples to weekly totals (W-FRI)\n"
-            "- Monthly: resamples to monthly totals (month end)\n"
-        ),
-    )
-
-    horizon = st.slider(
-        "Horizon (how far ahead to predict)",
-        1,
-        24,
-        6,
-        help=(
-            "Number of future periods to forecast.\n\n"
-            "Examples:\n"
-            "- Daily horizon=7 means forecasting the next 7 days\n"
-            "- Monthly horizon=6 means forecasting the next 6 months"
-        ),
-    )
-
-    with st.expander("Target preview chart", expanded=True):
-        st.write(
-            "This chart shows the selected target series after applying the cadence aggregation."
-        )
+    with st.expander(f"Target preview — {target} @ {cadence}", expanded=True):
+        st.caption(HELP["preview"])
         tmp = df[[date_col, target]].dropna()
         tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
         tmp = tmp.dropna(subset=[date_col]).set_index(date_col)
         s_prev = tmp[target]
-
         if cadence == "Weekly":
             s_prev = s_prev.resample("W-FRI").sum()
         if cadence == "Monthly":
@@ -281,17 +431,10 @@ with L:
 
 with R:
     fam_label = st.selectbox(
-        "Model family",
+        "Family",
         ["A · Statistical", "B · Machine Learning", "C · Deep Learning", "E · Quantile"],
-        help=(
-            "Choose the type of forecasting approach.\n\n"
-            "A · Statistical: traditional time-series models (ETS/SARIMAX/etc.)\n"
-            "B · ML: feature-based models using lags/rolling windows\n"
-            "C · DL: neural networks over time windows (LSTM/GRU/TCN/etc.)\n"
-            "E · Quantile: predicts uncertainty ranges (P10/P50/P90)"
-        ),
+        help=HELP["family"],
     )
-
     family = {
         "A · Statistical": "A_STAT",
         "B · Machine Learning": "B_ML",
@@ -303,275 +446,177 @@ with R:
         "Variant",
         ["Univariate", "Multivariate"],
         horizontal=True,
-        help=(
-            "Univariate: uses only the target series history.\n"
-            "Multivariate: also uses additional numeric columns as exogenous signals (if supported by the runner)."
-        ),
+        help=HELP["variant"],
     )
 
 st.subheader("Run profile")
-
 profile = st.radio(
     "Profile",
     ["Demo (fast)", "Balanced", "Thorough"],
     horizontal=True,
     index=0,
-    help=(
-        "Controls how heavy the run is.\n\n"
-        "**Demo (fast):** 1 fold, clipped data, minimal training — results in seconds.\n"
-        "**Balanced:** 3 folds, full data, moderate training — good for exploration.\n"
-        "**Thorough:** 5+ folds, full data, aggressive training — production-quality results."
-    ),
+    help=HELP["profile"],
 )
 
-# Map UI label to profile key
-_profile_key = {"Demo (fast)": "Demo", "Balanced": "Balanced", "Thorough": "Thorough"}[profile]
+# Profile → default override payload
+ov: Dict[str, Any] = {
+    "folds": 1 if profile == "Demo (fast)" else (3 if profile == "Balanced" else 5),  # Thorough = 5 folds
+    "min_train_years": 0 if profile == "Demo (fast)" else (2 if profile == "Balanced" else 4),
+    "demo_clip_months": 12 if profile == "Demo (fast)" else None,
+}
 
-# Build overrides from centralized PROFILE_DEFAULTS
-_profile_base = PROFILE_DEFAULTS.get((_profile_key, family), {})
-ov: Dict[str, Any] = dict(_profile_base)  # copy so we don't mutate the constant
-
-# Show what this profile sets (collapsed)
-with st.expander(f"Profile details: {_profile_key} / {family}", expanded=False):
-    st.json(_profile_base)
-
-
-# ---------------------------- model selection (+ batch option) ----------------------------
-st.subheader("Model selection")
-
-model_options: List[str]
+# Model selection + family-specific knobs
 if family == "B_ML":
-    model_options = ML_MODEL_OPTIONS
-elif family == "A_STAT":
-    model_options = [label for label, _ in STAT_MODEL_OPTIONS]
-elif family == "C_DL":
-    model_options = DL_MODEL_OPTIONS
-else:
-    model_options = QUANTILE_MODEL_OPTIONS
-
-_col_batch, _col_allmodels = st.columns(2)
-with _col_batch:
-    run_multiple = st.checkbox(
-        "Run multiple models (batch)",
-        value=(_profile_key == "Thorough"),
-        help="Run several models one-by-one and compare outputs.",
-    )
-with _col_allmodels:
-    run_all_models = st.checkbox(
-        "Run ALL models in family",
-        value=False,
-        help=f"Automatically selects all {len(model_options)} models in {fam_label}.",
-    )
-
-if run_all_models:
-    models_selected = list(model_options)
-    st.info(f"All {len(models_selected)} models selected: {', '.join(models_selected)}")
-elif run_multiple and len(model_options) > 1:
-    models_selected = st.multiselect(
-        "Models to run",
-        model_options,
-        default=model_options[:2],
-        help="Select multiple models. Each will create its own run folder and outputs.",
-    )
-    if not models_selected:
-        st.warning("Select at least one model (or disable batch mode).")
-        st.stop()
-else:
-    model_single = st.selectbox(
-        "Model",
-        model_options,
+    model = st.selectbox(
+        "Model (ML)",
+        ["Ridge", "Lasso", "ElasticNet", "RandomForest", "ExtraTrees", "HistGBDT", "XGBoost", "LightGBM"],
         index=0,
-        help="Select the model to run for this experiment.",
     )
-    models_selected = [model_single]
 
-# ---- Multi-horizon option ----
-st.subheader("Horizon options")
-run_multi_horizon = st.checkbox(
-    "Run multiple horizons",
-    value=False,
-    help="Run the selected model(s) at several horizons in one go. Great for Thorough runs.",
-)
-
-if run_multi_horizon:
-    presets = HORIZON_PRESETS.get(cadence, [1, 5, 10])
-    horizons_selected = st.multiselect(
-        "Horizons to run",
-        presets,
-        default=presets,
-        help="Each (model, horizon) combination creates a separate run.",
+    st.markdown(
+        """
+**Feature engineering for ML models**  
+ML models require explicit features. This prototype uses lags (past values) and rolling windows (trailing summaries) as core features.
+"""
     )
-    if not horizons_selected:
-        st.warning("Select at least one horizon.")
-        st.stop()
-else:
-    horizons_selected = [int(horizon)]
-
-
-# ---------------------------- parameter widgets (with REAL hover help) ----------------------------
-# ---------------------------- Data Quality Pre-flight ----------------------------
-st.subheader("Data quality check")
-_pf = run_preflight(df, date_col, target, cadence, int(horizon))
-_has_blockers = len(_pf["blockers"]) > 0
-
-if _has_blockers:
-    for b in _pf["blockers"]:
-        st.error(f"**BLOCKER:** {b}")
-    st.warning("Fix the issues above before running. The Run button is disabled.")
-
-for w in _pf["warnings"]:
-    st.warning(w)
-
-_pf_info = _pf["info"]
-_c1, _c2, _c3, _c4 = st.columns(4)
-with _c1:
-    st.metric("Rows", f"{_pf_info.get('rows', 0):,}")
-with _c2:
-    st.metric("Date span", f"{_pf_info.get('date_min', '?')} to {_pf_info.get('date_max', '?')}")
-with _c3:
-    st.metric("Missing", f"{_pf_info.get('missing_pct', 0):.1f}%")
-with _c4:
-    st.metric("Exog columns", f"{_pf_info.get('exog_columns', 0)}")
-
-if not _pf["blockers"] and not _pf["warnings"]:
-    st.success("Data looks good — no issues detected.")
-
-
-st.subheader("Model parameters")
-
-if family == "B_ML":
-    # Lag/window parameter names vary with cadence in your backend
-    _lag_defaults = ov.get(f"lags_{cadence.lower()}", [1, 3, 7])
-    _win_defaults = ov.get(f"windows_{cadence.lower()}", [3, 7])
 
     if cadence == "Daily":
-        ov["lags_daily"] = st.multiselect(
-            "lags_daily",
-            [0, 1, 2, 3, 5, 7, 14, 21, 28],
-            default=_lag_defaults,
-            help=(
-                "Which past days to include as features.\n\n"
-                "**lag_0** is **excluded by default** to prevent persistence bias."
-            ),
-        )
-        if 0 not in ov["lags_daily"]:
-            st.caption("lag_0 excluded by default to prevent persistence bias for stock targets.")
-        ov["windows_daily"] = st.multiselect(
-            "windows_daily",
-            [3, 5, 7, 14, 21, 28],
-            default=_win_defaults,
-            help="Rolling window statistics (trailing mean) used as features.",
-        )
+        ov["lags_daily"] = st.multiselect("lags_daily", [1, 2, 3, 5, 7, 14, 21], default=[1, 3, 7], help=HELP["lags"])
+        ov["windows_daily"] = st.multiselect("windows_daily", [3, 5, 7, 14, 21, 28], default=[3, 7], help=HELP["windows"])
     elif cadence == "Weekly":
-        ov["lags_weekly"] = st.multiselect(
-            "lags_weekly", [1, 2, 3, 4, 8, 12, 26],
-            default=_lag_defaults,
-            help="Past weeks used as input features.",
-        )
-        ov["windows_weekly"] = st.multiselect(
-            "windows_weekly", [2, 4, 8, 12, 26],
-            default=_win_defaults,
-            help="Rolling window sizes in weeks.",
-        )
+        ov["lags_weekly"] = st.multiselect("lags_weekly", [1, 2, 3, 4, 8, 12, 26], default=[1, 4, 12], help=HELP["lags"])
+        ov["windows_weekly"] = st.multiselect("windows_weekly", [2, 4, 8, 12, 26], default=[4, 12], help=HELP["windows"])
     else:
-        ov["lags_monthly"] = st.multiselect(
-            "lags_monthly", [1, 2, 3, 6, 12],
-            default=_lag_defaults,
-            help="Past months used as input features.",
-        )
-        ov["windows_monthly"] = st.multiselect(
-            "windows_monthly", [3, 6, 12],
-            default=_win_defaults,
-            help="Rolling window sizes in months.",
-        )
+        ov["lags_monthly"] = st.multiselect("lags_monthly", [1, 2, 3, 6, 12], default=[1, 3], help=HELP["lags"])
+        ov["windows_monthly"] = st.multiselect("windows_monthly", [3, 6, 12], default=[3, 6], help=HELP["windows"])
 
     if variant == "Multivariate":
-        ov["exog_top_k"] = st.number_input(
-            "exog_top_k", 0, 64, 8,
-            help="How many exogenous columns to keep (by correlation).",
+        st.markdown(
+            """
+**Multivariate configuration**  
+When multivariate is enabled, the runner can incorporate other numeric columns as candidate predictors.
+To reduce overfitting and keep the run tractable, you can limit how many are used.
+"""
+        )
+        ov["exog_top_k"] = st.number_input("exog_top_k", 0, 64, 8, help=HELP["exog_top_k"])
+
+elif family == "A_STAT":
+    model = st.selectbox(
+        "Model (Stat)",
+        ["ETS", "SARIMAX", "STL_ARIMA", "THETA", "NAIVE", "WEEKDAY_MEAN", "MOVAVG"],
+        index=0,
+    )
+    with st.expander("Notes on statistical models", expanded=False):
+        st.markdown(
+            """
+Statistical models are typically strong baselines and are easier to explain and audit.
+
+- **ETS**: exponential smoothing with trend/seasonality (often a top baseline)
+- **SARIMAX**: ARIMA-family with optional seasonal terms
+- **STL_ARIMA**: decomposition (STL) + ARIMA on remainder
+- **THETA**: robust competition-grade baseline
+- **NAIVE / WEEKDAY_MEAN / MOVAVG**: fast baselines useful for comparison
+"""
         )
 
 elif family == "C_DL":
-    _dl_lookback = ov.get("lookback", 48)
-    _dl_batch = ov.get("batch_size", 128)
-    _dl_epochs = ov.get("max_epochs", 3)
-    _dl_vf = ov.get("valid_frac", 0.2)
+    model = st.selectbox("Model (DL)", ["GRU", "LSTM", "TCN", "Transformer", "MLP"], index=0)
 
-    ov["lookback"] = st.number_input(
-        "lookback", 4, 365, int(_dl_lookback),
-        help="How many past time steps the network sees to make a forecast.",
+    st.markdown(
+        """
+**Deep learning configuration**  
+Deep learning models typically require more training time. The key parameters are: lookback (history length), batch size, and epochs.
+"""
     )
-    ov["batch_size"] = st.number_input(
-        "batch_size", 8, 2048, int(_dl_batch), step=8,
-        help="Training batch size. Larger = faster but more memory.",
-    )
-    ov["max_epochs"] = st.number_input(
-        "max_epochs", 1, 200, int(_dl_epochs),
-        help="Maximum training epochs. More epochs = slower but can improve fit.",
-    )
-    ov["valid_frac"] = st.number_input(
-        "valid_frac", 0.05, 0.9, float(_dl_vf), 0.05,
-        help="Fraction held out as validation (for early stopping).",
-    )
-    ov["conformal_calib_frac"] = st.number_input(
-        "conformal_calib_frac", 0.05, 0.9, 0.2, 0.05,
-        help="Fraction used to calibrate prediction intervals (conformal).",
-    )
-    ov["device"] = st.selectbox(
-        "device", ["auto", "cpu", "cuda"], index=0,
-        help="Training device. 'auto' picks best available.",
+    ov["lookback"] = st.number_input("lookback", 4, 365, 48, help=HELP["lookback"])
+    ov["batch_size"] = st.number_input("batch_size", 8, 2048, 128, step=8, help=HELP["batch_size"])
+    ov["max_epochs"] = st.number_input("max_epochs", 1, 200, 3, help=HELP["max_epochs"])
+    ov["valid_frac"] = st.number_input("valid_frac", 0.05, 0.9, 0.2, 0.05, help=HELP["valid_frac"])
+    ov["conformal_calib_frac"] = st.number_input("conformal_calib_frac", 0.05, 0.9, 0.2, 0.05, help=HELP["conformal_calib"])
+    ov["device"] = st.selectbox("device", ["auto", "cpu", "cuda"], index=0, help=HELP["device"])
+
+else:
+    model = st.selectbox("Model (Quantile)", ["GBQuantile"], index=0)
+
+    st.markdown(
+        """
+**Quantile forecasting configuration**  
+Quantile models output multiple forecast levels (e.g., P10/P50/P90) which can be used for scenario-based planning.
+"""
     )
 
-elif family == "E_QUANTILE":
-    q_text = st.text_input(
-        "quantiles (comma-separated)", "0.1,0.5,0.9",
-        help="Quantiles to predict. 0.1=P10, 0.5=P50 (median), 0.9=P90.",
-    )
+    q_text = st.text_input("quantiles (comma-separated)", "0.1,0.5,0.9", help=HELP["quantiles"])
     try:
         ov["quantiles"] = [float(x) for x in q_text.split(",") if x.strip() != ""]
     except Exception:
         ov["quantiles"] = [0.1, 0.5, 0.9]
-        st.warning("Could not parse quantiles; using default [0.1, 0.5, 0.9].")
 
-else:
-    st.caption(
-        "Statistical models are configured in the backend; use Advanced overrides below for extra knobs."
-    )
-
-
-# ---------------------------- Advanced overrides ----------------------------
+# Advanced overrides
 st.subheader("Advanced overrides (JSON)")
-
-st.write(
-    "This is the exact JSON passed to the backend runner. You can edit it if you want to force specific settings."
+st.caption(
+    "This JSON is passed directly to the backend. It is exposed for transparency and advanced tuning. "
+    "Most users can keep defaults unless they are experimenting with model behavior."
 )
-
-ov_text = st.text_area(
-    "OVERRIDES_JSON",
-    json.dumps(ov, indent=2),
-    height=200,
-    help=(
-        "Advanced users only. This JSON is passed to the backend as TG_PARAM_OVERRIDES.\n\n"
-        "If you edit this, keep valid JSON format."
-    ),
-)
-
+ov_text = st.text_area("OVERRIDES_JSON", json.dumps(ov, indent=2), height=200, help=HELP["overrides"])
 try:
     ov_final: Dict[str, Any] = json.loads(ov_text)
 except Exception as e:
     st.error(f"Invalid JSON: {e}")
     ov_final = ov
 
+# -------------------------------------------------------------------
+# 3) Launch
+# -------------------------------------------------------------------
+st.header("3) Launch & live log")
+
+with st.expander("What happens during a run (run folder, outputs, logs)", expanded=False):
+    st.markdown(
+        """
+When you run an experiment, the UI:
+
+1. Creates a new run folder under `frontend/runs/` (time-stamped, includes configuration).
+2. Launches a backend runner script based on the selected family/model/variant.
+3. Streams the backend log to this page while the model is training/evaluating.
+4. Saves outputs, typically including:
+   - `predictions_long.csv` (actuals + predictions by model/date)
+   - `metrics_long.csv` (MAE/RMSE/etc.)
+   - `leaderboard.csv` (ranking models by metric)
+   - `plots/` and `artifacts/` for visuals and serialized config
+
+If a run fails, the log will usually contain the exception and the failing step.
+"""
+    )
+
+# Build readable run name for History/Dashboard lists
+ts = datetime.now().strftime("%Y%m%d_%H%M")
+short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E"}[family]
+short_var = "uni" if variant == "Univariate" else "multi"
+run_label = f"run_{short_fam}_{short_var}_{model}_{target}_{cadence}_h{int(horizon)}_{ts}"
 
 # ---------------------------- 3) Launch & live log ----------------------------
 st.header("3) Launch & live log")
 
-st.write(
-    """
-When you run an experiment, the Lab creates a new run folder and launches the backend runner script.
-You will see the live backend log below.
-"""
-)
+# Choose runner script
+if family == "A_STAT":
+    runner = Path(st.session_state["backend_dir"]) / "run_a_stat.py"
+elif family == "B_ML":
+    runner = Path(st.session_state["backend_dir"]) / ("run_b_ml_univariate.py" if short_var == "uni" else "run_b_ml_multivariate.py")
+elif family == "C_DL":
+    runner = Path(st.session_state["backend_dir"]) / ("run_c_dl_univariate.py" if short_var == "uni" else "run_c_dl_multivariate.py")
+else:
+    runner = Path(st.session_state["backend_dir"]) / ("run_e_quantile_daily_univariate.py" if short_var == "uni" else "run_e_quantile_daily_multivariate.py")
+
+env = {
+    "TG_FAMILY": family,
+    "TG_MODEL_FILTER": model,
+    "TG_TARGET": target,
+    "TG_CADENCE": cadence,
+    "TG_HORIZON": str(int(horizon)),
+    "TG_DATA_PATH": str(Path(data_path).resolve()),
+    "TG_DATE_COL": str([c for c in df.columns if c.lower() == date_col.lower()][0]),
+    "TG_PARAM_OVERRIDES": json.dumps(ov_final),
+    "TG_OUT_ROOT": str(out_root.resolve()),
+}
 
 log_box = st.empty()
 status = st.empty()
@@ -580,145 +625,28 @@ def _on_progress(tail: str, elapsed: float):
     status.info(f"Elapsed: {elapsed:.1f}s")
     _scroll_term(log_box, tail)
 
-def _runner_for(family: str, short_var: str) -> Path:
-    back = Path(st.session_state["backend_dir"])
-    if family == "A_STAT":
-        return back / "run_a_stat.py"
-    if family == "B_ML":
-        return back / ("run_b_ml_univariate.py" if short_var == "uni" else "run_b_ml_multivariate.py")
-    if family == "C_DL":
-        return back / ("run_c_dl_univariate.py" if short_var == "uni" else "run_c_dl_multivariate.py")
-    # E_QUANTILE
-    return back / ("run_e_quantile_daily_univariate.py" if short_var == "uni" else "run_e_quantile_daily_multivariate.py")
-
-def _run_one(model_name: str, run_horizon: int):
-    """Run a single (model, horizon) experiment and return result dict."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E"}[family]
-    short_var = "uni" if variant == "Univariate" else "multi"
-    run_label = f"run_{short_fam}_{short_var}_{model_name}_{target}_{cadence}_h{int(run_horizon)}_{ts}"
-
-    run_id, run_dir, out_root = new_run_folders(run_label)
-    runner = _runner_for(family, short_var)
-
-    env = {
-        "TG_FAMILY": family,
-        "TG_MODEL_FILTER": model_name,
-        "TG_TARGET": target,
-        "TG_CADENCE": cadence,
-        "TG_HORIZON": str(int(run_horizon)),
-        "TG_DATA_PATH": str(Path(data_path).resolve()),
-        "TG_DATE_COL": str(_safe_date_col(list(df.columns), date_col)),
-        "TG_PARAM_OVERRIDES": json.dumps(ov_final),
-        "TG_OUT_ROOT": str(out_root.resolve()),
-    }
-
-    rc, elapsed, log_path, out_real = launch_backend(
-        backend_py=st.session_state["backend_py"],
-        runner_script=str(runner),
-        backend_dir=st.session_state["backend_dir"],
-        env_vars=env,
-        run_dir=run_dir,
-        on_progress=_on_progress,
-    )
-
-    return {
-        "model": model_name,
-        "horizon": run_horizon,
-        "rc": rc,
-        "elapsed": elapsed,
-        "log_path": log_path,
-        "out_real": out_real,
-        "run_label": run_label,
-    }
-
-
-# Build the full job queue: (model, horizon)
-_job_queue = [(m, h) for m in models_selected for h in horizons_selected]
-_n_jobs = len(_job_queue)
-
-_run_label = f"{len(models_selected)} model(s) x {len(horizons_selected)} horizon(s) = {_n_jobs} run(s)"
-st.caption(f"**Run queue:** {_run_label}")
-
-if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True, disabled=_has_blockers):
+if st.button("🚀 Run experiment", type="primary", use_container_width=True, help=HELP["run_button"]):
     py = st.session_state.get("backend_py", "")
     back = st.session_state.get("backend_dir", "")
 
     if not py or not Path(py).exists():
-        st.error("Backend Python missing/invalid. Create backend/.venv via scripts/setup_* and ensure .tg_paths.json is set.")
+        st.error("Backend Python missing/invalid. Go to Overview and ensure backend/.venv exists.")
         st.stop()
     if not back or not Path(back).exists():
-        st.error("Backend directory missing/invalid.")
+        st.error("Backend directory missing/invalid. Go to Overview and confirm backend path.")
+        st.stop()
+    if not runner.exists():
+        st.error(f"Runner script missing: `{runner}`")
         st.stop()
 
-    results = []
-    prog = st.progress(0, text="Starting…")
-
-    for i, (m, h) in enumerate(_job_queue, start=1):
-        prog.progress((i - 1) / max(1, _n_jobs), text=f"Running {m} h={h} ({i}/{_n_jobs})…")
-        res = _run_one(m, h)
-        results.append(res)
-
-        # ✅ FIX 5: Check for failure: return code != 0 OR error.json exists OR FAILED_QUALITY
-        error_json_path = Path(res["out_real"]) / "artifacts" / "error.json"
-        integrity_json_path = Path(res["out_real"]) / "artifacts" / "integrity_report.json"
-        has_error_file = error_json_path.exists()
-        
-        # Check integrity report for FAILED_QUALITY status
-        run_status = None
-        if integrity_json_path.exists():
-            try:
-                integrity = json.loads(integrity_json_path.read_text(encoding="utf-8"))
-                run_status = integrity.get("run_status", "UNKNOWN")
-            except Exception:
-                pass
-        
-        if res["rc"] != 0 or has_error_file:
-            status_msg = f"❌ {m} failed"
-            if res["rc"] != 0:
-                status_msg += f" (rc={res['rc']})"
-            if has_error_file:
-                status_msg += " (error.json found)"
-            st.error(status_msg)
-        elif run_status == "FAILED_QUALITY":
-            # ✅ FIX 5: Show FAILED_QUALITY status (outputs still written, but quality gate failed)
-            st.warning(f"⚠️ {m} finished but FAILED_QUALITY — Model does not beat persistence baseline. "
-                      f"Outputs written to `{res['out_real']}` (elapsed: {res['elapsed']:.1f}s)")
-        else:
-            st.success(f"✅ {m} finished in {res['elapsed']:.1f}s • outputs in `{res['out_real']}`")
-
-    prog.progress(1.0, text="Done.")
-
-    # Summary table
-    st.subheader("Run summary")
-    summary_rows = []
-    for r in results:
-        error_json_path = Path(r["out_real"]) / "artifacts" / "error.json"
-        integrity_json_path = Path(r["out_real"]) / "artifacts" / "integrity_report.json"
-        has_error = error_json_path.exists()
-        run_status = None
-        if integrity_json_path.exists():
-            try:
-                integrity = json.loads(integrity_json_path.read_text(encoding="utf-8"))
-                run_status = integrity.get("run_status", "UNKNOWN")
-            except Exception:
-                pass
-        
-        if r["rc"] != 0 or has_error:
-            status = f"FAIL (rc={r['rc']})"
-        elif run_status == "FAILED_QUALITY":
-            status = "FAILED_QUALITY"  # ✅ FIX 5: Show quality gate failure
-        else:
-            status = "OK"
-        
-        summary_rows.append({
-            "model": r["model"],
-            "status": status,
-            "elapsed_sec": round(float(r["elapsed"]), 2),
-            "run_label": r["run_label"],
-            "out_dir": r["out_real"],
-        })
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+    rc, elapsed, log_path, out_real = launch_backend(
+        backend_py=py,
+        runner_script=str(runner),
+        backend_dir=back,
+        env_vars=env,
+        run_dir=run_dir,
+        on_progress=_on_progress,
+    )
 
     # Overlay comparison across runs
     st.subheader("Overlay preview — compare models")
@@ -744,74 +672,49 @@ if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True,
     if not ok_runs:
         st.warning("No successful runs to visualize.")
     else:
-        # read predictions from each output folder
-        preds_by_model: Dict[str, pd.DataFrame] = {}
-        for r in ok_runs:
-            pred = _read_predictions_any(Path(r["out_real"]))
-            if pred is not None and {"y_true", "y_pred", "model"}.issubset(pred.columns) and "date" in pred.columns:
-                preds_by_model[r["model"]] = pred
+        st.success(f"Finished in {elapsed:.1f}s • outputs in `{out_real}`")
 
-        if not preds_by_model:
-            st.caption("No predictions_long.csv found in outputs.")
-        else:
-            compare_models = st.multiselect(
-                "Select runs to visualize",
-                list(preds_by_model.keys()),
-                default=list(preds_by_model.keys()),
-                help="Choose which model runs to overlay in the chart.",
-            )
+        with st.expander("Overlay preview — Actual vs selected model(s) (and Ops baseline if available)", expanded=True):
+            p = Path(out_real) / "predictions_long.csv"
+            if not p.exists():
+                for cad in ("daily", "weekly", "monthly"):
+                    cand = Path(out_real) / cad / "predictions_long.csv"
+                    if cand.exists():
+                        p = cand
+                        break
 
-            # Build figure
-            fig = go.Figure()
+            if p.exists():
+                pred = pd.read_csv(p)
+                pred["date"] = pd.to_datetime(pred["date"], errors="coerce")
+                pred = pred.dropna(subset=["date"]).sort_values("date")
 
-            # Use first selected model's y_true as "Actual" (they should all be identical if same target/cadence)
-            first_key = compare_models[0] if compare_models else list(preds_by_model.keys())[0]
-            base_pred = preds_by_model[first_key].copy()
-            # ✅ Only plot true out-of-sample predictions - drop rows where y_true is NaN
-            base_pred = base_pred.dropna(subset=["y_true"])  # Don't fill with 0
-            fig.add_scatter(
-                x=base_pred["date"],
-                y=base_pred["y_true"],
-                name="Actual",
-                mode="lines",
-                line=dict(color="black"),
-            )
+                models = sorted(pred["model"].unique())
+                sel = st.multiselect("Models to visualize", models, default=models[:1])
 
-            for m in compare_models:
-                p = preds_by_model[m].copy()
-                # ✅ Only plot true out-of-sample predictions - drop rows where y_true or y_pred is NaN
-                p = p.dropna(subset=["y_true", "y_pred"])  # Don't fill with 0
-                if p.empty:
-                    continue
-                # In your output format, column "model" often contains internal model name; we label by run model selection
+                fig = go.Figure()
                 fig.add_scatter(
-                    x=p["date"],
-                    y=p["y_pred"],
-                    name=m,
-                    mode="lines",
+                    x=pred["date"], y=pred["y_true"],
+                    name="Actual", mode="lines",
+                    line=dict(color="black")
                 )
+                for m in sel:
+                    g = pred[pred["model"] == m]
+                    fig.add_scatter(x=g["date"], y=g["y_pred"], name=m, mode="lines")
 
-            # Ops baseline if available (from first run)
-            base = _baseline_series(Path(ok_runs[0]["out_real"]), target, cadence)
-            if base is not None and len(base):
-                rng = (base_pred["date"].min(), base_pred["date"].max())
-                b = base[(base.index >= rng[0]) & (base.index <= rng[1])]
-                if not b.empty:
-                    fig.add_scatter(
-                        x=b.index,
-                        y=b.values,
-                        name="Ops baseline",
-                        mode="lines",
-                        line=dict(dash="dot"),
-                    )
+                base = _baseline_series(Path(out_real), target, cadence)
+                if base is not None and len(base):
+                    rng = (pred["date"].min(), pred["date"].max())
+                    b = base[(base.index >= rng[0]) & (base.index <= rng[1])]
+                    if not b.empty:
+                        fig.add_scatter(
+                            x=b.index, y=b.values,
+                            name="Ops baseline", mode="lines",
+                            line=dict(dash="dot")
+                        )
 
-            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+                st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+            else:
+                st.caption("No predictions_long.csv found in the outputs folder.")
 
-    # Show log tails for each run (collapsed)
-    st.subheader("Logs (tail)")
-    for r in results:
-        with st.expander(f"Log tail — {r['model']} ({'OK' if r['rc']==0 else 'FAILED'})", expanded=False):
-            try:
-                st.code(Path(r["log_path"]).read_text(encoding="utf-8")[-4000:], language="text")
-            except Exception as e:
-                st.caption(f"Could not read log: {e}")
+    st.markdown("**Log tail**")
+    st.code(Path(log_path).read_text(encoding="utf-8")[-5000:], language="text")
