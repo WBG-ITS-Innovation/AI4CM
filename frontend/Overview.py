@@ -18,16 +18,18 @@ RUNS_DIR = APPROOT / "runs"
 st.title("Georgia Treasury • Forecast Lab")
 st.caption("A production-grade multi-model forecasting sandbox — Statistical • ML • DL • Quantile")
 
-c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1])
+c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
 with c1:
     st.page_link("pages/00_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
 with c2:
     st.page_link("pages/01_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
 with c3:
-    st.page_link("pages/02_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
+    st.page_link("pages/04_Compare.py", label="🔀 Compare Runs", help="Side-by-side comparison of 2-6 runs.")
 with c4:
-    st.page_link("pages/03_Models.py", label="📚 Read about Models", help="Deep guide to model families and parameters.")
+    st.page_link("pages/02_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
 with c5:
+    st.page_link("pages/03_Models.py", label="📚 Read about Models", help="Deep guide to model families and parameters.")
+with c6:
     st.page_link("pages/00_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardize and clean source data files.")
 
 st.markdown("---")
@@ -62,32 +64,51 @@ with left:
         """
 - **End-to-end sandbox** to compare forecasting families on Treasury time series:
   **A** (Statistical), **B** (Machine Learning), **C** (Deep Learning), **E** (Quantile).
-- Standard **outputs & plots** per run so results are easy to compare and share.
-- **Lab → Dashboard → History** workflow:
-  1) configure & run, 2) inspect accuracy and overlays, 3) download artifacts.
+- **Run profiles** (Demo/Balanced/Thorough) with family-specific tuning.
+- **Batch runs**: run ALL models and/or multiple horizons in one session.
+- **Data quality pre-flight** checks before every run.
+- **Ensemble builder**: combine 2+ runs into optimized ensembles.
+- **Cross-run comparison**: side-by-side metrics, overlays, winner podium.
+- **Accuracy scorecard**: letter grade (A-F), tips, and next steps.
         """
     )
     st.subheader("How experiments work")
     st.markdown(
         """
-1. **Lab** builds a config (target, cadence, horizon, overrides), then launches a family runner.  
-2. **Backend** trains/validates with time-series CV and writes standard artifacts.  
-3. **Dashboard** loads those artifacts and renders **Actual vs Treasury Baseline vs Predictions**.  
-4. **History** keeps your runs (log + outputs) for later.
+1. **Lab** validates data quality, then launches backend with your config.
+2. **Backend** trains/validates with time-series CV and writes standard artifacts.
+3. **Dashboard** renders overlays, metrics, feature importance, and a scorecard.
+4. **Compare** lets you pick 2-6 runs for side-by-side analysis.
+5. **History** keeps your runs (log + outputs) for later.
         """
     )
 with right:
     st.subheader("Standard outputs per run")
     st.markdown(
         """
-- `predictions_long.csv`  
-- `metrics_long.csv`  
-- `leaderboard.csv`  
-- `plots/*` (overlay & extras)  
-- `artifacts/*` (config, params)
+- `predictions_long.csv` (with prediction intervals)
+- `metrics_long.csv`
+- `leaderboard.csv`
+- `plots/*` (overlay & extras)
+- `artifacts/*` (config, integrity report, feature importance)
         """
     )
     st.info("All files are under `runs/<run_id>/outputs[/cadence]/` (inside the **frontend** folder).")
+
+    st.subheader("Key capabilities")
+    st.markdown(
+        """
+| Feature | Status |
+|---|---|
+| Statistical PIs (ETS/SARIMAX) | ✅ |
+| Conformal PIs (ML) | ✅ |
+| Ensemble (median/top-K/weighted) | ✅ |
+| Feature importance (ML) | ✅ |
+| Quality gate (5% skill) | ✅ |
+| Data pre-flight checks | ✅ |
+| Multi-horizon batch | ✅ |
+        """
+    )
 
 # ─────────────────────────────────────────────────────────────
 # QUICK START (no conda required)

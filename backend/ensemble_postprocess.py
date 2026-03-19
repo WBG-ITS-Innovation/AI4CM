@@ -29,19 +29,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Optional, Dict
 
-# ------------------ CONFIG (edit as needed) ------------------
-# Source folders (each must contain predictions_long.csv; cadence inferred from path or overridden by CADENCE).
-SOURCE_DIRS = [
-    r".\outputs\statistical\daily",
-    r".\outputs\ml_univariate\daily",
-    r".\outputs\ml_multivariate\daily",
-    #r".\outputs\dl_univariate\daily",
-    r".\outputs\dl_multivariate\daily",
-]
-OUT_ROOT = r".\outputs\ensemble"
-CADENCE  = "daily"                  # "daily" | "weekly" | "monthly"
-TOP_K    = 3                        # K for ens_mean_topK
-# -------------------------------------------------------------
+# Default config (used only when running as a standalone script).
+# When called via the API, pass parameters directly.
+_DEFAULT_SOURCE_DIRS: List[str] = []   # populated at bottom for __main__
+_DEFAULT_OUT_ROOT = "./outputs/ensemble"
+_DEFAULT_CADENCE = "daily"
+_DEFAULT_TOP_K = 3
 
 def ensure_dirs(root: str):
     os.makedirs(root, exist_ok=True)
@@ -68,7 +61,8 @@ def smape(y_true, y_pred):
     t = np.asarray(y_true); p = np.asarray(y_pred)
     return float(np.mean(2*np.abs(p-t)/(np.abs(t)+np.abs(p)+eps)))
 
-def evaluate_block(df_pred: pd.DataFrame, target: str, horizon: int, ops_pred: Optional[pd.Series]) -> pd.DataFrame:
+def evaluate_block(df_pred: pd.DataFrame, target: str, horizon: int,
+                   ops_pred: Optional[pd.Series], cadence: str = "daily") -> pd.DataFrame:
     rows = []
     for model, g in df_pred.groupby("model", sort=False):
         g = g.sort_values("date")
@@ -98,7 +92,7 @@ def evaluate_block(df_pred: pd.DataFrame, target: str, horizon: int, ops_pred: O
                 mae_ops = float(np.mean(np.abs(aligned["y_true"] - aligned["ops_pred"])))
                 mae_skill = (1.0 - mae/mae_ops) if mae_ops>0 else np.nan
 
-        rows.append({"target":target,"horizon":horizon,"cadence":CADENCE,"model":model,
+        rows.append({"target":target,"horizon":horizon,"cadence":cadence,"model":model,
                      "MAE":mae,"RMSE":rmse,"sMAPE":smp,"MAPE":mape,"R2":r2,
                      "PI_coverage@90":cover,"PI_width@90":width,
                      "Monthly_TOL10_Accuracy":tol10,"MAE_skill_vs_Ops":mae_skill})
@@ -146,42 +140,103 @@ def plot_monthly_bars(df_slice, target, h, ops_series, out_png):
 
 # ------------------ LOAD ------------------
 
-def load_all_predictions(source_dirs: List[str]) -> pd.DataFrame:
+def load_all_predictions(source_dirs: List[str], cadence: str = "daily") -> pd.DataFrame:
     frames = []
     for d in source_dirs:
-        f = os.path.join(d, "predictions_long.csv")
-        if os.path.exists(f):
-            df = pd.read_csv(f, parse_dates=["date"])
-            if "cadence" not in df.columns:
-                # infer cadence from path (best-effort)
-                if "\\daily" in d or "/daily" in d:  df["cadence"]= "daily"
-                elif "\\weekly" in d or "/weekly" in d: df["cadence"]="weekly"
-                elif "\\monthly" in d or "/monthly" in d: df["cadence"]="monthly"
-                else: df["cadence"]= CADENCE
-            frames.append(df)
+        # Try multiple candidate locations for predictions_long.csv
+        candidates = [
+            os.path.join(d, "predictions_long.csv"),
+            os.path.join(d, "outputs", "predictions_long.csv"),
+            os.path.join(d, "outputs", cadence, "predictions_long.csv"),
+        ]
+        for f in candidates:
+            if os.path.exists(f):
+                df = pd.read_csv(f, parse_dates=["date"])
+                if "cadence" not in df.columns:
+                    if "daily" in f:    df["cadence"] = "daily"
+                    elif "weekly" in f: df["cadence"] = "weekly"
+                    elif "monthly" in f: df["cadence"] = "monthly"
+                    else:               df["cadence"] = cadence
+                frames.append(df)
+                break  # only take first match per source dir
     if not frames:
-        raise FileNotFoundError("No predictions_long.csv found in SOURCE_DIRS.")
+        raise FileNotFoundError("No predictions_long.csv found in any source directories.")
     P = pd.concat(frames, ignore_index=True)
-    # keep only selected cadence
-    P = P[P["cadence"].str.lower()==CADENCE.lower()].copy()
-    # sanitize models
     P["model"] = P["model"].astype(str)
     return P
 
-def load_ops_by_target(source_dirs: List[str]) -> Dict[str, pd.Series]:
+def load_ops_by_target(source_dirs: List[str], cadence: str = "daily") -> Dict[str, pd.Series]:
     ops: Dict[str, pd.Series] = {}
     for d in source_dirs:
         for t in ["Revenues","Expenditure","State budget balance"]:
-            f = os.path.join(d, f"{t}_ops_baseline_daily.csv")
-            if os.path.exists(f) and t not in ops:
-                s = pd.read_csv(f, parse_dates=["date"]).set_index("date")["forecast"]
-                if CADENCE=="daily":
-                    ops[t] = s
-                elif CADENCE=="weekly":
-                    ops[t] = s.resample("W-FRI").sum()
-                else:
-                    ops[t] = s.resample("ME").sum()
+            for sub in [d, os.path.join(d, "outputs"), os.path.join(d, "outputs", cadence)]:
+                f = os.path.join(sub, f"{t}_ops_baseline_daily.csv")
+                if os.path.exists(f) and t not in ops:
+                    s = pd.read_csv(f, parse_dates=["date"]).set_index("date")["forecast"]
+                    if cadence == "daily":   ops[t] = s
+                    elif cadence == "weekly": ops[t] = s.resample("W-FRI").sum()
+                    else:                    ops[t] = s.resample("ME").sum()
     return ops
+
+
+def run_ensemble_from_runs(
+    run_dirs: List[str],
+    out_dir: str,
+    cadence: str = "daily",
+    top_k: int = 3,
+) -> Dict[str, pd.DataFrame]:
+    """Public API: build ensembles from a list of run directories.
+
+    Parameters
+    ----------
+    run_dirs : list of paths to run folders (each should contain outputs/predictions_long.csv)
+    out_dir  : where to write ensemble outputs
+    cadence  : "daily" | "weekly" | "monthly"
+    top_k    : K for ens_mean_topK
+
+    Returns
+    -------
+    dict with keys "predictions", "metrics", "leaderboard" (DataFrames)
+    """
+    from pathlib import Path
+    os.makedirs(out_dir, exist_ok=True)
+
+    P = load_all_predictions(run_dirs, cadence)
+    OPS = load_ops_by_target(run_dirs, cadence)
+
+    # Filter out baseline rows so we don't ensemble baseline predictions
+    P = P[~P["model"].str.contains("baseline", case=False, na=False)].copy()
+
+    if P.empty:
+        return {"predictions": pd.DataFrame(), "metrics": pd.DataFrame(), "leaderboard": pd.DataFrame()}
+
+    ENS = build_ensembles(P, top_k)
+
+    metrics_rows = []
+    for (t, h), df_th in ENS.groupby(["target", "horizon"]):
+        ops_series = OPS.get(t)
+        metr = evaluate_block(df_th, t, h, ops_series, cadence=cadence)
+        metrics_rows.append(metr)
+
+    METR = pd.concat(metrics_rows, ignore_index=True) if metrics_rows else pd.DataFrame()
+
+    # Save outputs
+    ENS.sort_values(["target", "horizon", "date", "model"]).to_csv(
+        os.path.join(out_dir, "predictions_ensemble.csv"), index=False
+    )
+    METR.to_csv(os.path.join(out_dir, "metrics_ensemble.csv"), index=False)
+
+    # Global leaderboard
+    lb_rows = []
+    if not METR.empty:
+        for (t, h), g in METR.groupby(["target", "horizon"]):
+            g2 = g.groupby("model", as_index=False)["MAE"].mean().sort_values("MAE")
+            for rank, row in enumerate(g2.itertuples(index=False), start=1):
+                lb_rows.append({"target": t, "horizon": h, "model": row.model, "MAE": row.MAE, "rank": rank})
+    LB = pd.DataFrame(lb_rows)
+    LB.to_csv(os.path.join(out_dir, "leaderboard_ensemble.csv"), index=False)
+
+    return {"predictions": ENS, "metrics": METR, "leaderboard": LB}
 
 # ------------------ ENSEMBLING ------------------
 
@@ -230,58 +285,26 @@ def build_ensembles(P: pd.DataFrame, top_k: int = 3) -> pd.DataFrame:
 
     return pd.concat([med, mean_top, inv_mean], ignore_index=True)
 
-# ------------------ MAIN ------------------
+# ------------------ MAIN (standalone / legacy) ------------------
 
-def main():
-    out_root = os.path.join(OUT_ROOT, CADENCE)
-    ensure_dirs(out_root)
+def main(source_dirs: Optional[List[str]] = None, out_root: Optional[str] = None,
+         cadence: str = "daily", top_k: int = 3):
+    """Legacy entry point — calls the new API and also generates plots."""
+    dirs = source_dirs or _DEFAULT_SOURCE_DIRS
+    root = out_root or os.path.join(_DEFAULT_OUT_ROOT, cadence)
+    ensure_dirs(root)
 
-    # Load predictions & Ops baseline
-    P = load_all_predictions(SOURCE_DIRS)
-    OPS = load_ops_by_target(SOURCE_DIRS)
+    result = run_ensemble_from_runs(dirs, root, cadence, top_k)
+    print(f"[OK] Ensemble outputs -> {root}")
+    return result
 
-    # Build ensembles per target×horizon×date
-    ENS = build_ensembles(P, TOP_K)
-
-    # Evaluate & plot per target×horizon
-    metrics_rows = []
-    for (t,h), df_th in ENS.groupby(["target","horizon"]):
-        ops_series = OPS.get(t)
-        metr = evaluate_block(df_th, t, h, ops_series)
-        metrics_rows.append(metr)
-
-        # Leaderboard for ensembles (per target×horizon)
-        lb = metr.sort_values("MAE").reset_index(drop=True)
-        lb.assign(target=t, horizon=h).to_csv(
-            os.path.join(out_root, f"leaderboard_{t.replace(' ','_')}_h{h}.csv"), index=False
-        )
-
-        # Plots for the best ensemble
-        best = lb.iloc[0]["model"]
-        plot_overlay_top(df_th, t, h, best, ops_series,
-                         os.path.join(out_root, f"{t.replace(' ','_')}_h{h}_overlay_top_ensemble.png"))
-        plot_leaderboard_bar(metr, t, h,
-                         os.path.join(out_root, f"{t.replace(' ','_')}_h{h}_leaderboard_mae_ensemble.png"))
-        plot_monthly_bars(df_th[df_th["model"]==best], t, h, ops_series,
-                         os.path.join(out_root, f"{t.replace(' ','_')}_h{h}_monthly_bars_top_vs_ops_ensemble.png"))
-
-    METR = pd.concat(metrics_rows, ignore_index=True) if metrics_rows else pd.DataFrame()
-    METR.to_csv(os.path.join(out_root, "metrics_ensemble.csv"), index=False)
-
-    # Save predictions (all three ensembles)
-    ENS.sort_values(["target","horizon","date","model"]).to_csv(
-        os.path.join(out_root, "predictions_ensemble.csv"), index=False
-    )
-
-    # Global ensemble leaderboard (mean MAE across folds)
-    rows=[]
-    for (t,h), g in METR.groupby(["target","horizon"]):
-        g2 = g.groupby("model", as_index=False)["MAE"].mean().sort_values("MAE")
-        for rank,row in enumerate(g2.itertuples(index=False), start=1):
-            rows.append({"target":t,"horizon":h,"model":row.model,"MAE":row.MAE,"rank":rank})
-    pd.DataFrame(rows).to_csv(os.path.join(out_root, "leaderboard_ensemble.csv"), index=False)
-
-    print(f"[OK] Ensemble outputs → {out_root}")
 
 if __name__ == "__main__":
-    main()
+    # Legacy hardcoded source dirs for standalone use
+    _DEFAULT_SOURCE_DIRS = [
+        os.path.join(".", "outputs", "statistical", "daily"),
+        os.path.join(".", "outputs", "ml_univariate", "daily"),
+        os.path.join(".", "outputs", "ml_multivariate", "daily"),
+        os.path.join(".", "outputs", "dl_multivariate", "daily"),
+    ]
+    main(_DEFAULT_SOURCE_DIRS)
