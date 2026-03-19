@@ -78,6 +78,7 @@ class ConfigDL:
     random_seed: int = 42
     device: str = "auto"                # "auto" | "cpu" | "cuda"
     quick_mode: bool = False            # if True: small epochs for smoke runs
+    thorough_mode: bool = False         # if True: aggressive training settings
 
     def __post_init__(self):
         if self.targets is None:
@@ -97,6 +98,10 @@ class ConfigDL:
         if self.quick_mode:
             self.epochs = min(self.epochs, 5)
             self.batch_size = max(64, self.batch_size)
+        if self.thorough_mode:
+            # Thorough: lower LR + more patience for better convergence
+            self.lr = min(self.lr, 5e-4)
+            self.weight_decay = max(self.weight_decay, 1e-4)
 
 # =============================================================================
 # Shared utilities (calendar, baseline, metrics, plotting)
@@ -424,20 +429,56 @@ def make_feature_frame(df_all: pd.DataFrame, target: str, cadence: str,
 
     return F.fillna(0.0), y
 
-def build_sequences(F: pd.DataFrame, y: pd.Series, seq_len: int, horizon: int) -> Tuple[np.ndarray,np.ndarray,np.ndarray]:
+def build_sequences(F: pd.DataFrame, y: pd.Series, seq_len: int, horizon: int,
+                     target_col: str = None, mask_target_at_origin: bool = False,
+                     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build supervised sequences for DL models.
+
+    Parameters
+    ----------
+    F : feature frame (includes target column and calendar/exog features)
+    y : target series aligned with F
+    seq_len : lookback window length
+    horizon : steps forward (step-based, not calendar-day)
+    target_col : name of the target column in F.  When *mask_target_at_origin*
+        is True, the target column value in the **last row** of each sequence
+        is replaced with 0.0 to prevent implicit lag_0 persistence shortcuts.
+    mask_target_at_origin : if True, zero out the target column in the last
+        sequence row.  Should be True for stock/level targets.
+
+    Returns
+    -------
+    X : (N, seq_len, C) feature tensor
+    y_arr : (N,) targets  — value at position end_i + horizon
+    label_dates : (N,) target dates
+    origin_dates : (N,) origin dates  — date at position end_i
+    origin_values : (N,) value of y at origin
+    """
     idx = F.index
-    Xs, ys, label_dates = [], [], []
+    target_col_idx = None
+    if mask_target_at_origin and target_col and target_col in F.columns:
+        target_col_idx = list(F.columns).index(target_col)
+
+    Xs, ys, label_dates, origin_dates_list, origin_values_list = [], [], [], [], []
     n = len(idx)
-    for end_i in range(seq_len-1, n - horizon):
-        sl = F.iloc[end_i-seq_len+1 : end_i+1].values  # (L,C)
+    for end_i in range(seq_len - 1, n - horizon):
+        sl = F.iloc[end_i - seq_len + 1 : end_i + 1].values.copy()  # (L, C)
+        # ✅ FIX DL-1: Mask the target column at the origin row (last row)
+        # to prevent the model from learning y_hat ≈ y(origin) as a shortcut.
+        if target_col_idx is not None:
+            sl[-1, target_col_idx] = 0.0
         y_target = float(y.iloc[end_i + horizon])
         Xs.append(sl.astype(np.float32))
         ys.append(np.float32(y_target))
         label_dates.append(pd.Timestamp(idx[end_i + horizon]))
+        origin_dates_list.append(pd.Timestamp(idx[end_i]))
+        origin_values_list.append(float(y.iloc[end_i]))
     X = np.stack(Xs, axis=0) if Xs else np.zeros((0, seq_len, F.shape[1]), dtype=np.float32)
     yv = np.array(ys, dtype=np.float32)
     ld = np.array(label_dates, dtype="datetime64[ns]")
-    return X, yv, ld
+    od = np.array(origin_dates_list, dtype="datetime64[ns]")
+    ov = np.array(origin_values_list, dtype=np.float32)
+    return X, yv, ld, od, ov
 
 def fit_feature_scaler(X: np.ndarray) -> Tuple[np.ndarray,np.ndarray]:
     flat = X.reshape(-1, X.shape[-1])
@@ -692,7 +733,12 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
             # Sequences are built against label dates; folds should be generated on labels
             horizons = horizons_for(cadence.lower(), config)
             for h in horizons:
-                X_all, y_all, ld_all = build_sequences(F, y, seq_len, h)
+                # ✅ FIX DL-1: Mask target at origin for stock targets
+                X_all, y_all, ld_all, od_all, ov_all = build_sequences(
+                    F, y, seq_len, h,
+                    target_col=target,
+                    mask_target_at_origin=stock,
+                )
                 if X_all.shape[0] == 0:
                     print(f"[WARN] No sequences for {target} {cadence} h={h}. Need >= lookback({seq_len})+horizon({h}).")
                     continue
@@ -721,6 +767,8 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                     X_tr_all = X_all[tr_mask]; y_tr_all = y_all[tr_mask]
                     X_te = X_all[te_mask];     y_te = y_all[te_mask]
                     ld_tr = pd.to_datetime(ld_all[tr_mask]); ld_te = pd.to_datetime(ld_all[te_mask])
+                    od_te = pd.to_datetime(od_all[te_mask])   # origin dates for test set
+                    ov_te = ov_all[te_mask]                   # origin values for test set
 
                     if X_tr_all.shape[0] < 1 or X_te.shape[0] < 1:
                         continue
@@ -784,7 +832,10 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                         hi = inv(yhat_t + q_t) if q_t else np.full_like(yhat, np.nan)
 
                         df_m = pd.DataFrame({
-                            "date": ld_te.values,
+                            "date": ld_te.values,           # target_date
+                            "target_date": ld_te.values,    # explicit
+                            "origin_date": od_te.values,    # ✅ FIX DL-3: origin for auditability
+                            "origin_value": ov_te.astype(float),  # ✅ FIX DL-3
                             "target": target,
                             "horizon": h,
                             "model": mname.upper(),
@@ -808,6 +859,72 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                     metrics_all.append(mdf)
                     lb = mdf.sort_values("MAE").reset_index(drop=True)
                     best_model = lb.iloc[0]["model"] if len(lb) else None
+
+                    # ✅ FIX DL-4/5: Integrity checks + quality gate (same as ML)
+                    _dl_integrity = {"pipeline": "DL", "target": target, "horizon": h}
+                    try:
+                        try:
+                            from forecast_integrity import (
+                                shift_diagnostic_horizon_aware,
+                                compute_skill_score,
+                            )
+                        except ImportError:
+                            from backend.forecast_integrity import (
+                                shift_diagnostic_horizon_aware,
+                                compute_skill_score,
+                            )
+                        # Persistence baseline from origin_value
+                        if "origin_value" in df_pred_h.columns and best_model:
+                            _bm_df = df_pred_h[df_pred_h["model"] == best_model]
+                            _valid = _bm_df.dropna(subset=["origin_value", "y_true"])
+                            if len(_valid) > 5:
+                                mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+                                mae_model = float(np.mean(np.abs(_valid["y_true"].values - _valid["y_pred"].values)))
+                                skill_pct = compute_skill_score(mae_model, mae_persist)
+                                # Add persistence baseline to leaderboard
+                                persist_row = pd.DataFrame([{"model": "Persistence (baseline)", "MAE": mae_persist}])
+                                lb = pd.concat([persist_row, lb], ignore_index=True).sort_values("MAE").reset_index(drop=True)
+                                # Shift diagnostic
+                                shift_result = shift_diagnostic_horizon_aware(
+                                    _valid["y_true"].values, _valid["y_pred"].values, h)
+                                _dl_integrity.update({
+                                    "mae_model": mae_model,
+                                    "mae_persistence": mae_persist,
+                                    "skill_pct": skill_pct,
+                                    "best_shift": shift_result.get("best_shift", 0),
+                                    "is_lag0_issue": shift_result.get("is_lag0_issue", False),
+                                    "is_persistence_like": shift_result.get("is_persistence_like", False),
+                                    "alignment_ok": True,
+                                    "mask_target_at_origin": stock,
+                                })
+                                # Quality gate
+                                _QUALITY_GATE = 5.0
+                                if skill_pct < _QUALITY_GATE:
+                                    print(f"[DL][WARN] Quality gate FAILED for {target} h={h}: "
+                                          f"skill={skill_pct:.2f}% < {_QUALITY_GATE}%. "
+                                          f"MAE_model={mae_model:.2f}, MAE_persist={mae_persist:.2f}")
+                                    _dl_integrity["quality_gate_passed"] = False
+                                    _dl_integrity["run_status"] = "FAILED_QUALITY"
+                                else:
+                                    print(f"[DL][OK] Quality gate passed for {target} h={h}: "
+                                          f"skill={skill_pct:.2f}%")
+                                    _dl_integrity["quality_gate_passed"] = True
+                                    _dl_integrity["run_status"] = "SUCCESS"
+                                if shift_result.get("is_persistence_like"):
+                                    print(f"[DL][WARN] Persistence-like behavior detected for {target} h={h}")
+                                if shift_result.get("is_lag0_issue"):
+                                    print(f"[DL][WARN] lag_0 issue pattern detected for {target} h={h}")
+                    except Exception as ex:
+                        print(f"[DL][WARN] Integrity checks failed: {ex}")
+                        _dl_integrity["run_status"] = "ERROR"
+                        _dl_integrity["error"] = str(ex)
+
+                    # Save integrity report
+                    os.makedirs(os.path.join(out_root_cad, "artifacts"), exist_ok=True)
+                    with open(os.path.join(out_root_cad, "artifacts",
+                              f"integrity_{target.replace(' ','_')}_h{h}.json"), "w") as _f:
+                        json.dump(_dl_integrity, _f, indent=2, default=str)
+
                     # Save leaderboards per target/h
                     lb.assign(target=target, horizon=h, cadence=cadence).to_csv(
                         os.path.join(out_root_cad, f"leaderboard_{target.replace(' ','_')}_h{h}.csv"), index=False

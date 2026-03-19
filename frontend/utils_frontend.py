@@ -96,3 +96,55 @@ def zip_outputs(out_dir: Path) -> bytes:
             zf.write(p, arcname=str(p.relative_to(out_dir)))
     bio.seek(0)
     return bio.read()
+
+
+# ---------------------------------------------------------------------------
+# Cross-run comparison helpers
+# ---------------------------------------------------------------------------
+
+def load_run_outputs(run_dir: Path) -> dict:
+    """Load standard outputs (predictions, metrics, leaderboard, config) from a run.
+
+    Returns a dict with keys:
+        pred   : pd.DataFrame | None
+        metr   : pd.DataFrame | None
+        lb     : pd.DataFrame | None
+        config : dict
+        run_id : str
+    """
+    import pandas as _pd
+
+    out = run_dir / "outputs"
+    if not out.exists():
+        return {"pred": None, "metr": None, "lb": None, "config": {}, "run_id": run_dir.name}
+
+    def _find(name: str):
+        for base in [out, out / "daily", out / "weekly", out / "monthly"]:
+            p = base / name
+            if p.exists():
+                return p
+        return None
+
+    pred = metr = lb = None
+    pp = _find("predictions_long.csv")
+    mp = _find("metrics_long.csv")
+    lp = _find("leaderboard.csv")
+    if pp:
+        pred = _pd.read_csv(pp)
+        if "date" in pred.columns:
+            pred["date"] = _pd.to_datetime(pred["date"], errors="coerce")
+            pred = pred.dropna(subset=["date"]).sort_values("date")
+    if mp:
+        metr = _pd.read_csv(mp)
+    if lp:
+        lb = _pd.read_csv(lp)
+
+    cfg = {}
+    cfg_p = _find("artifacts/config.json")
+    if cfg_p:
+        try:
+            cfg = json.loads(cfg_p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    return {"pred": pred, "metr": metr, "lb": lb, "config": cfg, "run_id": run_dir.name}

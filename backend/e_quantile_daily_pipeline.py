@@ -44,26 +44,30 @@ def _pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, q: float) -> float:
 
 def _time_folds(n: int, horizon: int, folds: int, min_train: int) -> List[Tuple[int, int]]:
     """
+    Expanding-window time-series cross-validation.
+
     Returns list of (train_end_index_exclusive, test_end_index_exclusive).
-    At each fold: train = [0:train_end), test = [train_end: test_end) of length horizon.
+    At each fold: train = [0 : train_end), test = [train_end : test_end)
+    where len(test) == horizon.
+
+    Training always starts at index 0, so later folds always have at least
+    as much training data as earlier ones (expanding window).  Test blocks
+    are non-overlapping and placed from the end of the series backward.
     """
-    # minimal train length in rows (approx years * 252 trading days if Daily; we’ll just treat min_train as months≈~21*years)
-    # To keep it simple and robust, we require at least horizon points for each test.
     indices = []
-    # place folds back-to-back ending at series end
     last_test_end = n
     for _ in range(folds, 0, -1):
         test_end = last_test_end
         test_start = test_end - horizon
         if test_start < 0:
             break
-        # train must end at test_start
-        train_end = test_start
-        if train_end <= max(horizon, 30):  # guardrail for tiny series
+        train_end = test_start          # train = [0 : train_end)
+        min_train_rows = max(horizon, 30)
+        if train_end <= min_train_rows:
             break
         indices.append((train_end, test_end))
         last_test_end = test_start
-    indices.reverse()
+    indices.reverse()   # earliest fold first
     return indices
 
 def _calendar_feats(idx: pd.DatetimeIndex) -> pd.DataFrame:
@@ -75,12 +79,24 @@ def _calendar_feats(idx: pd.DatetimeIndex) -> pd.DataFrame:
         "year": idx.year
     }, index=idx)
 
-def _build_features(df: pd.DataFrame, cfg: Config) -> Tuple[pd.DataFrame, pd.Series]:
-    """Make lag/roll/cals; if multivariate, bring exog and optionally select top_k."""
+def _build_features(df: pd.DataFrame, cfg: Config) -> Tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+    """Build feature frame and **h-step-ahead** target.
+
+    Returns
+    -------
+    X : feature DataFrame (features at time t, backward-looking only)
+    y_target : target Series — value at position t + horizon  (step-based)
+    origin_dates : Series of origin dates aligned with X
+    origin_values : Series of y-values at origin aligned with X
+
+    ✅ FIX QUANT-1: The target is now y(t + h) instead of y(t).
+    This makes the quantile pipeline a genuine h-step-ahead forecaster,
+    consistent with ML pipeline semantics.
+    """
     y = df[cfg.target].astype(float).copy()
     X = pd.DataFrame(index=df.index)
 
-    # Target-derived features
+    # Target-derived features (all backward-looking: safe)
     for l in cfg.lags_daily:
         X[f"y_lag_{l}"] = y.shift(l)
     for w in cfg.windows_daily:
@@ -94,20 +110,33 @@ def _build_features(df: pd.DataFrame, cfg: Config) -> Tuple[pd.DataFrame, pd.Ser
     if cfg.variant == "multivariate":
         exog_cols = [c for c in df.columns if c not in (cfg.target,) and c != cfg.date_col]
         exog = df[exog_cols].copy()
-        # forward-fill and back-fill modestly, then lag by 1 to avoid leakage
         exog = exog.ffill().bfill().shift(1)
         if cfg.exog_top_k is not None and cfg.exog_top_k > 0:
-            # select top abs-corr with target (safe for NaNs)
             corr = exog.join(y).corr(numeric_only=True)[cfg.target].drop(cfg.target, errors="ignore").abs()
             keep = corr.sort_values(ascending=False).head(cfg.exog_top_k).index.tolist()
             exog = exog[keep]
         X = pd.concat([X, exog], axis=1)
 
-    # Align
-    dfX = X
-    dfy = y
-    both = pd.concat([dfX, dfy], axis=1).dropna()
-    return both.drop(columns=[cfg.target]), both[cfg.target]
+    # ✅ FIX QUANT-1: Construct h-step-ahead target using step-based indexing.
+    # y_target[i] = y[i + horizon]  (positional offset, not calendar-day).
+    h = cfg.horizon
+    y_vals = y.values
+    y_target = pd.Series(np.nan, index=y.index, dtype=float)
+    for i in range(len(y) - h):
+        y_target.iloc[i] = y_vals[i + h]
+
+    # origin_dates = feature dates, origin_values = y at feature dates
+    origin_dates = pd.Series(y.index, index=y.index)
+    origin_values = y.copy()
+
+    # Align: drop rows where features or target are NaN
+    both = pd.concat([X, y_target.rename("__target__"),
+                       origin_values.rename("__origin_val__")], axis=1).dropna()
+    X_out = both.drop(columns=["__target__", "__origin_val__"])
+    y_out = both["__target__"]
+    ov_out = both["__origin_val__"]
+    od_out = pd.Series(both.index, index=both.index)
+    return X_out, y_out, od_out, ov_out
 
 def _save_csv(df: pd.DataFrame, out_root: str, name: str) -> str:
     p = os.path.join(out_root, name)
@@ -196,8 +225,8 @@ def run_pipeline(CONFIG: Config) -> None:
     if CONFIG.target not in df.columns:
         raise ValueError(f"target column '{CONFIG.target}' not found.")
 
-    # Features
-    X_all, y_all = _build_features(df, CONFIG)
+    # Features — now returns h-step-ahead targets + origin metadata
+    X_all, y_all, od_all, ov_all = _build_features(df, CONFIG)
     n = len(y_all)
     if n < CONFIG.horizon + 50:
         print("[runner] WARNING: very short series after feature alignment.")
@@ -233,7 +262,9 @@ def run_pipeline(CONFIG: Config) -> None:
             fold_ix += 1
             X_tr, y_tr = X_all.iloc[:tr_end], y_all.iloc[:tr_end]
             X_te, y_te = X_all.iloc[tr_end:te_end], y_all.iloc[tr_end:te_end]
-            dates_te = X_te.index
+            od_te = od_all.iloc[tr_end:te_end]  # origin dates for test
+            ov_te = ov_all.iloc[tr_end:te_end]  # origin values for test
+            dates_te = X_te.index  # these are origin dates; target dates are h steps forward
 
             # Fit/predict per model
             if model_name == "GBQuantile":
@@ -245,12 +276,32 @@ def run_pipeline(CONFIG: Config) -> None:
             else:
                 raise ValueError(f"Unknown model '{model_name}'")
 
+            # ✅ FIX QUANT-2: Compute target_dates from origin + h steps.
+            # The origin dates (dates_te / od_te) are the feature dates; the
+            # actual target is h positions forward in the original series.
+            y_series = df[CONFIG.target].astype(float)
+            y_idx = y_series.index
+            date_to_pos = {d: i for i, d in enumerate(y_idx)}
+            target_dates_list = []
+            for orig_d in od_te.values:
+                orig_d_ts = pd.Timestamp(orig_d)
+                pos = date_to_pos.get(orig_d_ts)
+                if pos is not None and pos + CONFIG.horizon < len(y_idx):
+                    target_dates_list.append(y_idx[pos + CONFIG.horizon])
+                else:
+                    target_dates_list.append(pd.NaT)
+
             # Collect predictions_long rows
             row = pd.DataFrame({
-                "date": dates_te,
+                "date": target_dates_list,     # ✅ now = target_date (h-step-ahead)
+                "target_date": target_dates_list,
+                "origin_date": od_te.values,
+                "origin_value": ov_te.values,
                 "y_true": y_te.values,
                 "model": model_name,
-                "fold": fold_ix
+                "fold": fold_ix,
+                "horizon": CONFIG.horizon,
+                "target": CONFIG.target,
             })
             for q in CONFIG.quantiles:
                 row[f"yhat_p{int(round(q*100))}"] = q_preds[q]
@@ -319,9 +370,31 @@ def run_pipeline(CONFIG: Config) -> None:
     metrics_long = pd.DataFrame(metrics_rows)
     leaderboard = pd.DataFrame(leaderboard_rows).sort_values(f"pinball_q50" if "pinball_q50" in leaderboard_rows[0] else list(leaderboard_rows[0].keys())[1])
 
+    # ✅ FIX QUANT-3: Integrity checks and persistence baseline
+    _quant_integrity = {"pipeline": "QUANTILE", "target": CONFIG.target, "horizon": CONFIG.horizon}
+    if not predictions_long.empty and "origin_value" in predictions_long.columns and "yhat_p50" in predictions_long.columns:
+        _valid = predictions_long.dropna(subset=["origin_value", "y_true", "yhat_p50"])
+        if len(_valid) > 5:
+            mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+            mae_p50 = float(np.mean(np.abs(_valid["y_true"].values - _valid["yhat_p50"].values)))
+            skill_pct = ((mae_persist - mae_p50) / mae_persist * 100.0) if mae_persist > 0 else np.nan
+            _quant_integrity.update({
+                "mae_p50": mae_p50, "mae_persistence": mae_persist,
+                "skill_pct": skill_pct,
+                "quality_gate_passed": (skill_pct >= 5.0) if np.isfinite(skill_pct) else False,
+                "run_status": "SUCCESS" if (np.isfinite(skill_pct) and skill_pct >= 5.0) else "FAILED_QUALITY",
+            })
+            print(f"[quantile] Persistence MAE={mae_persist:.2f}, P50 MAE={mae_p50:.2f}, Skill={skill_pct:.2f}%")
+
     _save_csv(predictions_long, out_root, "predictions_long.csv")
     _save_csv(metrics_long, out_root, "metrics_long.csv")
     _save_csv(leaderboard, out_root, "leaderboard.csv")
+
+    # Save integrity report
+    _ensure_dir(os.path.join(out_root, "artifacts"))
+    import json as _json
+    with open(os.path.join(out_root, "artifacts", "integrity_report.json"), "w") as _f:
+        _json.dump(_quant_integrity, _f, indent=2, default=str)
 
     elapsed = time.time() - t0
     _save_run_json(CONFIG, out_root, elapsed)

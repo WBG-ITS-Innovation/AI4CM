@@ -13,6 +13,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from backend_bridge import launch_backend
+from backend_consts import (
+    STAT_MODEL_OPTIONS, ML_MODEL_OPTIONS, DL_MODEL_OPTIONS,
+    QUANTILE_MODEL_OPTIONS, QUALITY_GATE_SKILL_PCT,
+    PROFILE_DEFAULTS, HORIZON_PRESETS,
+)
+from data_preflight import run_preflight
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
 st.set_page_config(page_title="🧪 Lab — Forecast Runner", layout="wide")
@@ -312,44 +318,55 @@ profile = st.radio(
     index=0,
     help=(
         "Controls how heavy the run is.\n\n"
-        "Demo (fast): minimal training / minimal cross-validation\n"
-        "Balanced: reasonable default for exploration\n"
-        "Thorough: slower, more robust evaluation"
+        "**Demo (fast):** 1 fold, clipped data, minimal training — results in seconds.\n"
+        "**Balanced:** 3 folds, full data, moderate training — good for exploration.\n"
+        "**Thorough:** 5+ folds, full data, aggressive training — production-quality results."
     ),
 )
 
-# base overrides from profile
-ov: Dict[str, Any] = {
-    "folds": 1 if profile == "Demo (fast)" else (3 if profile == "Balanced" else 5),  # Thorough = 5 folds
-    "min_train_years": 0 if profile == "Demo (fast)" else (2 if profile == "Balanced" else 4),
-    "demo_clip_months": 12 if profile == "Demo (fast)" else None,
-}
+# Map UI label to profile key
+_profile_key = {"Demo (fast)": "Demo", "Balanced": "Balanced", "Thorough": "Thorough"}[profile]
+
+# Build overrides from centralized PROFILE_DEFAULTS
+_profile_base = PROFILE_DEFAULTS.get((_profile_key, family), {})
+ov: Dict[str, Any] = dict(_profile_base)  # copy so we don't mutate the constant
+
+# Show what this profile sets (collapsed)
+with st.expander(f"Profile details: {_profile_key} / {family}", expanded=False):
+    st.json(_profile_base)
 
 
 # ---------------------------- model selection (+ batch option) ----------------------------
 st.subheader("Model selection")
 
-run_multiple = st.checkbox(
-    "Run multiple models (batch)",
-    value=False,
-    help=(
-        "If enabled, you can select multiple models and the app will run them one-by-one automatically.\n\n"
-        "This is the safest way to compare multiple models without changing backend code."
-    ),
-)
-
 model_options: List[str]
 if family == "B_ML":
-    model_options = ["Ridge", "Lasso", "ElasticNet", "RandomForest", "ExtraTrees", "HistGBDT", "XGBoost", "LightGBM"]
+    model_options = ML_MODEL_OPTIONS
 elif family == "A_STAT":
-    model_options = ["ETS", "SARIMAX", "STL_ARIMA", "THETA", "NAIVE", "WEEKDAY_MEAN", "MOVAVG"]
+    model_options = [label for label, _ in STAT_MODEL_OPTIONS]
 elif family == "C_DL":
-    model_options = ["GRU", "LSTM", "TCN", "Transformer", "MLP"]
+    model_options = DL_MODEL_OPTIONS
 else:
-    model_options = ["GBQuantile"]
+    model_options = QUANTILE_MODEL_OPTIONS
 
-# choose one vs many
-if run_multiple and len(model_options) > 1:
+_col_batch, _col_allmodels = st.columns(2)
+with _col_batch:
+    run_multiple = st.checkbox(
+        "Run multiple models (batch)",
+        value=(_profile_key == "Thorough"),
+        help="Run several models one-by-one and compare outputs.",
+    )
+with _col_allmodels:
+    run_all_models = st.checkbox(
+        "Run ALL models in family",
+        value=False,
+        help=f"Automatically selects all {len(model_options)} models in {fam_label}.",
+    )
+
+if run_all_models:
+    models_selected = list(model_options)
+    st.info(f"All {len(models_selected)} models selected: {', '.join(models_selected)}")
+elif run_multiple and len(model_options) > 1:
     models_selected = st.multiselect(
         "Models to run",
         model_options,
@@ -368,124 +385,147 @@ else:
     )
     models_selected = [model_single]
 
+# ---- Multi-horizon option ----
+st.subheader("Horizon options")
+run_multi_horizon = st.checkbox(
+    "Run multiple horizons",
+    value=False,
+    help="Run the selected model(s) at several horizons in one go. Great for Thorough runs.",
+)
+
+if run_multi_horizon:
+    presets = HORIZON_PRESETS.get(cadence, [1, 5, 10])
+    horizons_selected = st.multiselect(
+        "Horizons to run",
+        presets,
+        default=presets,
+        help="Each (model, horizon) combination creates a separate run.",
+    )
+    if not horizons_selected:
+        st.warning("Select at least one horizon.")
+        st.stop()
+else:
+    horizons_selected = [int(horizon)]
+
 
 # ---------------------------- parameter widgets (with REAL hover help) ----------------------------
+# ---------------------------- Data Quality Pre-flight ----------------------------
+st.subheader("Data quality check")
+_pf = run_preflight(df, date_col, target, cadence, int(horizon))
+_has_blockers = len(_pf["blockers"]) > 0
+
+if _has_blockers:
+    for b in _pf["blockers"]:
+        st.error(f"**BLOCKER:** {b}")
+    st.warning("Fix the issues above before running. The Run button is disabled.")
+
+for w in _pf["warnings"]:
+    st.warning(w)
+
+_pf_info = _pf["info"]
+_c1, _c2, _c3, _c4 = st.columns(4)
+with _c1:
+    st.metric("Rows", f"{_pf_info.get('rows', 0):,}")
+with _c2:
+    st.metric("Date span", f"{_pf_info.get('date_min', '?')} to {_pf_info.get('date_max', '?')}")
+with _c3:
+    st.metric("Missing", f"{_pf_info.get('missing_pct', 0):.1f}%")
+with _c4:
+    st.metric("Exog columns", f"{_pf_info.get('exog_columns', 0)}")
+
+if not _pf["blockers"] and not _pf["warnings"]:
+    st.success("Data looks good — no issues detected.")
+
+
 st.subheader("Model parameters")
 
 if family == "B_ML":
     # Lag/window parameter names vary with cadence in your backend
+    _lag_defaults = ov.get(f"lags_{cadence.lower()}", [1, 3, 7])
+    _win_defaults = ov.get(f"windows_{cadence.lower()}", [3, 7])
+
     if cadence == "Daily":
         ov["lags_daily"] = st.multiselect(
             "lags_daily",
-            [1, 2, 3, 5, 7, 14, 21],
-            default=[1, 3, 7],
+            [0, 1, 2, 3, 5, 7, 14, 21, 28],
+            default=_lag_defaults,
             help=(
                 "Which past days to include as features.\n\n"
-                "Example: [1,3,7] means we use yesterday, 3 days ago, and 1 week ago as inputs."
+                "**lag_0** is **excluded by default** to prevent persistence bias."
             ),
         )
+        if 0 not in ov["lags_daily"]:
+            st.caption("lag_0 excluded by default to prevent persistence bias for stock targets.")
         ov["windows_daily"] = st.multiselect(
             "windows_daily",
             [3, 5, 7, 14, 21, 28],
-            default=[3, 7],
-            help=(
-                "Rolling window statistics (e.g., trailing mean) used as features.\n\n"
-                "Example: 7 means a trailing 7-day average."
-            ),
+            default=_win_defaults,
+            help="Rolling window statistics (trailing mean) used as features.",
         )
     elif cadence == "Weekly":
         ov["lags_weekly"] = st.multiselect(
-            "lags_weekly",
-            [1, 2, 3, 4, 8, 12, 26],
-            default=[1, 4, 12],
-            help="Past weeks used as input features (e.g., 1 week ago, 4 weeks ago, 12 weeks ago).",
+            "lags_weekly", [1, 2, 3, 4, 8, 12, 26],
+            default=_lag_defaults,
+            help="Past weeks used as input features.",
         )
         ov["windows_weekly"] = st.multiselect(
-            "windows_weekly",
-            [2, 4, 8, 12, 26],
-            default=[4, 12],
-            help="Rolling window sizes in weeks used for trailing stats (mean/std etc.).",
+            "windows_weekly", [2, 4, 8, 12, 26],
+            default=_win_defaults,
+            help="Rolling window sizes in weeks.",
         )
     else:
         ov["lags_monthly"] = st.multiselect(
-            "lags_monthly",
-            [1, 2, 3, 6, 12],
-            default=[1, 3],
-            help="Past months used as input features (1 month ago, 3 months ago, etc.).",
+            "lags_monthly", [1, 2, 3, 6, 12],
+            default=_lag_defaults,
+            help="Past months used as input features.",
         )
         ov["windows_monthly"] = st.multiselect(
-            "windows_monthly",
-            [3, 6, 12],
-            default=[3, 6],
-            help="Rolling window sizes in months used for trailing stats (mean/std etc.).",
+            "windows_monthly", [3, 6, 12],
+            default=_win_defaults,
+            help="Rolling window sizes in months.",
         )
 
     if variant == "Multivariate":
         ov["exog_top_k"] = st.number_input(
-            "exog_top_k",
-            0,
-            64,
-            8,
-            help=(
-                "In multivariate mode, we can select the most useful external signals.\n\n"
-                "exog_top_k = how many exogenous columns to keep (based on importance/selection in the backend)."
-            ),
+            "exog_top_k", 0, 64, 8,
+            help="How many exogenous columns to keep (by correlation).",
         )
 
 elif family == "C_DL":
+    _dl_lookback = ov.get("lookback", 48)
+    _dl_batch = ov.get("batch_size", 128)
+    _dl_epochs = ov.get("max_epochs", 3)
+    _dl_vf = ov.get("valid_frac", 0.2)
+
     ov["lookback"] = st.number_input(
-        "lookback",
-        4,
-        365,
-        48,
-        help=(
-            "How many past time steps the network sees to make a forecast.\n\n"
-            "Daily example: lookback=60 means the model uses the last 60 days to predict the next horizon."
-        ),
+        "lookback", 4, 365, int(_dl_lookback),
+        help="How many past time steps the network sees to make a forecast.",
     )
     ov["batch_size"] = st.number_input(
-        "batch_size",
-        8,
-        2048,
-        128,
-        step=8,
-        help="Training batch size. Larger batches can be faster but use more memory.",
+        "batch_size", 8, 2048, int(_dl_batch), step=8,
+        help="Training batch size. Larger = faster but more memory.",
     )
     ov["max_epochs"] = st.number_input(
-        "max_epochs",
-        1,
-        200,
-        3,
-        help="Maximum training epochs (passes through training data). More epochs = slower but can improve fit.",
+        "max_epochs", 1, 200, int(_dl_epochs),
+        help="Maximum training epochs. More epochs = slower but can improve fit.",
     )
     ov["valid_frac"] = st.number_input(
-        "valid_frac",
-        0.05,
-        0.9,
-        0.2,
-        0.05,
-        help="Fraction of data held out as validation (used to monitor training quality).",
+        "valid_frac", 0.05, 0.9, float(_dl_vf), 0.05,
+        help="Fraction held out as validation (for early stopping).",
     )
     ov["conformal_calib_frac"] = st.number_input(
-        "conformal_calib_frac",
-        0.05,
-        0.9,
-        0.2,
-        0.05,
-        help="Fraction used to calibrate prediction intervals (uncertainty bands) using conformal prediction.",
+        "conformal_calib_frac", 0.05, 0.9, 0.2, 0.05,
+        help="Fraction used to calibrate prediction intervals (conformal).",
     )
     ov["device"] = st.selectbox(
-        "device",
-        ["auto", "cpu", "cuda"],
-        index=0,
-        help="Training device. 'auto' chooses best available; 'cuda' requires a CUDA GPU.",
+        "device", ["auto", "cpu", "cuda"], index=0,
+        help="Training device. 'auto' picks best available.",
     )
 
 elif family == "E_QUANTILE":
     q_text = st.text_input(
-        "quantiles (comma-separated)",
-        "0.1,0.5,0.9",
-        help="Quantiles to predict. 0.1=lower bound (P10), 0.5=median (P50), 0.9=upper bound (P90).",
+        "quantiles (comma-separated)", "0.1,0.5,0.9",
+        help="Quantiles to predict. 0.1=P10, 0.5=P50 (median), 0.9=P90.",
     )
     try:
         ov["quantiles"] = [float(x) for x in q_text.split(",") if x.strip() != ""]
@@ -494,9 +534,8 @@ elif family == "E_QUANTILE":
         st.warning("Could not parse quantiles; using default [0.1, 0.5, 0.9].")
 
 else:
-    # A_STAT has no extra widget knobs here because actual parameters are driven by backend
     st.caption(
-        "Statistical models are configured primarily in the backend; use Advanced overrides below if you want to pass extra knobs."
+        "Statistical models are configured in the backend; use Advanced overrides below for extra knobs."
     )
 
 
@@ -552,12 +591,12 @@ def _runner_for(family: str, short_var: str) -> Path:
     # E_QUANTILE
     return back / ("run_e_quantile_daily_univariate.py" if short_var == "uni" else "run_e_quantile_daily_multivariate.py")
 
-def _run_one(model_name: str):
-    """Run a single model experiment and return result dict."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
+def _run_one(model_name: str, run_horizon: int):
+    """Run a single (model, horizon) experiment and return result dict."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E"}[family]
     short_var = "uni" if variant == "Univariate" else "multi"
-    run_label = f"run_{short_fam}_{short_var}_{model_name}_{target}_{cadence}_h{int(horizon)}_{ts}"
+    run_label = f"run_{short_fam}_{short_var}_{model_name}_{target}_{cadence}_h{int(run_horizon)}_{ts}"
 
     run_id, run_dir, out_root = new_run_folders(run_label)
     runner = _runner_for(family, short_var)
@@ -567,7 +606,7 @@ def _run_one(model_name: str):
         "TG_MODEL_FILTER": model_name,
         "TG_TARGET": target,
         "TG_CADENCE": cadence,
-        "TG_HORIZON": str(int(horizon)),
+        "TG_HORIZON": str(int(run_horizon)),
         "TG_DATA_PATH": str(Path(data_path).resolve()),
         "TG_DATE_COL": str(_safe_date_col(list(df.columns), date_col)),
         "TG_PARAM_OVERRIDES": json.dumps(ov_final),
@@ -585,6 +624,7 @@ def _run_one(model_name: str):
 
     return {
         "model": model_name,
+        "horizon": run_horizon,
         "rc": rc,
         "elapsed": elapsed,
         "log_path": log_path,
@@ -593,7 +633,14 @@ def _run_one(model_name: str):
     }
 
 
-if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True):
+# Build the full job queue: (model, horizon)
+_job_queue = [(m, h) for m in models_selected for h in horizons_selected]
+_n_jobs = len(_job_queue)
+
+_run_label = f"{len(models_selected)} model(s) x {len(horizons_selected)} horizon(s) = {_n_jobs} run(s)"
+st.caption(f"**Run queue:** {_run_label}")
+
+if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True, disabled=_has_blockers):
     py = st.session_state.get("backend_py", "")
     back = st.session_state.get("backend_dir", "")
 
@@ -607,9 +654,9 @@ if st.button("🚀 Run experiment(s)", type="primary", use_container_width=True)
     results = []
     prog = st.progress(0, text="Starting…")
 
-    for i, m in enumerate(models_selected, start=1):
-        prog.progress((i - 1) / max(1, len(models_selected)), text=f"Running {m} ({i}/{len(models_selected)})…")
-        res = _run_one(m)
+    for i, (m, h) in enumerate(_job_queue, start=1):
+        prog.progress((i - 1) / max(1, _n_jobs), text=f"Running {m} h={h} ({i}/{_n_jobs})…")
+        res = _run_one(m, h)
         results.append(res)
 
         # ✅ FIX 5: Check for failure: return code != 0 OR error.json exists OR FAILED_QUALITY
