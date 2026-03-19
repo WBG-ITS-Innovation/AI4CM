@@ -81,6 +81,7 @@ def main() -> None:
         min_train_years=int(ov.get("min_train_years", 4)),
         device=str(ov.get("device", "auto")),
         quick_mode=bool(ov.get("quick_mode", False)),
+        thorough_mode=bool(ov.get("thorough_mode", False)),
     )
 
     # Horizons (only the active cadence matters)

@@ -141,36 +141,49 @@ def compute_baselines(
 ) -> Dict:
     """
     Test B: Baseline check (detects "previous value as prediction").
-    
-    Computes persistence and seasonal naive baselines.
-    
+
+    Computes persistence and seasonal naive baselines using **step-based**
+    (positional) indexing so that the baseline is correct for business-day
+    data where calendar-day subtraction would land on weekends.
+
     Args:
         series: Full time series (indexed by date)
         target_dates: Dates where we want predictions
-        horizon: Forecast horizon
-        
+        horizon: Forecast horizon (in index steps, not calendar days)
+
     Returns:
-        Dictionary with persistence and seasonal naive predictions and MAEs
+        Dictionary with persistence and seasonal naive predictions
     """
     persistence_preds = []
     seasonal_naive_preds = []
-    
+
+    # Build a positional lookup for the series index
+    date_to_pos = {d: i for i, d in enumerate(series.index)}
+    season_steps = 5  # 5 business days ≈ 1 calendar week
+
     for target_date in target_dates:
-        origin_date = target_date - pd.Timedelta(days=horizon)
-        
-        # Persistence: y_hat(t+h) = y(t)
-        if origin_date in series.index:
-            persistence_preds.append(float(series.loc[origin_date]))
+        # --- Persistence: y_hat(t+h) = y(origin) where origin is h steps back ---
+        if target_date in date_to_pos:
+            pos_target = date_to_pos[target_date]
+            pos_origin = pos_target - horizon
+            if 0 <= pos_origin < len(series):
+                persistence_preds.append(float(series.iloc[pos_origin]))
+            else:
+                persistence_preds.append(np.nan)
         else:
             persistence_preds.append(np.nan)
-        
-        # Seasonal naive: y_hat(t+h) = y(t+h-7) (weekly seasonality)
-        seasonal_date = target_date - pd.Timedelta(days=7)
-        if seasonal_date in series.index:
-            seasonal_naive_preds.append(float(series.loc[seasonal_date]))
+
+        # --- Seasonal naive: y_hat(t+h) = y(t+h - season_steps) ---
+        if target_date in date_to_pos:
+            pos_target = date_to_pos[target_date]
+            pos_seasonal = pos_target - season_steps
+            if 0 <= pos_seasonal < len(series):
+                seasonal_naive_preds.append(float(series.iloc[pos_seasonal]))
+            else:
+                seasonal_naive_preds.append(np.nan)
         else:
             seasonal_naive_preds.append(np.nan)
-    
+
     return {
         "persistence": persistence_preds,
         "seasonal_naive": seasonal_naive_preds,

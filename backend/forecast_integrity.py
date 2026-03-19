@@ -139,15 +139,19 @@ def check_feature_leakage(
         # Check if feature values correlate perfectly with future target (suspicious)
         if len(feature_df) > horizon:
             # Compare feature at t with target at t+h
-            feat_t = feature_df[col].iloc[:-horizon] if horizon > 0 else feature_df[col]
-            target_t_h = target_series.iloc[horizon:] if horizon > 0 else target_series
-            
-            if len(feat_t) == len(target_t_h) and len(feat_t) > 10:
-                corr = np.corrcoef(feat_t.dropna(), target_t_h[feat_t.dropna().index].dropna())[0, 1]
-                if not np.isnan(corr) and abs(corr) > 0.99:
-                    leakage_issues.append(
-                        f"Feature '{col}' has near-perfect correlation (r={corr:.3f}) with target at t+{horizon} (suspicious)"
-                    )
+            # Use .values to avoid index-alignment issues between sliced series
+            feat_vals = feature_df[col].iloc[:-horizon].values if horizon > 0 else feature_df[col].values
+            target_vals = target_series.iloc[horizon:].values if horizon > 0 else target_series.values
+
+            if len(feat_vals) == len(target_vals) and len(feat_vals) > 10:
+                # Drop NaN pairs
+                valid = ~(np.isnan(feat_vals) | np.isnan(target_vals))
+                if valid.sum() > 10:
+                    corr = np.corrcoef(feat_vals[valid], target_vals[valid])[0, 1]
+                    if not np.isnan(corr) and abs(corr) > 0.99:
+                        leakage_issues.append(
+                            f"Feature '{col}' has near-perfect correlation (r={corr:.3f}) with target at t+{horizon} (suspicious)"
+                        )
     
     return {
         "leakage_detected": len(leakage_issues) > 0,

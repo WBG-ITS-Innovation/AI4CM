@@ -121,56 +121,95 @@ def _fallback_fold(idx: pd.DatetimeIndex, horizon: int) -> List[Tuple[pd.Timesta
     tr_end = idx[-(te_len + horizon)]
     return [(tr_end, te_start, te_end)]
 
-# predictors
-def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex, ov: Dict, cadence: str) -> np.ndarray:
+# predictors — each returns (y_pred, y_lo, y_hi) as numpy arrays
+def _nan_pi(n: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Return NaN prediction interval arrays of length n."""
+    return np.full(n, np.nan), np.full(n, np.nan)
+
+def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
+        ov: Dict, cadence: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Forecast with optional native prediction intervals.
+    Returns (y_pred, y_lo, y_hi).  Models without native PIs return NaN for y_lo/y_hi.
+    """
     m = model.upper()
+    n = len(idx)
+    pi_alpha = float(ov.get("pi_alpha", 0.10))  # 90 % PI by default
+
     if m == "NAIVE":
-        return np.repeat(y_tr.iloc[-1], len(idx)).astype(float)
+        y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
+        return y_pred, *_nan_pi(n)
+
     if m == "WEEKDAY_MEAN":
         if y_tr.index.freqstr and "B" in y_tr.index.freqstr:
             wd = y_tr.groupby(y_tr.index.dayofweek).mean()
-            return np.array([wd.get(ts.dayofweek, y_tr.iloc[-1]) for ts in idx], dtype=float)
-        return np.repeat(y_tr.iloc[-1], len(idx)).astype(float)
+            y_pred = np.array([wd.get(ts.dayofweek, y_tr.iloc[-1]) for ts in idx], dtype=float)
+        else:
+            y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
+        return y_pred, *_nan_pi(n)
+
     if m == "MOVAVG":
         w = int(ov.get("MOVAVG", {}).get("window", 7))
-        return np.repeat(float(y_tr.tail(w).mean()), len(idx)).astype(float)
+        y_pred = np.repeat(float(y_tr.tail(w).mean()), n).astype(float)
+        return y_pred, *_nan_pi(n)
+
     if m == "ETS":
-        ets = ov.get("ETS", {})
-        trend = None if ets.get("trend") in (None, "None") else ets.get("trend", "add")
-        seasonal = None if ets.get("seasonal") in (None, "None") else ets.get("seasonal", "add")
-        periods = int(ets.get("seasonal_periods", 12))
-        damped = bool(ets.get("damped_trend", False))
-        # safety: need at least two seasonal cycles if seasonal is requested
+        ets_ov = ov.get("ETS", {})
+        trend = None if ets_ov.get("trend") in (None, "None") else ets_ov.get("trend", "add")
+        seasonal = None if ets_ov.get("seasonal") in (None, "None") else ets_ov.get("seasonal", "add")
+        periods = int(ets_ov.get("seasonal_periods", 12))
+        damped = bool(ets_ov.get("damped_trend", False))
         if seasonal and len(y_tr) < 2 * periods:
             seasonal = None
         try:
             fit = ExponentialSmoothing(y_tr, trend=trend, seasonal=seasonal,
                                        seasonal_periods=periods if seasonal else None,
                                        damped_trend=damped, initialization_method="estimated").fit(optimized=True)
-            return fit.forecast(len(idx)).values.astype(float)
+            y_pred = fit.forecast(n).values.astype(float)
+            # Try to get native prediction intervals
+            try:
+                pi = fit.get_prediction(start=len(y_tr), end=len(y_tr) + n - 1)
+                sf = pi.summary_frame(alpha=pi_alpha)
+                return y_pred, sf["pi_lower"].values.astype(float), sf["pi_upper"].values.astype(float)
+            except Exception:
+                return y_pred, *_nan_pi(n)
         except Exception:
-            # final fallback
-            return np.repeat(y_tr.iloc[-1], len(idx)).astype(float)
+            y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
+            return y_pred, *_nan_pi(n)
+
     if m == "SARIMAX":
         sar = ov.get("SARIMAX", {})
         ord_ = tuple(sar.get("order", [1,1,1]))
         sOrd = tuple(sar.get("seasonal_order", [0,0,0, 12 if cadence=='Monthly' else 5]))
         fit = SARIMAX(y_tr, order=ord_, seasonal_order=sOrd,
                       enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
-        return fit.forecast(len(idx)).values.astype(float)
+        fc = fit.get_forecast(n)
+        y_pred = fc.predicted_mean.values.astype(float)
+        sf = fc.summary_frame(alpha=pi_alpha)
+        return y_pred, sf["mean_ci_lower"].values.astype(float), sf["mean_ci_upper"].values.astype(float)
+
     if m == "STL_ARIMA":
-        stl = ov.get("STL_ARIMA", {})
-        sp = int(stl.get("stl_period", 12 if cadence=='Monthly' else 5))
-        ao = tuple(stl.get("arima_order", [1,1,0]))
+        stl_ov = ov.get("STL_ARIMA", {})
+        sp = int(stl_ov.get("stl_period", 12 if cadence=='Monthly' else 5))
+        ao = tuple(stl_ov.get("arima_order", [1,1,0]))
         comp = STL(y_tr, period=sp, robust=True).fit()
         fit = SARIMAX(comp.resid, order=ao, enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
-        res = fit.forecast(len(idx)).values
-        seas = np.resize(comp.seasonal[-sp:], len(idx)) if sp>0 and len(comp.seasonal)>=sp else np.zeros(len(idx))
-        trend = np.full(len(idx), comp.trend.iloc[-1])
-        return trend + seas + res
+        fc = fit.get_forecast(n)
+        res_pred = fc.predicted_mean.values
+        seas = np.resize(comp.seasonal[-sp:], n) if sp > 0 and len(comp.seasonal) >= sp else np.zeros(n)
+        trend_vals = np.full(n, comp.trend.iloc[-1])
+        y_pred = trend_vals + seas + res_pred
+        # PI from residual ARIMA, shifted by trend+seasonal
+        sf = fc.summary_frame(alpha=pi_alpha)
+        y_lo = trend_vals + seas + sf["mean_ci_lower"].values.astype(float)
+        y_hi = trend_vals + seas + sf["mean_ci_upper"].values.astype(float)
+        return y_pred, y_lo, y_hi
+
     if m == "THETA":
-        return ThetaModel(y_tr).fit().forecast(len(idx)).values.astype(float)
-    return np.repeat(y_tr.iloc[-1], len(idx)).astype(float)
+        y_pred = ThetaModel(y_tr).fit().forecast(n).values.astype(float)
+        return y_pred, *_nan_pi(n)
+
+    y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
+    return y_pred, *_nan_pi(n)
 
 def _plot_overlay(df_slice: pd.DataFrame, out_png: Path, ops: Optional[pd.Series]):
     fig, ax = plt.subplots(figsize=(12,4))
@@ -240,14 +279,34 @@ def main():
         y_tr = y_all[y_all.index <= tr_end]
         idx_te = y_all.index[(y_all.index >= ts_start) & (y_all.index <= ts_end)]
         if len(y_tr)==0 or len(idx_te)==0: continue
-        y_pred = _fc(model, y_tr, idx_te, ov, cadence)
+        y_pred, y_lo, y_hi = _fc(model, y_tr, idx_te, ov, cadence)
         y_pred = np.asarray(y_pred).ravel()
+        y_lo = np.asarray(y_lo).ravel()
+        y_hi = np.asarray(y_hi).ravel()
         if len(y_pred)!=len(idx_te): y_pred = np.resize(y_pred, len(idx_te))
+        if len(y_lo)!=len(idx_te): y_lo = np.resize(y_lo, len(idx_te))
+        if len(y_hi)!=len(idx_te): y_hi = np.resize(y_hi, len(idx_te))
         y_true = y_all.reindex(idx_te).values.astype(float)
-        for dt_i, yp, yt in zip(idx_te, y_pred, y_true):
-            recs.append({"date":dt_i,"target":target,"horizon":horizon,"model":model,
-                         "y_true":float(yt),"y_pred":float(yp),"y_lo":np.nan,"y_hi":np.nan,
-                         "split_id":f"{tr_end.date()}→{ts_start.date()}..{ts_end.date()}","cadence":cadence})
+        # ✅ FIX STAT-1: origin_date = tr_end (last date in training set).
+        origin_val = float(y_tr.iloc[-1]) if len(y_tr) > 0 else np.nan
+        _has_pi = np.isfinite(y_lo).any()
+        if _has_pi:
+            _log(f"  PI produced for fold {tr_end.date()} ({int(np.isfinite(y_lo).sum())}/{len(y_lo)} values)")
+        for i_te, (dt_i, yp, yt, lo, hi) in enumerate(zip(idx_te, y_pred, y_true, y_lo, y_hi)):
+            recs.append({
+                "date": dt_i,
+                "target_date": dt_i,
+                "origin_date": tr_end,
+                "origin_value": origin_val,
+                "target": target,
+                "horizon": horizon,
+                "horizon_note": "stat_models_forecast_full_test_window",
+                "model": model,
+                "y_true": float(yt), "y_pred": float(yp),
+                "y_lo": float(lo), "y_hi": float(hi),
+                "split_id": f"{tr_end.date()}→{ts_start.date()}..{ts_end.date()}",
+                "cadence": cadence,
+            })
 
     preds = pd.DataFrame.from_records(recs).sort_values("date")
     preds.to_csv(outroot/"predictions_long.csv", index=False)
@@ -261,7 +320,33 @@ def main():
     metr=pd.DataFrame(rows); metr.to_csv(outroot/"metrics_long.csv", index=False)
     lb=(metr.groupby("model",as_index=False)["MAE"].mean().sort_values("MAE")
            .assign(rank=lambda x: np.arange(1,len(x)+1)))
+
+    # ✅ FIX STAT-2: Persistence baseline + quality gate
+    _stat_integrity = {"pipeline": "STAT", "target": target, "horizon": horizon}
+    if not preds.empty and "origin_value" in preds.columns:
+        _valid = preds.dropna(subset=["origin_value", "y_true"])
+        if len(_valid) > 0:
+            mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+            mae_model_all = float(np.mean(np.abs(_valid["y_true"].values - _valid["y_pred"].values)))
+            skill_pct = ((mae_persist - mae_model_all) / mae_persist * 100.0) if mae_persist > 0 else np.nan
+            persist_row = pd.DataFrame([{"target":target,"horizon":horizon,"cadence":cadence,
+                                         "model":"Persistence (baseline)","MAE":mae_persist,"RMSE":np.nan}])
+            lb = pd.concat([persist_row, lb], ignore_index=True).sort_values("MAE").reset_index(drop=True)
+            lb["rank"] = range(len(lb))
+            _stat_integrity.update({
+                "mae_model": mae_model_all, "mae_persistence": mae_persist,
+                "skill_pct": skill_pct, "quality_gate_passed": skill_pct >= 5.0 if np.isfinite(skill_pct) else False,
+                "run_status": "SUCCESS" if (np.isfinite(skill_pct) and skill_pct >= 5.0) else "FAILED_QUALITY",
+            })
+            _log(f"Persistence MAE={mae_persist:.2f}, Model MAE={mae_model_all:.2f}, Skill={skill_pct:.2f}%")
+
     lb.to_csv(outroot/"leaderboard.csv", index=False)
+
+    # Save integrity report
+    (outroot/"artifacts").mkdir(parents=True, exist_ok=True)
+    import json as _json
+    with open(outroot/"artifacts"/"integrity_report.json", "w") as _f:
+        _json.dump(_stat_integrity, _f, indent=2, default=str)
 
     ops_series=None if _is_stock(target) else (ops_daily if cadence=="Daily" else ops_month)
     if not preds.empty:

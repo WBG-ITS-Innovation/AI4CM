@@ -13,6 +13,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from backend_bridge import launch_backend
+from backend_consts import (
+    STAT_MODEL_OPTIONS, ML_MODEL_OPTIONS, DL_MODEL_OPTIONS,
+    QUANTILE_MODEL_OPTIONS, QUALITY_GATE_SKILL_PCT,
+    PROFILE_DEFAULTS, HORIZON_PRESETS,
+)
+from data_preflight import run_preflight
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
 st.set_page_config(page_title="🧪 Lab — Forecast Runner", layout="wide")
