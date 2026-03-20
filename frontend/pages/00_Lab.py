@@ -593,30 +593,21 @@ short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E"}[family]
 short_var = "uni" if variant == "Univariate" else "multi"
 run_label = f"run_{short_fam}_{short_var}_{model}_{target}_{cadence}_h{int(horizon)}_{ts}"
 
-# ---------------------------- 3) Launch & live log ----------------------------
-st.header("3) Launch & live log")
-
 # Choose runner script
-if family == "A_STAT":
-    runner = Path(st.session_state["backend_dir"]) / "run_a_stat.py"
-elif family == "B_ML":
-    runner = Path(st.session_state["backend_dir"]) / ("run_b_ml_univariate.py" if short_var == "uni" else "run_b_ml_multivariate.py")
-elif family == "C_DL":
-    runner = Path(st.session_state["backend_dir"]) / ("run_c_dl_univariate.py" if short_var == "uni" else "run_c_dl_multivariate.py")
+backend_dir_str = st.session_state.get("backend_dir", "")
+if backend_dir_str:
+    _backend_path = Path(backend_dir_str)
 else:
-    runner = Path(st.session_state["backend_dir"]) / ("run_e_quantile_daily_univariate.py" if short_var == "uni" else "run_e_quantile_daily_multivariate.py")
+    _backend_path = Path(".")  # safe fallback; validated before launch
 
-env = {
-    "TG_FAMILY": family,
-    "TG_MODEL_FILTER": model,
-    "TG_TARGET": target,
-    "TG_CADENCE": cadence,
-    "TG_HORIZON": str(int(horizon)),
-    "TG_DATA_PATH": str(Path(data_path).resolve()),
-    "TG_DATE_COL": str([c for c in df.columns if c.lower() == date_col.lower()][0]),
-    "TG_PARAM_OVERRIDES": json.dumps(ov_final),
-    "TG_OUT_ROOT": str(out_root.resolve()),
-}
+if family == "A_STAT":
+    runner = _backend_path / "run_a_stat.py"
+elif family == "B_ML":
+    runner = _backend_path / ("run_b_ml_univariate.py" if short_var == "uni" else "run_b_ml_multivariate.py")
+elif family == "C_DL":
+    runner = _backend_path / ("run_c_dl_univariate.py" if short_var == "uni" else "run_c_dl_multivariate.py")
+else:
+    runner = _backend_path / ("run_e_quantile_daily_univariate.py" if short_var == "uni" else "run_e_quantile_daily_multivariate.py")
 
 log_box = st.empty()
 status = st.empty()
@@ -639,6 +630,25 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         st.error(f"Runner script missing: `{runner}`")
         st.stop()
 
+    # ── Create run folder structure ─────────────────────────────────
+    # new_run_folders() creates: runs/<run_label>/outputs/ and returns
+    # (run_id, run_dir, out_root).  This is the ONLY place that should
+    # define these variables — they must not be referenced before the
+    # user clicks "Run".
+    run_id, run_dir, out_root = new_run_folders(run_label)
+
+    env = {
+        "TG_FAMILY": family,
+        "TG_MODEL_FILTER": model,
+        "TG_TARGET": target,
+        "TG_CADENCE": cadence,
+        "TG_HORIZON": str(int(horizon)),
+        "TG_DATA_PATH": str(Path(data_path).resolve()),
+        "TG_DATE_COL": str([c for c in df.columns if c.lower() == date_col.lower()][0]),
+        "TG_PARAM_OVERRIDES": json.dumps(ov_final),
+        "TG_OUT_ROOT": str(out_root.resolve()),
+    }
+
     rc, elapsed, log_path, out_real = launch_backend(
         backend_py=py,
         runner_script=str(runner),
@@ -648,73 +658,71 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         on_progress=_on_progress,
     )
 
-    # Overlay comparison across runs
-    st.subheader("Overlay preview — compare models")
-    # ✅ FIX 5: Include FAILED_QUALITY runs in overlay (outputs still exist)
-    ok_runs = [r for r in results if r["rc"] == 0 and not (Path(r["out_real"]) / "artifacts" / "error.json").exists()]
-    
-    # Check for FAILED_QUALITY and show warning banner
-    failed_quality_runs = []
-    for r in ok_runs:
-        integrity_json_path = Path(r["out_real"]) / "artifacts" / "integrity_report.json"
-        if integrity_json_path.exists():
-            try:
-                integrity = json.loads(integrity_json_path.read_text(encoding="utf-8"))
-                if integrity.get("run_status") == "FAILED_QUALITY":
-                    failed_quality_runs.append(r["model"])
-            except Exception:
-                pass
-    
-    if failed_quality_runs:
-        st.warning(f"⚠️ **Model underperforms baseline:** {', '.join(failed_quality_runs)}. "
-                  f"Plots shown below, but model does not beat persistence baseline.")
+    # ── Post-run results ────────────────────────────────────────────
+    # Check for quality gate failures
+    _integrity_json = Path(out_real) / "artifacts" / "integrity_report.json"
+    _failed_quality = False
+    if _integrity_json.exists():
+        try:
+            _integ_data = json.loads(_integrity_json.read_text(encoding="utf-8"))
+            if _integ_data.get("run_status") == "FAILED_QUALITY":
+                _failed_quality = True
+        except Exception:
+            pass
 
-    if not ok_runs:
-        st.warning("No successful runs to visualize.")
+    if rc != 0:
+        st.error(f"Run failed (exit code {rc}). Check the log below for details.")
+    elif _failed_quality:
+        st.warning(
+            f"⚠️ **Model underperforms baseline** ({model}). "
+            "Plots shown below, but model does not beat the persistence baseline."
+        )
     else:
         st.success(f"Finished in {elapsed:.1f}s • outputs in `{out_real}`")
 
-        with st.expander("Overlay preview — Actual vs selected model(s) (and Ops baseline if available)", expanded=True):
-            p = Path(out_real) / "predictions_long.csv"
-            if not p.exists():
-                for cad in ("daily", "weekly", "monthly"):
-                    cand = Path(out_real) / cad / "predictions_long.csv"
-                    if cand.exists():
-                        p = cand
-                        break
+    # Overlay preview
+    st.subheader("Overlay preview — Actual vs model predictions")
+    with st.expander("Overlay preview — Actual vs selected model(s) (and Ops baseline if available)", expanded=True):
+        p = Path(out_real) / "predictions_long.csv"
+        if not p.exists():
+            for _cad in ("daily", "weekly", "monthly"):
+                cand = Path(out_real) / _cad / "predictions_long.csv"
+                if cand.exists():
+                    p = cand
+                    break
 
-            if p.exists():
-                pred = pd.read_csv(p)
-                pred["date"] = pd.to_datetime(pred["date"], errors="coerce")
-                pred = pred.dropna(subset=["date"]).sort_values("date")
+        if p.exists():
+            pred = pd.read_csv(p)
+            pred["date"] = pd.to_datetime(pred["date"], errors="coerce")
+            pred = pred.dropna(subset=["date"]).sort_values("date")
 
-                models = sorted(pred["model"].unique())
-                sel = st.multiselect("Models to visualize", models, default=models[:1])
+            models = sorted(pred["model"].unique())
+            sel = st.multiselect("Models to visualize", models, default=models[:1])
 
-                fig = go.Figure()
-                fig.add_scatter(
-                    x=pred["date"], y=pred["y_true"],
-                    name="Actual", mode="lines",
-                    line=dict(color="black")
-                )
-                for m in sel:
-                    g = pred[pred["model"] == m]
-                    fig.add_scatter(x=g["date"], y=g["y_pred"], name=m, mode="lines")
+            fig = go.Figure()
+            fig.add_scatter(
+                x=pred["date"], y=pred["y_true"],
+                name="Actual", mode="lines",
+                line=dict(color="black"),
+            )
+            for m in sel:
+                g = pred[pred["model"] == m]
+                fig.add_scatter(x=g["date"], y=g["y_pred"], name=m, mode="lines")
 
-                base = _baseline_series(Path(out_real), target, cadence)
-                if base is not None and len(base):
-                    rng = (pred["date"].min(), pred["date"].max())
-                    b = base[(base.index >= rng[0]) & (base.index <= rng[1])]
-                    if not b.empty:
-                        fig.add_scatter(
-                            x=b.index, y=b.values,
-                            name="Ops baseline", mode="lines",
-                            line=dict(dash="dot")
-                        )
+            base = _baseline_series(Path(out_real), target, cadence)
+            if base is not None and len(base):
+                rng = (pred["date"].min(), pred["date"].max())
+                b = base[(base.index >= rng[0]) & (base.index <= rng[1])]
+                if not b.empty:
+                    fig.add_scatter(
+                        x=b.index, y=b.values,
+                        name="Ops baseline", mode="lines",
+                        line=dict(dash="dot"),
+                    )
 
-                st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
-            else:
-                st.caption("No predictions_long.csv found in the outputs folder.")
+            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+        else:
+            st.caption("No predictions_long.csv found in the outputs folder.")
 
     st.markdown("**Log tail**")
     st.code(Path(log_path).read_text(encoding="utf-8")[-5000:], language="text")
