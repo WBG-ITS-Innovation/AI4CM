@@ -14,7 +14,8 @@ from backend_consts import QUALITY_GATE_SKILL_PCT
 from recommender import recommend_model, format_scorecard_markdown
 from ui_styles import (
     inject_global_css, metric_card, status_badge, section_header,
-    callout_box, grade_badge, COLORS,
+    callout_box, grade_badge, page_header, info_tip, glossary_table,
+    COLORS,
 )
 
 APPROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +111,20 @@ def _fmt_num(v, decimals=0, prefix="", suffix="") -> str:
     return f"{prefix}{v:,.{decimals}f}{suffix}"
 
 
+def _fmt_large(v, decimals=1) -> str:
+    """Human-readable large numbers: 225484864 → '225.5M'."""
+    if isinstance(v, float) and (np.isnan(v) or not np.isfinite(v)):
+        return "N/A"
+    abs_v = abs(float(v))
+    if abs_v >= 1_000_000_000:
+        return f"{float(v)/1_000_000_000:,.{decimals}f}B"
+    if abs_v >= 1_000_000:
+        return f"{float(v)/1_000_000:,.{decimals}f}M"
+    if abs_v >= 10_000:
+        return f"{float(v):,.0f}"
+    return f"{float(v):,.{decimals}f}"
+
+
 def _fmt_pct(v, decimals=1) -> str:
     if isinstance(v, float) and np.isnan(v):
         return "N/A"
@@ -127,10 +142,8 @@ def _trust_status(grade: str) -> str:
 
 # ── Page header ──────────────────────────────────────────────────────
 st.markdown(
-    '<h1 style="font-size:28px; font-weight:700; margin-bottom:2px;">'
-    '📈 Dashboard</h1>'
-    '<p style="color:#64748b; font-size:14px; margin-top:0;">'
-    'Interactive results, diagnostics, and model recommendations</p>',
+    page_header("📈 Dashboard",
+                "Interactive results, diagnostics, and model recommendations"),
     unsafe_allow_html=True,
 )
 
@@ -212,12 +225,19 @@ if _scorecard_cfg_path.exists():
 
 _rec = recommend_model(pred, metr, lb, _scorecard_cfg,
                        target=targets[0] if targets else "",
-                       horizon=horizons[0] if horizons else 1)
+                       horizon=horizons[0] if horizons else 1,
+                       integrity=_integ)
 
 _grade = _rec["accuracy_grade"]
 _best = _rec["best_model"]
 _sc = _rec["scorecard"]
+_quality_gate_failed = _rec.get("quality_gate_failed", False)
 _grade_status = _trust_status(_grade)
+
+# When quality gate failed, override display values
+if _quality_gate_failed:
+    _grade = "F"
+    _grade_status = "fail"
 
 # ── Trust verdict banner ─────────────────────────────────────────────
 if _integ:
@@ -313,8 +333,14 @@ with g1:
     st.markdown(grade_badge(_grade), unsafe_allow_html=True)
 
 with g2:
+    _best_display = _best or "N/A"
+    _best_delta = ""
+    if _quality_gate_failed:
+        _best_delta = "Not useful — below baseline"
     st.markdown(
-        metric_card("Best Model", _best or "N/A", icon="🏆", status=_grade_status),
+        metric_card("Best Model", _best_display, delta=_best_delta,
+                     icon="🏆" if not _quality_gate_failed else "⚠️",
+                     status=_grade_status),
         unsafe_allow_html=True,
     )
 
@@ -326,7 +352,7 @@ with g3:
             _skill_v = (1 - _mae_v / _mae_persist) * 100
             _mae_delta = f"Skill: {_skill_v:.1f}%"
     st.markdown(
-        metric_card("MAE", _fmt_num(_mae_v), delta=_mae_delta,
+        metric_card("MAE", _fmt_large(_mae_v), delta=_mae_delta,
                      icon="📐", status=_grade_status),
         unsafe_allow_html=True,
     )
@@ -387,7 +413,7 @@ with st.expander("Detailed Scorecard & Recommendations", expanded=False):
             elif k in ("MAPE", "sMAPE", "Monthly Accuracy (10% tol)", "PI Coverage"):
                 formatted = f"{v:.1%}"
             elif k in ("MAE", "RMSE", "PI Avg Width"):
-                formatted = f"{v:,.0f}"
+                formatted = _fmt_large(v)
             elif k == "R2":
                 formatted = f"{v:.4f}"
             elif isinstance(v, float):
@@ -403,6 +429,12 @@ with st.expander("Detailed Scorecard & Recommendations", expanded=False):
 
         sc_df = pd.DataFrame(_sc_rows)
         st.dataframe(sc_df, use_container_width=True, hide_index=True)
+
+        st.markdown(info_tip(
+            "The <b>Quality Gate</b> requires skill ≥ 5% over the persistence baseline "
+            "(simply repeating the last known value). "
+            "Grade F means the model is not useful for decisions."
+        ), unsafe_allow_html=True)
 
     # Risk flags
     if _rec["risk_flags"]:
@@ -824,7 +856,7 @@ with tab_integrity:
             with col2:
                 mae_model = integrity.get("mae_model", np.nan)
                 st.markdown(
-                    metric_card("Model MAE", _fmt_num(mae_model), icon="📐", status="neutral"),
+                    metric_card("Model MAE", _fmt_large(mae_model), icon="📐", status="neutral"),
                     unsafe_allow_html=True,
                 )
 
@@ -832,9 +864,9 @@ with tab_integrity:
                 mae_persist = integrity.get("mae_persistence", np.nan)
                 _bm_delta = ""
                 if not (np.isnan(mae_persist) or np.isnan(mae_model)):
-                    _bm_delta = f"Δ {_fmt_num(mae_persist - mae_model)}"
+                    _bm_delta = f"Δ {_fmt_large(mae_persist - mae_model)}"
                 st.markdown(
-                    metric_card("Baseline MAE", _fmt_num(mae_persist), delta=_bm_delta,
+                    metric_card("Baseline MAE", _fmt_large(mae_persist), delta=_bm_delta,
                                 icon="📏", status="neutral"),
                     unsafe_allow_html=True,
                 )
@@ -929,22 +961,42 @@ with tab_integrity:
             baseline_data = {
                 "Metric": ["MAE", "RMSE", "R²"],
                 "Model": [
-                    _fmt_num(integrity.get("mae_model", np.nan)),
-                    _fmt_num(integrity.get("rmse_model", np.nan), 2),
+                    _fmt_large(integrity.get("mae_model", np.nan)),
+                    _fmt_large(integrity.get("rmse_model", np.nan)),
                     _fmt_num(integrity.get("r2_model", np.nan), 3),
                 ],
                 "Persistence Baseline": [
-                    _fmt_num(integrity.get("mae_persistence", np.nan)),
-                    _fmt_num(integrity.get("rmse_persistence", np.nan), 2),
+                    _fmt_large(integrity.get("mae_persistence", np.nan)),
+                    _fmt_large(integrity.get("rmse_persistence", np.nan)),
                     _fmt_num(integrity.get("r2_persistence", np.nan), 3),
                 ],
                 "Seasonal Naive": [
-                    _fmt_num(integrity.get("mae_seasonal_naive", np.nan)),
+                    _fmt_large(integrity.get("mae_seasonal_naive", np.nan)),
                     "N/A",
                     "N/A",
                 ],
             }
             st.dataframe(pd.DataFrame(baseline_data), use_container_width=True, hide_index=True)
+
+            # Explanatory glossary
+            st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
+            with st.expander("What do these metrics mean?"):
+                st.markdown(glossary_table([
+                    ("Persistence Baseline",
+                     "Predicts tomorrow = today. For stock targets (balances), this is a strong baseline."),
+                    ("Skill %",
+                     "How much better the model is than persistence. "
+                     "Positive = better, negative = worse. Threshold: 5%."),
+                    ("Alignment",
+                     "Checks that prediction dates match origin + horizon. "
+                     "Misalignment indicates a timestamping bug."),
+                    ("Shift Detection",
+                     "Tests if predictions are lagged copies of actuals. "
+                     "best_shift=0 is correct; best_shift=-h suggests persistence."),
+                    ("Leakage",
+                     "Tests if the model accidentally sees future data during training. "
+                     "Detected by shuffling the target and re-fitting."),
+                ]), unsafe_allow_html=True)
 
             with st.expander("View full integrity report (JSON)"):
                 st.json(integrity)

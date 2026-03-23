@@ -7,7 +7,14 @@ import pandas as pd
 
 from utils_frontend import load_paths, save_paths, list_runs, zip_outputs
 
+try:
+    from ui_styles import inject_global_css, page_header
+except ImportError:
+    def inject_global_css(): pass
+    def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
+
 st.set_page_config(page_title="Overview • Treasury Forecast Lab", page_icon="📊", layout="wide")
+inject_global_css()
 
 APPROOT = Path(__file__).resolve().parent
 RUNS_DIR = APPROOT / "runs"
@@ -15,8 +22,11 @@ RUNS_DIR = APPROOT / "runs"
 # ─────────────────────────────────────────────────────────────
 # HERO
 # ─────────────────────────────────────────────────────────────
-st.title("Georgia Treasury • Forecast Lab")
-st.caption("A production-grade multi-model forecasting sandbox — Statistical • ML • DL • Quantile")
+st.markdown(
+    page_header("Georgia Treasury Forecast Lab",
+                "A production-grade multi-model forecasting sandbox — Statistical, ML, Deep Learning, Quantile"),
+    unsafe_allow_html=True,
+)
 
 c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
 with c1:

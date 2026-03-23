@@ -11,11 +11,18 @@ import streamlit as st
 
 from utils_frontend import list_runs, load_run_outputs, RUNS_ROOT
 
+try:
+    from ui_styles import inject_global_css, page_header
+except ImportError:
+    def inject_global_css(): pass
+    def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
+
 st.set_page_config(page_title="Compare Runs", layout="wide")
-st.title("Compare Runs")
-st.caption(
-    "Select 2-6 runs to compare forecasts, metrics, prediction intervals, "
-    "and identify the best-performing model across experiments."
+inject_global_css()
+st.markdown(
+    page_header("📊 Compare Runs",
+                "Select 2-6 runs to compare forecasts, metrics, and find the best model"),
+    unsafe_allow_html=True,
 )
 
 # -------------------- helpers --------------------

@@ -87,15 +87,15 @@ class ConfigBML:
     use_delta_modeling: bool = False  # If True, model delta = y(t+h) - y(t) instead of y(t+h)
 
     def __post_init__(self):
+        # Auto-enable delta modeling for stock/level targets.
+        # For stocks, predicting delta = y(t+h) - y(t) avoids the persistence
+        # trap where the model learns y_hat ≈ y_origin because the level
+        # dominates all features.  Delta modeling forces genuine learning.
+        if not self.use_delta_modeling and is_stock(self.target):
+            self.use_delta_modeling = True
+            print(f"[config] Auto-enabled delta modeling for stock target '{self.target}'")
+
         if self.lags_daily is None:
-            # Lag_0 is the value at the origin date (y(t)).  For stock / level
-            # targets this dominates all other features and makes the model a
-            # trivial persistence predictor (y_hat = y_origin).  We therefore
-            # EXCLUDE lag_0 by default and instead expose origin_value as a
-            # separate input to the persistence baseline & integrity checks.
-            # For flow targets lag_0 is also excluded because it biases the
-            # model toward persistence and hides genuine learning.  Users who
-            # explicitly want it can add 0 to lags_daily via overrides.
             self.lags_daily = [1, 3, 7, 14]
         if self.windows_daily is None:
             self.windows_daily = [3, 7, 14]
@@ -231,11 +231,20 @@ def choose_recipe(cfg: ConfigBML) -> Tuple[List[int], List[int]]:
     else:
         lags, wins = list(cfg.lags_daily), list(cfg.windows_daily)
 
-    # Warn if user explicitly included lag_0
-    if 0 in lags:
-        print(f"[WARN] lag_0 (origin value) is included in lags={lags}. "
-              f"This makes the model a near-persistence predictor for stock targets. "
-              f"Consider removing it unless you have a specific reason to keep it.")
+    # When delta modeling is active, include lag_0 (origin value) as a feature.
+    # This is safe because delta modeling removes the persistence component:
+    # we model delta = y(t+h) - y(t), so lag_0 provides change-context, not level.
+    if cfg.use_delta_modeling and 0 not in lags:
+        lags = [0] + lags
+        print(f"[config] Added lag_0 to features (delta modeling active, "
+              f"lag_0 provides change-context not level info)")
+
+    # Warn if user explicitly included lag_0 WITHOUT delta modeling
+    if 0 in lags and not cfg.use_delta_modeling:
+        print(f"[WARN] lag_0 (origin value) is included in lags={lags} "
+              f"WITHOUT delta modeling. This makes the model a near-persistence "
+              f"predictor for stock targets. Consider enabling delta modeling or "
+              f"removing lag_0.")
 
     return lags, wins
 
@@ -518,7 +527,9 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
     
     folds = build_yearly_folds(s.index, cfg.min_train_years, cfg.folds)
     lags, wins = choose_recipe(cfg)
-    
+    print(f"[pipeline] Recipe: lags={lags}, windows={wins}, "
+          f"delta_modeling={cfg.use_delta_modeling}, is_stock={is_stock(cfg.target)}")
+
     # ✅ Log fold details
     print(f"[pipeline] Using {len(folds)} folds (requested={cfg.folds})")
     for i, (train_end, test_start, test_end) in enumerate(folds, 1):
