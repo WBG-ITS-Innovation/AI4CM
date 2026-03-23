@@ -5,8 +5,19 @@ from typing import Dict
 import pandas as pd
 import streamlit as st
 
+try:
+    from ui_styles import inject_global_css, page_header
+except ImportError:
+    def inject_global_css(): pass
+    def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
+
 st.set_page_config(page_title="Models • Georgia Treasury", layout="wide")
-st.title("🧩 Model Families & Parameters")
+inject_global_css()
+st.markdown(
+    page_header("🧩 Model Families & Parameters",
+                "Reference guide for all available forecasting models and their configurations"),
+    unsafe_allow_html=True,
+)
 
 RUNTIME_LEGEND = "⚡ very fast · ⏱ medium · 🐢 slower"
 
