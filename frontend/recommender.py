@@ -27,6 +27,7 @@ def recommend_model(
     config: dict,
     target: str = "",
     horizon: int = 1,
+    integrity: Optional[Dict] = None,
 ) -> Dict:
     """Analyze run outputs and return structured recommendations.
 
@@ -38,6 +39,7 @@ def recommend_model(
         tips           : list[str]
         next_steps     : list[str]
         risk_flags     : list[str]
+        quality_gate_failed : bool
     """
     result = {
         "best_model": "",
@@ -47,6 +49,7 @@ def recommend_model(
         "tips": [],
         "next_steps": [],
         "risk_flags": [],
+        "quality_gate_failed": False,
     }
 
     if pred is None or pred.empty:
@@ -169,10 +172,50 @@ def recommend_model(
     result["accuracy_grade"] = grade
     result["grade_color"] = color
 
+    # ---- Integrity-aware overrides ----
+    # If integrity report shows quality gate failure, force grade to F
+    _qg_failed = False
+    if integrity:
+        _skill = _safe_float(integrity.get("skill_pct"))
+        _run_status = integrity.get("run_status", "")
+        _qg_failed = (
+            integrity.get("quality_gate_failed", False)
+            or _run_status == "FAILED_QUALITY"
+            or (not np.isnan(_skill) and _skill < 5.0)
+        )
+    if _qg_failed:
+        result["accuracy_grade"] = "F"
+        result["grade_color"] = "error"
+        result["quality_gate_failed"] = True
+
     # ---- Tips and recommendations ----
     tips = result["tips"]
     next_steps = result["next_steps"]
     risk_flags = result["risk_flags"]
+
+    # Integrity-based risk flags
+    if integrity and _qg_failed:
+        _skill = _safe_float(integrity.get("skill_pct"))
+        _mae_m = _safe_float(integrity.get("mae_model"))
+        _mae_p = _safe_float(integrity.get("mae_persistence"))
+        if not np.isnan(_skill) and _skill < 0:
+            risk_flags.append(
+                f"Model is worse than simply repeating the last known value "
+                f"(persistence baseline). Skill = {_skill:.1f}%. "
+                f"Model MAE = {_mae_m:,.0f} vs Persistence MAE = {_mae_p:,.0f}."
+            )
+        elif not np.isnan(_skill):
+            risk_flags.append(
+                f"Model does not meet the quality gate threshold "
+                f"({_skill:.1f}% < 5.0%). Outputs should not be used for "
+                f"decisions without further review."
+            )
+        _best_shift = integrity.get("best_shift", 0)
+        if _best_shift != 0:
+            risk_flags.append(
+                f"Predictions appear shifted by {_best_shift} steps. "
+                f"Interpretation: {integrity.get('shift_interpretation', 'unknown')}."
+            )
 
     # Model-specific tips
     family = config.get("family", config.get("TG_FAMILY", ""))
