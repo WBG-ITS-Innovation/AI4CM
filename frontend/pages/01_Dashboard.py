@@ -110,6 +110,20 @@ def _fmt_num(v, decimals=0, prefix="", suffix="") -> str:
     return f"{prefix}{v:,.{decimals}f}{suffix}"
 
 
+def _fmt_large(v, decimals=1) -> str:
+    """Human-readable large numbers: 225484864 → '225.5M'."""
+    if isinstance(v, float) and (np.isnan(v) or not np.isfinite(v)):
+        return "N/A"
+    abs_v = abs(float(v))
+    if abs_v >= 1_000_000_000:
+        return f"{float(v)/1_000_000_000:,.{decimals}f}B"
+    if abs_v >= 1_000_000:
+        return f"{float(v)/1_000_000:,.{decimals}f}M"
+    if abs_v >= 10_000:
+        return f"{float(v):,.0f}"
+    return f"{float(v):,.{decimals}f}"
+
+
 def _fmt_pct(v, decimals=1) -> str:
     if isinstance(v, float) and np.isnan(v):
         return "N/A"
@@ -212,12 +226,19 @@ if _scorecard_cfg_path.exists():
 
 _rec = recommend_model(pred, metr, lb, _scorecard_cfg,
                        target=targets[0] if targets else "",
-                       horizon=horizons[0] if horizons else 1)
+                       horizon=horizons[0] if horizons else 1,
+                       integrity=_integ)
 
 _grade = _rec["accuracy_grade"]
 _best = _rec["best_model"]
 _sc = _rec["scorecard"]
+_quality_gate_failed = _rec.get("quality_gate_failed", False)
 _grade_status = _trust_status(_grade)
+
+# When quality gate failed, override display values
+if _quality_gate_failed:
+    _grade = "F"
+    _grade_status = "fail"
 
 # ── Trust verdict banner ─────────────────────────────────────────────
 if _integ:
@@ -313,8 +334,14 @@ with g1:
     st.markdown(grade_badge(_grade), unsafe_allow_html=True)
 
 with g2:
+    _best_display = _best or "N/A"
+    _best_delta = ""
+    if _quality_gate_failed:
+        _best_delta = "Not useful — below baseline"
     st.markdown(
-        metric_card("Best Model", _best or "N/A", icon="🏆", status=_grade_status),
+        metric_card("Best Model", _best_display, delta=_best_delta,
+                     icon="🏆" if not _quality_gate_failed else "⚠️",
+                     status=_grade_status),
         unsafe_allow_html=True,
     )
 
@@ -326,7 +353,7 @@ with g3:
             _skill_v = (1 - _mae_v / _mae_persist) * 100
             _mae_delta = f"Skill: {_skill_v:.1f}%"
     st.markdown(
-        metric_card("MAE", _fmt_num(_mae_v), delta=_mae_delta,
+        metric_card("MAE", _fmt_large(_mae_v), delta=_mae_delta,
                      icon="📐", status=_grade_status),
         unsafe_allow_html=True,
     )
