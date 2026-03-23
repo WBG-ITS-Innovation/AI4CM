@@ -26,11 +26,18 @@ except Exception:
     def collect_output_files(out_dir: Path):
         return sorted([p for p in out_dir.rglob("*") if p.is_file()])
 
+try:
+    from ui_styles import inject_global_css, page_header
+except ImportError:
+    def inject_global_css(): pass
+    def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
+
 APPROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = APPROOT / "runs"
 
 st.set_page_config(page_title="🕒 History", layout="wide")
-st.title("🕒 Run History & Registry")
+inject_global_css()
+st.markdown(page_header("🕒 Run History", "Browse and manage past experiments"), unsafe_allow_html=True)
 
 def _ago(ts: float) -> str:
     d = time.time() - ts

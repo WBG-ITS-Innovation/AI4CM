@@ -19,9 +19,11 @@ from backend_consts import (
     PROFILE_DEFAULTS, HORIZON_PRESETS,
 )
 from data_preflight import run_preflight
+from ui_styles import inject_global_css, page_header, section_header, callout_box, info_tip, COLORS
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
 st.set_page_config(page_title="🧪 Lab — Forecast Runner", layout="wide")
+inject_global_css()
 
 APPROOT = Path(__file__).resolve().parent
 RUNS_DIR = APPROOT / "runs"
@@ -294,7 +296,11 @@ If either path is missing, go to the **Overview** page and re-run setup scripts.
 # -------------------------------------------------------------------
 # Page header
 # -------------------------------------------------------------------
-st.title("🧪 Forecast Lab")
+st.markdown(
+    page_header("🧪 Forecast Lab",
+                "Configure and run forecasting experiments"),
+    unsafe_allow_html=True,
+)
 st.caption(
     "Run forecasting experiments (statistical, ML, deep learning, quantiles) and review outputs immediately. "
     "Each experiment is saved as a run folder for reproducibility."
