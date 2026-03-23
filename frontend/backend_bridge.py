@@ -46,12 +46,17 @@ def launch_backend(
         env[k] = str(v)
 
     t0 = time.time()
-    proc = subprocess.Popen(
-        [str(bp), str(rs)],
-        cwd=str(cwd), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1
-    )
+    try:
+        proc = subprocess.Popen(
+            [str(bp), str(rs)],
+            cwd=str(cwd), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1
+        )
+    except (OSError, FileNotFoundError) as e:
+        with open(log_path, "a", encoding="utf-8") as lf:
+            lf.write(f"[bridge][ERROR] Failed to launch subprocess: {e}\n")
+        return (1, 0.0, log_path, str(out_root))
 
     tail = []
     with open(log_path, "a", encoding="utf-8") as lf:
@@ -59,7 +64,10 @@ def launch_backend(
             lf.write(line)
             tail.append(line)
             if on_progress:
-                on_progress("".join(tail[-400:]), time.time() - t0)
+                try:
+                    on_progress("".join(tail[-400:]), time.time() - t0)
+                except Exception:
+                    pass  # never let callback errors kill the run
 
     rc = proc.wait()
     elapsed = time.time() - t0

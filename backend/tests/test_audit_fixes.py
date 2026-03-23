@@ -55,18 +55,33 @@ class TestLag0Exclusion:
         )
         assert 0 not in cfg.lags_weekly
 
-    def test_choose_recipe_does_not_inject_lag0(self):
-        """choose_recipe must NOT silently inject lag_0."""
+    def test_choose_recipe_injects_lag0_with_delta_modeling_for_stock(self):
+        """For stock targets, delta modeling is auto-enabled and lag_0 is added."""
         from b_ml_pipeline import ConfigBML, choose_recipe
         cfg = ConfigBML(
             data_path="dummy.csv", date_col="date", target="State budget balance",
             cadence="Daily", horizon=6, variant="uni",
             model_filter=None, out_root="/tmp/test",
         )
+        assert cfg.use_delta_modeling, "Delta modeling should auto-enable for stock targets"
+        lags, _ = choose_recipe(cfg)
+        assert 0 in lags, (
+            f"choose_recipe should include lag_0 when delta modeling is active, "
+            f"got lags={lags}."
+        )
+
+    def test_choose_recipe_no_lag0_for_flow_without_delta(self):
+        """For flow targets without delta modeling, lag_0 should NOT be injected."""
+        from b_ml_pipeline import ConfigBML, choose_recipe
+        cfg = ConfigBML(
+            data_path="dummy.csv", date_col="date", target="Revenues",
+            cadence="Daily", horizon=6, variant="uni",
+            model_filter=None, out_root="/tmp/test",
+        )
+        assert not cfg.use_delta_modeling, "Delta modeling should NOT auto-enable for flow targets"
         lags, _ = choose_recipe(cfg)
         assert 0 not in lags, (
-            f"choose_recipe injected lag_0 into lags={lags}. "
-            "This makes the model a trivial persistence predictor."
+            f"choose_recipe injected lag_0 into lags={lags} for flow target without delta modeling."
         )
 
     def test_user_can_still_opt_in_to_lag0(self):
