@@ -128,7 +128,7 @@ st.subheader("Quick Start (no conda required)")
 tabs = st.tabs(["Windows (PowerShell)", "macOS / Linux (bash)"])
 with tabs[0]:
     st.code(
-        """\
+        r"""\
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
