@@ -222,7 +222,7 @@ class TestQuantileExpandingWindow:
         n = 500
         horizon = 20
         folds = 3
-        min_train = 100
+        min_train = 1  # years (1 year ≈ 252 rows minimum training)
 
         result = _time_folds(n, horizon, folds, min_train)
 
@@ -242,10 +242,10 @@ class TestQuantileExpandingWindow:
         """Training for every fold implicitly starts at index 0."""
         from e_quantile_daily_pipeline import _time_folds
 
-        n = 300
+        n = 500
         horizon = 10
         folds = 4
-        min_train = 50
+        min_train = 1  # years
 
         result = _time_folds(n, horizon, folds, min_train)
 
@@ -260,7 +260,7 @@ class TestQuantileExpandingWindow:
     def test_test_blocks_non_overlapping(self):
         from e_quantile_daily_pipeline import _time_folds
 
-        result = _time_folds(500, 20, 5, 50)
+        result = _time_folds(500, 20, 5, 1)  # min_train in years
         for i in range(1, len(result)):
             prev_test_end = result[i-1][1]
             curr_train_end = result[i][0]
