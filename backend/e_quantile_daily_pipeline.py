@@ -62,7 +62,10 @@ def _time_folds(n: int, horizon: int, folds: int, min_train: int) -> List[Tuple[
         if test_start < 0:
             break
         train_end = test_start          # train = [0 : train_end)
-        min_train_rows = max(horizon, 30)
+        # min_train is in years; convert to approximate rows (252 biz days/yr).
+        # Also enforce at least max(horizon, 30) so very short horizons don't
+        # create trivially small training sets.
+        min_train_rows = max(min_train * 252, horizon, 30)
         if train_end <= min_train_rows:
             break
         indices.append((train_end, test_end))
