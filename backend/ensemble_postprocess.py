@@ -98,7 +98,7 @@ def evaluate_block(df_pred: pd.DataFrame, target: str, horizon: int,
                      "Monthly_TOL10_Accuracy":tol10,"MAE_skill_vs_Ops":mae_skill})
     return pd.DataFrame(rows)
 
-def plot_overlay_top(df_slice, target, h, best_model, ops_series, out_png):
+def plot_overlay_top(df_slice, target, h, best_model, ops_series, out_png, cadence: str = "daily"):
     fig, ax = plt.subplots(figsize=(12,4))
     g = df_slice[df_slice["model"]==best_model].sort_values("date")
     ax.plot(g["date"], g["y_pred"], label=best_model, linewidth=2)
@@ -108,18 +108,18 @@ def plot_overlay_top(df_slice, target, h, best_model, ops_series, out_png):
     if ops_series is not None:
         ops_aligned = ops_series.reindex(pd.to_datetime(g["date"]))
         ax.plot(g["date"], ops_aligned.values, label="Ops baseline", linestyle="--")
-    ax.set_title(f"{target} | {CADENCE} | h=+{h} | ENSEMBLE vs Ops")
+    ax.set_title(f"{target} | {cadence} | h=+{h} | ENSEMBLE vs Ops")
     ax.legend(loc="best"); ax.grid(True); fig.tight_layout(); fig.savefig(out_png); plt.close(fig)
 
-def plot_leaderboard_bar(mdf, target, h, out_png):
+def plot_leaderboard_bar(mdf, target, h, out_png, cadence: str = "daily"):
     g = mdf.sort_values("MAE")
     fig, ax = plt.subplots(figsize=(8,5))
     ax.barh(g["model"], g["MAE"]); ax.invert_yaxis()
-    ax.set_title(f"{target} | {CADENCE} | h=+{h} | Ensemble leaderboard by MAE")
+    ax.set_title(f"{target} | {cadence} | h=+{h} | Ensemble leaderboard by MAE")
     ax.set_xlabel("MAE (lower is better)")
     fig.tight_layout(); fig.savefig(out_png); plt.close(fig)
 
-def plot_monthly_bars(df_slice, target, h, ops_series, out_png):
+def plot_monthly_bars(df_slice, target, h, ops_series, out_png, cadence: str = "daily"):
     idx = pd.to_datetime(df_slice["date"])
     s_true = pd.Series(df_slice["y_true"].to_numpy(), index=idx)
     s_pred = pd.Series(df_slice["y_pred"].to_numpy(), index=idx)
@@ -134,7 +134,7 @@ def plot_monthly_bars(df_slice, target, h, ops_series, out_png):
     if ops_series is not None and (not is_stock(target)):
         ops_m = ops_series.reindex(idx).resample("ME").sum()
         ax.bar(x + pd.Timedelta(days=3), ops_m.values, width=6, label="Ops baseline", alpha=0.7)
-    ax.set_title(f"{target} | {CADENCE} | h=+{h} | Monthly aggregates (Ensemble vs Ops)")
+    ax.set_title(f"{target} | {cadence} | h=+{h} | Monthly aggregates (Ensemble vs Ops)")
     ax.legend(loc="best"); ax.grid(True, axis="y", linestyle=":")
     fig.tight_layout(); fig.savefig(out_png); plt.close(fig)
 
