@@ -336,20 +336,22 @@ def compute_seasonal_naive_baseline(
     seasonal_preds = []
     y_true_vals = []
     
+    # Build position lookup once for efficiency
+    series_dates = full_series.index
+    date_to_pos = {d: i for i, d in enumerate(series_dates)}
+
     for _, row in df.iterrows():
-        target_date = pd.to_datetime(row["target_date"])
+        target_date = pd.to_datetime(row["target_date"]).normalize()
         y_true_val = row["y_true"]
-        
-        # Find value at target_date - season (if exists)
-        season_ago_date = target_date - pd.Timedelta(days=season * 2)  # Approximate
-        # Find closest date in series
-        available_dates = full_series.index[full_series.index <= target_date]
-        if len(available_dates) >= season:
-            # Use value at position len - season
-            seasonal_val = full_series.iloc[-season] if len(available_dates) >= season else np.nan
+
+        # Find position of target_date in the series index
+        pos = date_to_pos.get(target_date)
+        if pos is not None and pos >= season:
+            # Seasonal naive: value at (position - season) in the index
+            seasonal_val = float(full_series.iloc[pos - season])
         else:
             seasonal_val = np.nan
-        
+
         if not np.isnan(seasonal_val):
             seasonal_preds.append(seasonal_val)
             y_true_vals.append(y_true_val)
