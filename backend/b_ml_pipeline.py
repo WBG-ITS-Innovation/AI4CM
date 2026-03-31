@@ -551,7 +551,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         for c in df_multi.select_dtypes(include=[np.number]).columns:
             if c == cfg.target:
                 continue
-            df_multi[c] = df_multi[c].reindex(s.index).fillna(method="ffill").fillna(0.0)
+            df_multi[c] = df_multi[c].reindex(s.index).ffill().fillna(0.0)
 
     # Iterate horizons & folds (here a single horizon from env)
     h = int(cfg.horizon)
