@@ -82,7 +82,8 @@ class ConfigBML:
 
     random_seed: int = 42
     nominal_pi: float = 0.90
-    
+    allow_zero_values: bool = True  # If True, skip the zero-replacement heuristic (zeros are valid data)
+
     # ✅ Delta modeling option for stock/level targets
     use_delta_modeling: bool = False  # If True, model delta = y(t+h) - y(t) instead of y(t+h)
 
@@ -465,35 +466,28 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
     except:
         print(f"[pipeline] Could not infer frequency (horizon h={cfg.horizon} means {cfg.horizon} steps forward in index)")
     
-    # ✅ Data sanity: Detect and handle zero/outlier values
-    # Check for suspicious zeros (especially at the end, which might indicate missing data filled as 0)
+    # Data sanity: optionally detect and replace suspicious zeros
     if len(s) > 0:
-        # Check last few values for zeros (common issue: missing data filled as 0)
-        last_10 = s.tail(10)
-        zero_count = (last_10 == 0.0).sum()
-        if zero_count > 0:
-            # For flows, zeros might be valid, but check if they're outliers relative to rolling median
-            if not is_stock(cfg.target):
-                median_val = s.median()
-                if median_val > 0:
-                    # If zeros are far from median, they might be missing data
-                    suspicious_zeros = last_10[(last_10 == 0.0) & (abs(last_10 - median_val) / median_val > 0.5)]
-                    if len(suspicious_zeros) > 0:
-                        print(f"[WARN] Found {len(suspicious_zeros)} suspicious zero values in last 10 observations. "
-                              f"These may be missing data filled as 0. Will treat as NaN during prediction.")
-                        # Mark as NaN - will be handled during prediction
-                        s.loc[suspicious_zeros.index] = np.nan
-            else:
-                # For stocks, zeros are almost always errors (stocks don't go to zero)
-                print(f"[WARN] Found {zero_count} zero values in last 10 observations for stock target. "
-                      f"These are likely missing data filled as 0. Will treat as NaN.")
-                s.loc[last_10[last_10 == 0.0].index] = np.nan
-        
-        # Drop any NaN values that were introduced
-        s = s.dropna()
-        if len(s) == 0:
-            raise RuntimeError("All data points were dropped after outlier/zero handling. Check data quality.")
-        
+        if not cfg.allow_zero_values:
+            last_10 = s.tail(10)
+            zero_count = (last_10 == 0.0).sum()
+            if zero_count > 0:
+                if not is_stock(cfg.target):
+                    median_val = s.median()
+                    if median_val > 0:
+                        suspicious_zeros = last_10[(last_10 == 0.0) & (abs(last_10 - median_val) / median_val > 0.5)]
+                        if len(suspicious_zeros) > 0:
+                            print(f"[WARN] Found {len(suspicious_zeros)} suspicious zero values in last 10 observations. "
+                                  f"Treating as NaN (allow_zero_values=False).")
+                            s.loc[suspicious_zeros.index] = np.nan
+                else:
+                    print(f"[WARN] Found {zero_count} zero values in last 10 observations for stock target. "
+                          f"Treating as NaN (allow_zero_values=False).")
+                    s.loc[last_10[last_10 == 0.0].index] = np.nan
+            s = s.dropna()
+            if len(s) == 0:
+                raise RuntimeError("All data points were dropped after zero handling. Check data quality.")
+
         print(f"[pipeline] Data loaded: {len(s)} observations from {s.index.min().date()} to {s.index.max().date()}")
     
     cal = calendar_exog(s.index)
