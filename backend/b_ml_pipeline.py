@@ -579,232 +579,157 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
             temp = df_multi.loc[s_train_full.index, [cfg.target] + [c for c in df_multi.columns if c != cfg.target]]
             exog_cols = multivariate_exog(temp, cfg.target, cfg.exog_top_k)
 
-        # For each model
+        # ── FIT-ONCE-PER-FOLD approach ────────────────────────────────
+        # The model is fit ONCE on training data (all data <= train_end),
+        # then predicts at each test origin.  This is standard expanding-
+        # window CV and makes fold-level comparison fair across families.
+        #
+        # Why this is correct: within a fold, every origin date is in the
+        # test period (>= test_start > train_end).  The old code did
+        # s_train = s[:origin]; s_train = s_train[s.index <= train_end],
+        # which always yields s_train_full regardless of origin.  So the
+        # per-origin re-fit was redundant — same training data every time.
+        #
+        # Per-origin work is limited to building the feature vector at the
+        # origin date (using data up to that date) and calling predict().
+
+        # PHASE 1: Build training features & target ONCE
+        f_train_full = lag_window_features(s_train_full, lags, wins).join(cal.loc[s_train_full.index])
+        if exog_cols:
+            f_train_full = f_train_full.join(df_multi.loc[s_train_full.index, exog_cols])
+
+        # Step-based h-step-ahead target (vectorized).
+        # shift(-h) places s[i+h] at position i; last h rows become NaN.
+        y_target_full = s_train_full.shift(-h)
+
+        # Delta modeling for stock/level targets
+        if cfg.use_delta_modeling and is_stock(cfg.target):
+            y_target_full = y_target_full - s_train_full
+
+        # Combine and drop rows with NaN (initial lags + trailing h rows)
+        train_combined = pd.concat([f_train_full, y_target_full.rename("y")], axis=1).dropna()
+        if len(train_combined) < 10:
+            print(f"[pipeline] Fold {fold_idx}: too few training samples ({len(train_combined)}), skipping")
+            continue
+        X_all_fold, y_all_fold = train_combined.drop(columns=["y"]), train_combined["y"]
+
+        # Pre-build feature matrix covering all possible origin dates for
+        # prediction.  lag_window_features is purely backward-looking
+        # (shift(k>=0), rolling().shift(1)), so features at any date only
+        # depend on data at-or-before that date.  Building on the full
+        # series and slicing a row is equivalent to building on s[:origin].
+        last_origin_date = s.index[max(positions) - h] if positions else test_end
+        s_for_pred_feats = s[s.index <= last_origin_date]
+        feat_all_origins = lag_window_features(s_for_pred_feats, lags, wins).join(cal.loc[s_for_pred_feats.index])
+        if exog_cols:
+            feat_all_origins = feat_all_origins.join(df_multi.loc[s_for_pred_feats.index, exog_cols])
+
         for model_name, estimator in all_models.items():
             import time
             model_start_time = time.time()
-            preds, ytrues, target_dates, origin_dates, origin_values, pi_radii = [], [], [], [], [], []
-            n_fits = 0
-            # ✅ FIX 7: Initialize overfitting metrics storage
-            if not hasattr(estimator, '_overfit_metrics'):
-                estimator._overfit_metrics = []
+
+            # PHASE 2: Train/val split ONCE
+            n_total = len(X_all_fold)
+            if n_total >= 50:
+                n_val = max(10, int(n_total * 0.2))
+                X_tr_fit, y_tr_fit = X_all_fold.iloc[:-n_val], y_all_fold.iloc[:-n_val]
+                X_tr_val, y_tr_val = X_all_fold.iloc[-n_val:], y_all_fold.iloc[-n_val:]
+            else:
+                X_tr_fit, y_tr_fit = X_all_fold, y_all_fold
+                X_tr_val, y_tr_val = None, None
+
+            # PHASE 3: Fit model ONCE per fold
+            estimator.fit(X_tr_fit, y_tr_fit)
+
+            if model_name == "Lasso":
+                lasso_est = estimator.named_steps.get("est") if hasattr(estimator, "named_steps") else estimator
+                if hasattr(lasso_est, "n_iter_"):
+                    n_iter = lasso_est.n_iter_
+                    coef_norm = float(np.linalg.norm(lasso_est.coef_)) if hasattr(lasso_est, "coef_") else np.nan
+                    print(f"[pipeline] Lasso convergence: n_iter={n_iter}, ||coef||={coef_norm:.2f} "
+                          f"(fold={fold_idx}, n_features={X_tr_fit.shape[1]})")
+
+            # PHASE 4: Compute conformal PI radius ONCE from validation set
+            conformal_radius = np.nan
+            train_mae_fold, val_mae_fold = np.nan, np.nan
+            if X_tr_val is not None and len(X_tr_val) > 5:
+                y_pred_val = estimator.predict(X_tr_val)
+                abs_residuals = np.abs(y_tr_val.values - y_pred_val)
+                val_mae_fold = float(np.mean(abs_residuals))
+                train_mae_fold = float(np.mean(np.abs(y_tr_fit - estimator.predict(X_tr_fit))))
+                conformal_radius = float(np.quantile(abs_residuals, cfg.nominal_pi))
+                ratio = val_mae_fold / train_mae_fold if train_mae_fold > 0 else np.nan
+                print(f"[pipeline] {model_name} fold {fold_idx}: "
+                      f"train_MAE={train_mae_fold:.2f}, val_MAE={val_mae_fold:.2f}, "
+                      f"ratio={ratio:.2f}, conformal_r={conformal_radius:.2f}")
+                if not np.isnan(ratio) and ratio > 1.5:
+                    print(f"[WARN] Generalization gap for {model_name}: "
+                          f"val/train ratio={ratio:.2f} — possible overfitting")
+
+            # PHASE 5: Predict at each test origin (lightweight per-point loop)
+            preds, ytrues, target_dates, origin_dates, origin_values = [], [], [], [], []
 
             for pos_t in positions:
-                t = s.index[pos_t]  # target date
+                t = s.index[pos_t]           # target date
                 pos_origin = pos_t - h
-                origin = s.index[pos_origin]  # origin date
+                origin = s.index[pos_origin] # origin date
 
-                # enforce fold boundary: training must be ≤ train_end
-                s_train = s[:origin]
-                s_train = s_train[s_train.index <= train_end]
-                if s_train.empty:
+                # GUARD A: alignment check
+                if pos_origin + h >= len(s.index):
+                    continue
+                if s.index[pos_origin + h] != t:
+                    print(f"[ERROR] Alignment mismatch: origin={origin.date()}, "
+                          f"expected={s.index[pos_origin + h].date()}, actual={t.date()}, h={h}")
                     continue
 
-                # ✅ FIX 3: Build supervised dataset with explicit leakage prevention
-                # Features at time t (position i) predict y(t+h) (position i+h)
-                # CRITICAL: All features must use only information available at time t (≤ t)
-                
-                # Build features: lag features use backward shifts (lag_k = y.shift(k) where k >= 0)
-                f_train = lag_window_features(s_train, lags, wins).join(cal.loc[s_train.index])
-                if exog_cols:
-                    f_train = f_train.join(df_multi.loc[s_train.index, exog_cols])
-                
-                # ✅ TARGET CONSTRUCTION: y_target = y[i+h] for features at position i
-                # Use index-position based alignment (step-based, not calendar-day)
-                # For each position i in s_train, target is at position i+h (if exists)
-                # This ensures h = steps forward in index, not calendar days
-                y_train = pd.Series(index=s_train.index, dtype=float)
-                s_train_array = s_train.values  # Use array for position-based indexing
-                s_train_index_list = list(s_train.index)  # Keep index for alignment
-                
-                for i, t_idx in enumerate(s_train.index):
-                    target_pos = i + h
-                    if target_pos < len(s_train):
-                        # Target is h steps forward in the index
-                        y_train.loc[t_idx] = s_train_array[target_pos]
-                    else:
-                        y_train.loc[t_idx] = np.nan
-                
-                # ✅ VERIFICATION: Ensure no leakage
-                # Assert: for any feature column, it does not use future values relative to origin
-                # Lag features: lag_k = y.shift(k) where k >= 0 (backward-looking, safe)
-                # Rolling features: rolling().mean().shift(1) (backward-looking, safe)
-                # Calendar features: only depend on date (safe)
-                # Exog features: already lagged by 1 (safe)
-                
-                # ✅ DELTA MODELING: For stock/level targets, model delta instead of level
-                if cfg.use_delta_modeling and is_stock(cfg.target):
-                    # Model delta = y(t+h) - y(t)
-                    y_train = y_train - s_train  # delta = future - current
-
-                # ✅ features at the *origin* row for forecasting h steps ahead
-                # CRITICAL: Only use data up to and including origin to prevent leakage
-                # Features at origin should only use data up to origin (lag features are backward-looking)
-                s_up_to_origin = s[s.index <= origin]
-                feat_at_origin = lag_window_features(s_up_to_origin, lags, wins).join(cal.loc[s_up_to_origin.index])
-                # Extract features at origin (must exist since origin is in s_up_to_origin)
-                if origin in feat_at_origin.index:
+                # Build feature vector at origin from pre-computed matrix.
+                # This is leakage-safe: features at origin depend only on
+                # data <= origin (backward-looking lags and rolling windows).
+                if origin in feat_all_origins.index:
+                    x_pred = feat_all_origins.loc[[origin]].fillna(0.0)
+                else:
+                    # Origin not in pre-computed features (shouldn't happen)
+                    s_up_to_origin = s[s.index <= origin]
+                    feat_at_origin = lag_window_features(s_up_to_origin, lags, wins).join(cal.loc[s_up_to_origin.index])
+                    if exog_cols:
+                        feat_at_origin = feat_at_origin.join(df_multi.loc[[origin], exog_cols])
                     x_pred = feat_at_origin.loc[[origin]].fillna(0.0)
-                else:
-                    # Safety fallback: use last row if origin somehow not in index
-                    x_pred = feat_at_origin.iloc[[-1]].fillna(0.0)
-                if exog_cols:
-                    x_pred = x_pred.join(df_multi.loc[[origin], exog_cols])
 
-                # train dropna + fit (align features and shifted targets)
-                train = pd.concat([f_train, y_train.rename("y")], axis=1).dropna()
-                if len(train) < 10:
-                    continue
-                X_tr, y_tr = train.drop(columns=["y"]), train["y"]
-                
-                # ✅ Add validation split to detect overfitting (use last 20% of training data)
-                n_train = len(X_tr)
-                if n_train >= 50:  # Only split if we have enough data
-                    n_val = max(10, int(n_train * 0.2))
-                    X_tr_fit = X_tr.iloc[:-n_val]
-                    y_tr_fit = y_tr.iloc[:-n_val]
-                    X_tr_val = X_tr.iloc[-n_val:]
-                    y_tr_val = y_tr.iloc[-n_val:]
-                else:
-                    # Too little data for validation split
-                    X_tr_fit, y_tr_fit = X_tr, y_tr
-                    X_tr_val, y_tr_val = None, None
-
-                # Fit model
-                estimator.fit(X_tr_fit, y_tr_fit)
-                
-                # ✅ Log Lasso convergence and coefficients
-                if model_name == "Lasso":
-                    lasso_est = estimator.named_steps.get("est") if hasattr(estimator, "named_steps") else estimator
-                    if hasattr(lasso_est, "n_iter_"):
-                        n_iter = lasso_est.n_iter_
-                        coef_norm = float(np.linalg.norm(lasso_est.coef_)) if hasattr(lasso_est, "coef_") else np.nan
-                        print(f"[pipeline] Lasso convergence: n_iter={n_iter}, ||coef||={coef_norm:.2f} "
-                              f"(origin={origin.date()}, n_features={X_tr_fit.shape[1]})")
-                
-                # ✅ FIX 7: Aggregate overfitting warnings + conformal PI
-                # Collect validation residuals for conformal prediction intervals
-                conformal_radius = np.nan
-                if X_tr_val is not None and len(X_tr_val) > 5:
-                    y_pred_val = estimator.predict(X_tr_val)
-                    abs_residuals = np.abs(y_tr_val.values - y_pred_val)
-                    val_mae = float(np.mean(abs_residuals))
-                    train_mae = float(np.mean(np.abs(y_tr_fit - estimator.predict(X_tr_fit))))
-                    # Conformal PI: use the nominal_pi quantile of |residuals|
-                    conformal_radius = float(np.quantile(abs_residuals, cfg.nominal_pi))
-                    # Store for aggregation (will log once per model/fold)
-                    if not hasattr(estimator, '_overfit_metrics'):
-                        estimator._overfit_metrics = []
-                    estimator._overfit_metrics.append({
-                        'origin': origin.date(),
-                        'train_mae': train_mae,
-                        'val_mae': val_mae,
-                        'ratio': val_mae / train_mae if train_mae > 0 else np.nan,
-                        'conformal_radius': conformal_radius,
-                    })
                 delta_hat = float(estimator.predict(x_pred)[0])
-                
-                # ✅ Reconstruct level prediction if using delta modeling
+
+                # Reconstruct level if delta modeling
                 origin_val = float(s.loc[origin])
                 if cfg.use_delta_modeling and is_stock(cfg.target):
-                    y_hat = origin_val + delta_hat  # y_pred = origin_value + delta_pred
+                    y_hat = origin_val + delta_hat
                 else:
-                    y_hat = delta_hat  # Standard: prediction is already the level
+                    y_hat = delta_hat
 
-                # ✅ GUARD A: Verify target_date == dates[pos[origin_date] + horizon] before saving
-                # This ensures step-based alignment is correct
-                # By construction: pos_t = positions[i] (target position), pos_origin = pos_t - h, t = s.index[pos_t]
-                # So t should equal s.index[pos_origin + h] = s.index[pos_t]
-                # This guard verifies the logic is correct
-                if pos_origin + h >= len(s.index):
-                    print(f"[ERROR] Alignment error: pos_origin={pos_origin}, h={h}, len(s)={len(s.index)}. "
-                          f"Target position {pos_origin + h} out of bounds.")
-                    continue
-                expected_target_from_pos = s.index[pos_origin + h]
-                if expected_target_from_pos != t:
-                    print(f"[ERROR] Alignment mismatch: origin={origin.date()}, pos_origin={pos_origin}, "
-                          f"expected_target={expected_target_from_pos.date()}, actual_target={t.date()}, h={h}")
-                    # Skip this prediction - it's misaligned
-                    continue
-                
-                # ✅ Data sanity: Check for zero/outlier values in y_true
-                # ✅ FIX 4: Assert y_true matches series value at target_date
+                # y_true from the actual series at target date
                 if t not in s.index:
-                    print(f"[ERROR] target_date {t.date()} not found in series index. Skipping prediction.")
                     continue
                 y_true_val = float(s.loc[t])
-                
-                # Verify alignment: y_true should equal series value at target_date
-                if not np.isclose(y_true_val, float(s.loc[t]), rtol=1e-6):
-                    print(f"[WARN] y_true mismatch at {t.date()}: stored={y_true_val}, series={float(s.loc[t])}")
-                
-                if y_true_val == 0.0 or np.isnan(y_true_val):
-                    # Check if this is a real zero or missing data treated as zero
-                    # For flows, zeros might be valid; for stocks, zeros are suspicious
-                    if is_stock(cfg.target) and y_true_val == 0.0:
-                        # Check if surrounding values suggest this is an outlier
-                        if pos_t > 0 and pos_t < len(s) - 1:
-                            prev_val = float(s.iloc[pos_t - 1])
-                            next_val = float(s.iloc[pos_t + 1]) if pos_t + 1 < len(s) else prev_val
-                            median_val = np.median([prev_val, next_val])
-                            if median_val > 0 and abs(y_true_val - median_val) / max(abs(median_val), 1.0) > 0.5:
-                                print(f"[WARN] Suspicious zero/outlier at {t.date()}: y_true={y_true_val}, "
-                                      f"surrounding median={median_val:.2f}. Treating as NaN.")
-                                y_true_val = np.nan  # Mark as missing
-                
-                preds.append(y_hat)
-                ytrues.append(y_true_val)  # May be NaN if outlier detected
-                target_dates.append(t)  # target_date = origin + h (step-based)
-                origin_dates.append(origin)  # origin_date
-                origin_values.append(origin_val)  # y at origin
-                pi_radii.append(conformal_radius)  # conformal PI radius (may be NaN)
-                n_fits += 1
 
+                preds.append(y_hat)
+                ytrues.append(y_true_val)
+                target_dates.append(t)
+                origin_dates.append(origin)
+                origin_values.append(origin_val)
+
+            # PHASE 6: Build output DataFrame (identical schema)
             if target_dates:
                 model_elapsed = time.time() - model_start_time
-                print(f"[pipeline] Model {model_name}: {n_fits} fits in {model_elapsed:.2f}s "
-                      f"({model_elapsed/max(1,n_fits):.3f}s per fit, {len(target_dates)} predictions)")
-                
-                # ✅ FIX 7: Aggregate and report overfitting warnings (once per model/fold)
-                fold_conformal_radius = np.nan
-                if hasattr(estimator, '_overfit_metrics') and len(estimator._overfit_metrics) > 0:
-                    metrics = estimator._overfit_metrics
-                    median_train_mae = np.median([m['train_mae'] for m in metrics])
-                    median_val_mae = np.median([m['val_mae'] for m in metrics])
-                    median_ratio = np.median([m['ratio'] for m in metrics if not np.isnan(m['ratio'])])
-                    valid_radii = [m['conformal_radius'] for m in metrics
-                                   if not np.isnan(m.get('conformal_radius', np.nan))]
-                    if valid_radii:
-                        fold_conformal_radius = float(np.median(valid_radii))
-                        print(f"[pipeline] {model_name} conformal PI radius (fold median): "
-                              f"{fold_conformal_radius:.2f} at {int(cfg.nominal_pi*100)}% level")
-                    if median_ratio > 1.5:  # Validation 50% worse than training
-                        print(f"[WARN] Generalization gap detected for {model_name}: "
-                              f"median(train_mae)={median_train_mae:.2f}, median(val_mae)={median_val_mae:.2f}, "
-                              f"ratio={median_ratio:.2f} (across {len(metrics)} origins). "
-                              f"This may indicate distribution shift or overfitting.")
-                    # Clear metrics for next fold
-                    estimator._overfit_metrics = []
+                print(f"[pipeline] Model {model_name}: 1 fit + {len(target_dates)} predictions "
+                      f"in {model_elapsed:.2f}s (fold {fold_idx})")
 
-                # Build y_lo / y_hi from conformal radii (per-origin where
-                # available, else fall back to fold-level median radius)
-                y_lo_list, y_hi_list = [], []
-                preds_arr = np.array(preds)
-                radii_arr = np.array(pi_radii)
-                for i in range(len(preds)):
-                    r = radii_arr[i] if np.isfinite(radii_arr[i]) else fold_conformal_radius
-                    if np.isfinite(r):
-                        y_lo_list.append(preds_arr[i] - r)
-                        y_hi_list.append(preds_arr[i] + r)
-                    else:
-                        y_lo_list.append(np.nan)
-                        y_hi_list.append(np.nan)
+                # Conformal PI: single radius for all predictions in this fold
+                y_lo_list = [p - conformal_radius if np.isfinite(conformal_radius) else np.nan for p in preds]
+                y_hi_list = [p + conformal_radius if np.isfinite(conformal_radius) else np.nan for p in preds]
 
                 df_m = pd.DataFrame({
-                    "date": target_dates,  # target_date (existing column name for compatibility)
-                    "target_date": target_dates,  # explicit target_date
-                    "origin_date": origin_dates,  # ✅ origin_date for auditability
-                    "origin_value": origin_values,  # ✅ y at origin_date (helpful for debugging)
+                    "date": target_dates,
+                    "target_date": target_dates,
+                    "origin_date": origin_dates,
+                    "origin_value": origin_values,
                     "target": cfg.target,
                     "horizon": h,
                     "model": model_name,
