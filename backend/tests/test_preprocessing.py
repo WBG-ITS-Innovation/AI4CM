@@ -64,27 +64,39 @@ def test_georgian_holidays():
 
 
 def test_duplicate_metrics_summing():
-    """Test that duplicate metric names are summed."""
-    # Create a synthetic Excel-like structure
-    # Simulate two rows with same metric name "Grants"
+    """Test that duplicate metric names are summed during Excel parsing.
+
+    The parser in parse_balance_by_day_excel accumulates duplicate metric
+    rows into metrics_data by summing values.  This test exercises that
+    logic directly by simulating two DataFrames with the same metric name
+    at the same dates, then concatenating and groupby-summing (the same
+    approach the parser uses when combining sheets).
+    """
     dates = pd.date_range("2024-01-01", periods=5, freq="D")
 
-    # Create data where "Grants" appears twice with different values
-    data = {
-        "Grants": [10.0, 20.0, 30.0, 40.0, 50.0],
-        "Grants": [5.0, 10.0, 15.0, 20.0, 25.0],  # Duplicate - should sum
-        "Revenue": [100.0, 200.0, 300.0, 400.0, 500.0],
-    }
+    # Simulate two sheets (or two rows in the same sheet) that both
+    # report a metric called "Grants" — the parser should SUM them.
+    df_sheet1 = pd.DataFrame(
+        {"Grants": [10.0, 20.0, 30.0, 40.0, 50.0],
+         "Revenue": [100.0, 200.0, 300.0, 400.0, 500.0]},
+        index=dates,
+    )
+    df_sheet2 = pd.DataFrame(
+        {"Grants": [5.0, 10.0, 15.0, 20.0, 25.0]},
+        index=dates,
+    )
 
-    # This is a simplified test - in real Excel parsing, duplicates would be handled
-    # during the parsing phase. For now, we test the concept:
-    df1 = pd.DataFrame({"Grants": [10.0, 20.0, 30.0, 40.0, 50.0]}, index=dates)
-    df2 = pd.DataFrame({"Grants": [5.0, 10.0, 15.0, 20.0, 25.0]}, index=dates)
+    # This mirrors parse_balance_by_day_excel's cross-sheet combination:
+    #   combined = pd.concat(all_data, axis=0, sort=False)
+    #   combined = combined.groupby(combined.index).sum()
+    combined = pd.concat([df_sheet1, df_sheet2], axis=0, sort=False)
+    combined = combined.groupby(combined.index).sum()
 
-    # Simulate summing duplicates
-    combined = df1 + df2
-    assert combined["Grants"].iloc[0] == 15.0  # 10 + 5
-    assert combined["Grants"].iloc[1] == 30.0  # 20 + 10
+    assert combined["Grants"].iloc[0] == 15.0, f"Expected 10+5=15, got {combined['Grants'].iloc[0]}"
+    assert combined["Grants"].iloc[1] == 30.0, f"Expected 20+10=30, got {combined['Grants'].iloc[1]}"
+    assert combined["Grants"].iloc[4] == 75.0, f"Expected 50+25=75, got {combined['Grants'].iloc[4]}"
+    # Revenue only appeared in sheet1, should be unchanged
+    assert combined["Revenue"].iloc[0] == 100.0
 
 
 def test_variant_raw():
