@@ -388,6 +388,148 @@ def compute_skill_score(
     """
     if np.isnan(mae_model) or np.isnan(mae_baseline) or mae_baseline <= 0:
         return np.nan
-    
+
     skill = ((mae_baseline - mae_model) / mae_baseline) * 100.0
     return float(skill)
+
+
+def detect_lagged_copy(
+    predictions_df: pd.DataFrame,
+    model_col: str = "model",
+    date_col: str = "date",
+    max_shift: int = 3,
+) -> Dict:
+    """Detect models whose forecasts are effectively a lagged copy of the target.
+
+    This is the classic symptom of a model that only learned "persistence":
+    instead of forecasting, it repeats a recent actual value.  Such a model
+    can look accurate on smooth series while being useless in practice.
+
+    For each model's out-of-sample predictions we compute two things:
+
+    1. MAE(pred, y) versus MAE(y_lag1, y), where ``y_lag1`` is the target
+       shifted one step (the "persistence" baseline).  A real model should
+       beat this baseline; a lagged copy will not.
+    2. The correlation of ``pred`` against the target shifted by every step
+       in ``-max_shift .. +max_shift``.  For an honest model the correlation
+       peaks at shift 0 (aligned with the true target).  For a lagged copy it
+       peaks at a non-zero shift.
+
+    A model is flagged when BOTH signals agree: its predictions correlate
+    better with a shifted target than with the true one, AND it fails to beat
+    the lag-1 persistence baseline.
+
+    Parameters
+    ----------
+    predictions_df : DataFrame
+        Must contain columns: ``y_true``, ``y_pred``.  A ``model_col`` groups
+        rows by model (if absent, all rows are treated as one model).  A
+        ``date_col`` is used to sort each model's rows in time order (if
+        absent, existing row order is assumed to be chronological).
+    model_col : str
+        Column identifying the model name.
+    date_col : str
+        Column giving the time order within each model.
+    max_shift : int
+        Largest shift (in steps) to test in each direction.  Default 3, i.e.
+        the correlation window is -3 .. +3.
+
+    Returns
+    -------
+    dict in the shared audit-report format with keys:
+        risk : "low" | "high"
+        details : list of human-readable finding strings
+        per_model : list of per-model dicts with the raw numbers
+    """
+    result: Dict = {"risk": "low", "details": [], "per_model": []}
+
+    df = predictions_df
+    if df.empty or "y_true" not in df.columns or "y_pred" not in df.columns:
+        result["details"].append("No valid predictions to analyze.")
+        return result
+
+    # Group by model, or treat the whole frame as a single unnamed model.
+    if model_col in df.columns:
+        groups = list(df.groupby(model_col, sort=False))
+    else:
+        groups = [("(all)", df)]
+
+    for model_name, group in groups:
+        # Skip baseline rows: they ARE persistence by construction, so
+        # flagging them would be a false positive.
+        if "baseline" in str(model_name).lower():
+            continue
+
+        # Sort in time order so that "shift by k steps" is meaningful.
+        if date_col in group.columns:
+            group = group.sort_values(date_col)
+
+        y = group["y_true"].reset_index(drop=True)
+        pred = group["y_pred"].reset_index(drop=True)
+
+        valid = y.notna() & pred.notna()
+        if valid.sum() < max_shift + 5:
+            # Not enough data to say anything reliable.
+            continue
+
+        y = y[valid].reset_index(drop=True)
+        pred = pred[valid].reset_index(drop=True)
+
+        # ── MAE of the model vs the lag-1 persistence baseline ──
+        mae_pred = float(np.mean(np.abs(pred - y)))
+        y_lag1 = y.shift(1)
+        pair = y_lag1.notna()
+        mae_lag1 = float(np.mean(np.abs(y_lag1[pair] - y[pair])))
+
+        # ── Correlation of pred vs target shifted by each step ──
+        corr_by_shift: Dict[int, float] = {}
+        for k in range(-max_shift, max_shift + 1):
+            y_shifted = y.shift(k)
+            corr = pred.corr(y_shifted)  # pandas drops NaN pairs automatically
+            corr_by_shift[k] = float(corr) if pd.notna(corr) else float("nan")
+
+        corr_at_0 = corr_by_shift.get(0, float("nan"))
+        # Best shift = the one with the highest (finite) correlation.
+        finite = {k: v for k, v in corr_by_shift.items() if np.isfinite(v)}
+        if not finite:
+            continue
+        best_shift = max(finite, key=finite.get)
+        corr_best = finite[best_shift]
+
+        # ── Decide whether to flag ──
+        # Signal 1: aligns better with a shifted target than the true one.
+        #   Require a small margin so tiny numerical wobble at shift 0 does
+        #   not trip the flag.
+        aligns_shifted = (
+            best_shift != 0
+            and np.isfinite(corr_at_0)
+            and (corr_best - corr_at_0) > 0.05
+        )
+        # Signal 2: does not beat the lag-1 persistence baseline.
+        no_skill_vs_lag1 = np.isfinite(mae_lag1) and mae_pred >= mae_lag1 * 0.99
+
+        flagged = bool(aligns_shifted and no_skill_vs_lag1)
+
+        result["per_model"].append({
+            "model": model_name,
+            "mae_pred": mae_pred,
+            "mae_lag1": mae_lag1,
+            "best_shift": int(best_shift),
+            "corr_at_0": corr_at_0,
+            "corr_best": corr_best,
+            "flagged": flagged,
+        })
+
+        if flagged:
+            result["risk"] = "high"
+            result["details"].append(
+                f"Model '{model_name}': predictions align best with y shifted by "
+                f"{best_shift:+d} (corr {corr_best:.2f} vs {corr_at_0:.2f} at shift 0), "
+                f"and do not beat the lag-1 baseline (MAE {mae_pred:.2f} vs "
+                f"{mae_lag1:.2f}) — likely a lagged copy (persistence only)."
+            )
+
+    if not result["details"]:
+        result["details"].append("No lagged-copy (persistence-only) models detected.")
+
+    return result
