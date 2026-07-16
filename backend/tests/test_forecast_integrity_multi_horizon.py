@@ -19,6 +19,7 @@ from forecast_integrity import (
     compute_persistence_baseline,
     compute_skill_score,
     check_feature_leakage,
+    detect_lagged_copy,
 )
 
 
@@ -202,6 +203,90 @@ def test_skill_score():
     # Model equal to baseline
     skill = compute_skill_score(mae_model=10.0, mae_baseline=10.0)
     assert skill == 0.0, f"Expected skill=0%, got {skill}%"
+
+
+def test_detect_lagged_copy_flags_only_the_fake_model():
+    """A shifted-copy model is flagged; an honest model is not.
+
+    We build one target series and two models sharing it:
+      - "honest": predictions are the true target plus small noise, so they
+        align at shift 0 and beat the lag-1 baseline.
+      - "lagcopy": predictions are the target shifted by one step (pure
+        persistence), so they align best at shift +1 and cannot beat lag-1.
+    """
+    np.random.seed(7)
+    n = 300
+    # Mean-reverting AR(1) series: y[t] = mu + phi*(y[t-1]-mu) + noise.
+    # phi=0.6 means the lag-1 autocorrelation is ~0.6, well below 1.0, so a
+    # forecast that copies y[t-1] correlates clearly worse with the true
+    # target (shift 0) than with the target shifted by +1.  A pure random
+    # walk (autocorr ~1.0) would make shift 0 and shift 1 indistinguishable
+    # by correlation, so we deliberately use a mean-reverting series here.
+    mu, phi = 100.0, 0.6
+    y_true = np.empty(n)
+    y_true[0] = mu
+    noise = np.random.randn(n) * 5.0
+    for t in range(1, n):
+        y_true[t] = mu + phi * (y_true[t - 1] - mu) + noise[t]
+    dates = pd.date_range("2020-01-01", periods=n, freq="B")
+
+    # Honest model: true value + small noise.
+    honest_pred = y_true + np.random.randn(n) * 0.5
+
+    # Lagged-copy model: yesterday's actual repeated as "the forecast".
+    lag_pred = np.empty(n)
+    lag_pred[0] = y_true[0]
+    lag_pred[1:] = y_true[:-1]
+
+    honest_df = pd.DataFrame({
+        "date": dates, "model": "honest",
+        "y_true": y_true, "y_pred": honest_pred,
+    })
+    lag_df = pd.DataFrame({
+        "date": dates, "model": "lagcopy",
+        "y_true": y_true, "y_pred": lag_pred,
+    })
+    df = pd.concat([honest_df, lag_df], ignore_index=True)
+
+    result = detect_lagged_copy(df)
+
+    # Pull each model's per-model record out for direct assertions.
+    by_model = {r["model"]: r for r in result["per_model"]}
+
+    assert not by_model["honest"]["flagged"], "Honest model should NOT be flagged"
+    assert by_model["honest"]["best_shift"] == 0
+
+    assert by_model["lagcopy"]["flagged"], "Lagged-copy model SHOULD be flagged"
+    assert by_model["lagcopy"]["best_shift"] == 1
+
+    assert result["risk"] == "high"
+    assert any("lagcopy" in d for d in result["details"])
+    assert all("honest" not in d for d in result["details"])
+
+
+def test_detect_lagged_copy_skips_baseline_and_handles_empty():
+    """Baseline rows are ignored, and an empty frame degrades gracefully."""
+    # Empty frame -> low risk, informative message, no crash.
+    empty = detect_lagged_copy(pd.DataFrame())
+    assert empty["risk"] == "low"
+    assert empty["per_model"] == []
+
+    # A row set that is only a persistence baseline should be skipped, not
+    # flagged (it is persistence on purpose).
+    np.random.seed(1)
+    n = 60
+    y_true = 100.0 + np.cumsum(np.random.randn(n))
+    base_pred = np.empty(n)
+    base_pred[0] = y_true[0]
+    base_pred[1:] = y_true[:-1]
+    df = pd.DataFrame({
+        "date": pd.date_range("2021-01-01", periods=n, freq="B"),
+        "model": "Persistence (baseline)",
+        "y_true": y_true, "y_pred": base_pred,
+    })
+    result = detect_lagged_copy(df)
+    assert result["risk"] == "low"
+    assert result["per_model"] == []
 
 
 if __name__ == "__main__":
