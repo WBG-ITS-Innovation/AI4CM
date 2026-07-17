@@ -10,7 +10,7 @@ Author: Georgia project (DL family)
 """
 
 from __future__ import annotations
-import os, json, math, warnings, time, sys
+import os, json, math, warnings
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Tuple
 
@@ -378,19 +378,6 @@ def _last_window_fallback_masks(label_idx: np.ndarray, horizon: int) -> List[Tup
 # Feature assembly & sequences
 # =============================================================================
 
-def pick_exogenous_columns(df_num: pd.DataFrame, target: str, reserved: List[str], max_cols: int) -> List[str]:
-    num = df_num.select_dtypes(include=[np.number]).copy()
-    for col in reserved:
-        if col in num.columns:
-            num.drop(columns=[col], inplace=True)
-    stds = num.std(axis=0, ddof=0)
-    num = num.loc[:, stds > 0]
-    if target not in df_num.columns:
-        return []
-    common = num.join(df_num[[target]], how="inner")
-    corrs = common.corr(method="spearman")[target].drop(labels=[target], errors="ignore").abs().sort_values(ascending=False)
-    return list(corrs.index[:max_cols])
-
 def make_feature_frame(df_all: pd.DataFrame, target: str, cadence: str,
                        multivariate: bool, mv_cols: Optional[List[str]], mv_max: int,
                        holidays_master: pd.Series) -> Tuple[pd.DataFrame, pd.Series]:
@@ -488,13 +475,6 @@ def fit_feature_scaler(X: np.ndarray) -> Tuple[np.ndarray,np.ndarray]:
 
 def apply_feature_scaler(X: np.ndarray, mu: np.ndarray, sd: np.ndarray) -> np.ndarray:
     return (X - mu.reshape(1,1,-1)) / sd.reshape(1,1,-1)
-
-def transform_target(y: np.ndarray, mode: str):
-    if mode=="log1p":
-        fwd = lambda a: np.log1p(np.maximum(a, 0.0))
-        inv = lambda a: np.expm1(a)
-        return fwd(y), fwd, inv
-    return y.copy(), (lambda a: a), (lambda a: a)
 
 # =============================================================================
 # Models
@@ -799,13 +779,11 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                     if (config.target_transform == "log1p") and (not stock):
                         y_fit_t = np.log1p(np.maximum(y_fit, 0.0))
                         inv = np.expm1
-                        y_cal_raw = y_cal_t.copy()
                         y_te_raw  = y_te.copy()
                         y_cal_t = np.log1p(np.maximum(y_cal_t, 0.0))
                     else:
                         y_fit_t = y_fit.copy()
                         inv = (lambda a: a)
-                        y_cal_raw = y_cal_t.copy()
                         y_te_raw  = y_te.copy()
 
                     for mname in model_list:

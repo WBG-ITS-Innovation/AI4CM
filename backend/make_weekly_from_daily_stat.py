@@ -1,5 +1,5 @@
 # make_weekly_from_daily_stat.py
-import os, glob
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -16,7 +16,6 @@ def is_stock(target:str)->bool:
 
 def resample_weekly(df_pred_tmh):
     """Resample daily predictions to W-FRI. For flows: sum; for stocks: last."""
-    idx = pd.to_datetime(df_pred_tmh["date"])
     agg = "last" if is_stock(df_pred_tmh["target"].iloc[0]) else "sum"
     g = df_pred_tmh.assign(date=pd.to_datetime(df_pred_tmh["date"]))
     y_true_w = g.set_index("date")["y_true"].resample("W-FRI").agg(agg)

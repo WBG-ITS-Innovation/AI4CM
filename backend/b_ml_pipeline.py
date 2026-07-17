@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -1234,7 +1234,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
     # Artifacts
     with open(out_root / "artifacts" / "RUN.md", "w", encoding="utf-8") as f:
         f.write(f"# B · Machine Learning run\n\n")
-        f.write(f"- timestamp: {datetime.utcnow().isoformat()}Z\n")
+        f.write(f"- timestamp: {datetime.now(timezone.utc).isoformat()}\n")
         f.write(f"- data_path: {cfg.data_path}\n")
         f.write(f"- target: {cfg.target}\n")
         f.write(f"- cadence: {cfg.cadence}\n")

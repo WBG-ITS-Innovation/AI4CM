@@ -2,26 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import numpy as np
 import pandas as pd
 from pandas.tseries.offsets import BDay
 from sklearn.linear_model import Ridge
-
-
-def target_date_from_origin(origin_date: pd.Timestamp, horizon: int) -> pd.Timestamp:
-    """
-    Helper to ensure predictions are timestamped at target_date = origin + horizon.
-    
-    Args:
-        origin_date: Date when forecast is made
-        horizon: Forecast horizon (days)
-        
-    Returns:
-        Target date (origin + horizon)
-    """
-    return origin_date + pd.Timedelta(days=horizon)
 
 
 def shift_sanity_check(

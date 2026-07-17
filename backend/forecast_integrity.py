@@ -12,11 +12,9 @@ This module provides comprehensive integrity checks for forecast predictions:
 
 from __future__ import annotations
 
-import json
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
-from pathlib import Path
 
 
 def validate_alignment_step_based(
@@ -296,77 +294,6 @@ def compute_persistence_baseline(
         "mae_persistence": mae,
         "rmse_persistence": rmse,
         "n_valid": len(df),
-    }
-
-
-def compute_seasonal_naive_baseline(
-    predictions_df: pd.DataFrame,
-    full_series: pd.Series,
-    horizon: int,
-    season: int = 5,  # Default: 5 business days (1 week)
-) -> Dict:
-    """
-    Compute seasonal naive baseline for daily data.
-    
-    For business-day index: season=5 (1 week)
-    For calendar-day index: season=7 (1 week)
-    
-    Args:
-        predictions_df: DataFrame with columns ['target_date', 'y_true']
-        full_series: Full time series
-        horizon: Forecast horizon
-        season: Seasonal period (default: 5 for business days)
-        
-    Returns:
-        Dictionary with mae_seasonal_naive
-    """
-    if "target_date" not in predictions_df.columns or "y_true" not in predictions_df.columns:
-        return {
-            "mae_seasonal_naive": np.nan,
-            "error": "Missing target_date or y_true columns",
-        }
-    
-    df = predictions_df.dropna(subset=["target_date", "y_true"]).copy()
-    if len(df) == 0:
-        return {
-            "mae_seasonal_naive": np.nan,
-            "error": "No valid rows",
-        }
-    
-    seasonal_preds = []
-    y_true_vals = []
-    
-    # Build position lookup once for efficiency
-    series_dates = full_series.index
-    date_to_pos = {d: i for i, d in enumerate(series_dates)}
-
-    for _, row in df.iterrows():
-        target_date = pd.to_datetime(row["target_date"]).normalize()
-        y_true_val = row["y_true"]
-
-        # Find position of target_date in the series index
-        pos = date_to_pos.get(target_date)
-        if pos is not None and pos >= season:
-            # Seasonal naive: value at (position - season) in the index
-            seasonal_val = float(full_series.iloc[pos - season])
-        else:
-            seasonal_val = np.nan
-
-        if not np.isnan(seasonal_val):
-            seasonal_preds.append(seasonal_val)
-            y_true_vals.append(y_true_val)
-    
-    if len(seasonal_preds) == 0:
-        return {
-            "mae_seasonal_naive": np.nan,
-            "error": "No valid seasonal predictions",
-        }
-    
-    mae = float(np.mean(np.abs(np.array(y_true_vals) - np.array(seasonal_preds))))
-    
-    return {
-        "mae_seasonal_naive": mae,
-        "n_valid": len(seasonal_preds),
     }
 
 
