@@ -214,7 +214,7 @@ def test_detect_lagged_copy_flags_only_the_fake_model():
       - "lagcopy": predictions are the target shifted by one step (pure
         persistence), so they align best at shift +1 and cannot beat lag-1.
     """
-    np.random.seed(7)
+    rng = np.random.default_rng(42)
     n = 300
     # Mean-reverting AR(1) series: y[t] = mu + phi*(y[t-1]-mu) + noise.
     # phi=0.6 means the lag-1 autocorrelation is ~0.6, well below 1.0, so a
@@ -225,13 +225,13 @@ def test_detect_lagged_copy_flags_only_the_fake_model():
     mu, phi = 100.0, 0.6
     y_true = np.empty(n)
     y_true[0] = mu
-    noise = np.random.randn(n) * 5.0
+    noise = rng.standard_normal(n) * 5.0
     for t in range(1, n):
         y_true[t] = mu + phi * (y_true[t - 1] - mu) + noise[t]
     dates = pd.date_range("2020-01-01", periods=n, freq="B")
 
     # Honest model: true value + small noise.
-    honest_pred = y_true + np.random.randn(n) * 0.5
+    honest_pred = y_true + rng.standard_normal(n) * 0.5
 
     # Lagged-copy model: yesterday's actual repeated as "the forecast".
     lag_pred = np.empty(n)
@@ -264,29 +264,36 @@ def test_detect_lagged_copy_flags_only_the_fake_model():
     assert all("honest" not in d for d in result["details"])
 
 
-def test_detect_lagged_copy_skips_baseline_and_handles_empty():
-    """Baseline rows are ignored, and an empty frame degrades gracefully."""
-    # Empty frame -> low risk, informative message, no crash.
-    empty = detect_lagged_copy(pd.DataFrame())
-    assert empty["risk"] == "low"
-    assert empty["per_model"] == []
-
-    # A row set that is only a persistence baseline should be skipped, not
-    # flagged (it is persistence on purpose).
-    np.random.seed(1)
+@pytest.mark.parametrize("model_name", [
+    "Persistence (baseline)",   # ML pipeline baseline row (matches "baseline")
+    "naive_last",               # stat pipeline naive model (matches "naive")
+    "persistence",              # matches "persistence"
+])
+def test_detect_lagged_copy_skips_persistence_models(model_name):
+    """Persistence/naive models are skipped, not flagged (true-but-boring)."""
+    rng = np.random.default_rng(1)
     n = 60
-    y_true = 100.0 + np.cumsum(np.random.randn(n))
-    base_pred = np.empty(n)
-    base_pred[0] = y_true[0]
-    base_pred[1:] = y_true[:-1]
+    # These models ARE lagged copies by design, so without the skip they
+    # would be flagged.  With the default skip_patterns they must be ignored.
+    y_true = 100.0 + np.cumsum(rng.standard_normal(n))
+    lag_pred = np.empty(n)
+    lag_pred[0] = y_true[0]
+    lag_pred[1:] = y_true[:-1]
     df = pd.DataFrame({
         "date": pd.date_range("2021-01-01", periods=n, freq="B"),
-        "model": "Persistence (baseline)",
-        "y_true": y_true, "y_pred": base_pred,
+        "model": model_name,
+        "y_true": y_true, "y_pred": lag_pred,
     })
     result = detect_lagged_copy(df)
     assert result["risk"] == "low"
     assert result["per_model"] == []
+
+
+def test_detect_lagged_copy_handles_empty():
+    """An empty frame degrades gracefully instead of crashing."""
+    empty = detect_lagged_copy(pd.DataFrame())
+    assert empty["risk"] == "low"
+    assert empty["per_model"] == []
 
 
 if __name__ == "__main__":

@@ -398,6 +398,7 @@ def detect_lagged_copy(
     model_col: str = "model",
     date_col: str = "date",
     max_shift: int = 3,
+    skip_patterns: Tuple[str, ...] = ("baseline", "naive", "persistence"),
 ) -> Dict:
     """Detect models whose forecasts are effectively a lagged copy of the target.
 
@@ -433,6 +434,12 @@ def detect_lagged_copy(
     max_shift : int
         Largest shift (in steps) to test in each direction.  Default 3, i.e.
         the correlation window is -3 .. +3.
+    skip_patterns : tuple of str
+        Model names containing any of these substrings (case-insensitive) are
+        skipped: they are persistence/naive models by design (e.g. the ML
+        pipeline's "Persistence (baseline)" row and the stat pipeline's
+        "naive_last" model), so flagging them as lagged copies would be a
+        true-but-uninteresting positive.
 
     Returns
     -------
@@ -455,9 +462,10 @@ def detect_lagged_copy(
         groups = [("(all)", df)]
 
     for model_name, group in groups:
-        # Skip baseline rows: they ARE persistence by construction, so
-        # flagging them would be a false positive.
-        if "baseline" in str(model_name).lower():
+        # Skip persistence/naive models: they ARE lagged copies by design, so
+        # flagging them would be a true-but-uninteresting positive.
+        name_lower = str(model_name).lower()
+        if any(pat.lower() in name_lower for pat in skip_patterns):
             continue
 
         # Sort in time order so that "shift by k steps" is meaningful.
