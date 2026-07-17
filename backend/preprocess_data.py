@@ -33,7 +33,7 @@ BAL_NAMES = {
 }
 
 def _read_excel(src: Path, sheet: Optional[str], header_row: Optional[int]) -> pd.DataFrame:
-    import openpyxl  # ensure available
+    import openpyxl  # noqa: F401  # ensure the Excel engine is installed (fail fast)
     kw = {}
     if sheet: kw["sheet_name"] = sheet
     if header_row is not None: kw["header"] = header_row
