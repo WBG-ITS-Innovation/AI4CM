@@ -420,7 +420,14 @@ def detect_lagged_copy(
         corr_by_shift: Dict[int, float] = {}
         for k in range(-max_shift, max_shift + 1):
             y_shifted = y.shift(k)
-            corr = pred.corr(y_shifted)  # pandas drops NaN pairs automatically
+            # Correlation is only defined where both series overlap AND vary.
+            # A constant segment (zero variance) would divide by zero, so we
+            # record NaN for those shifts instead of emitting a warning.
+            both = pred.notna() & y_shifted.notna()
+            if both.sum() < 3 or pred[both].std() == 0 or y_shifted[both].std() == 0:
+                corr_by_shift[k] = float("nan")
+                continue
+            corr = pred[both].corr(y_shifted[both])
             corr_by_shift[k] = float(corr) if pd.notna(corr) else float("nan")
 
         corr_at_0 = corr_by_shift.get(0, float("nan"))
