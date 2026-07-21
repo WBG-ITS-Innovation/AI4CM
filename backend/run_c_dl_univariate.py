@@ -1,10 +1,9 @@
 # run_c_dl_univariate.py — Georgia C·DL (univariate) runner
 from __future__ import annotations
-import json, os, sys, time
+import json, os, time
 from pathlib import Path
 from typing import Any, Dict, List
 
-import numpy as np
 
 # Import the DL pipeline (must be in the same folder)
 import c_dl_pipeline as pipe
