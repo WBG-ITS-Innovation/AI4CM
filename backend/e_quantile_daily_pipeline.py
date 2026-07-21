@@ -3,14 +3,13 @@
 # Contract: same as A_STAT/B_ML — run_pipeline(CONFIG) and write standard outputs.
 
 from __future__ import annotations
-import os, json, time, math, pathlib
+import os, json, time, pathlib
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Tuple, Dict
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.metrics import mean_absolute_error
 
 # ---------- configuration ----------
 
@@ -128,8 +127,7 @@ def _build_features(df: pd.DataFrame, cfg: Config) -> Tuple[pd.DataFrame, pd.Ser
     for i in range(len(y) - h):
         y_target.iloc[i] = y_vals[i + h]
 
-    # origin_dates = feature dates, origin_values = y at feature dates
-    origin_dates = pd.Series(y.index, index=y.index)
+    # origin_values = y at feature dates
     origin_values = y.copy()
 
     # Align: drop rows where features or target are NaN
@@ -267,7 +265,6 @@ def run_pipeline(CONFIG: Config) -> None:
             X_te, y_te = X_all.iloc[tr_end:te_end], y_all.iloc[tr_end:te_end]
             od_te = od_all.iloc[tr_end:te_end]  # origin dates for test
             ov_te = ov_all.iloc[tr_end:te_end]  # origin values for test
-            dates_te = X_te.index  # these are origin dates; target dates are h steps forward
 
             # Fit/predict per model
             if model_name == "GBQuantile":

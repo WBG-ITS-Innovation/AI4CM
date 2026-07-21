@@ -23,7 +23,6 @@ Author: Georgia project
 """
 
 import os
-import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -198,7 +197,6 @@ def run_ensemble_from_runs(
     -------
     dict with keys "predictions", "metrics", "leaderboard" (DataFrames)
     """
-    from pathlib import Path
     os.makedirs(out_dir, exist_ok=True)
 
     P = load_all_predictions(run_dirs, cadence)

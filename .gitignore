@@ -17,6 +17,9 @@ data_preprocessed/
 # Local path cache
 frontend/.tg_paths.json
 
+# Daily forecast run outputs (artifacts, incl. treasury outputs — never commit)
+backend/forecast_runs/
+
 # OS cruft
 .DS_Store
 Thumbs.db

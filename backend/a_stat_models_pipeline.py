@@ -13,7 +13,7 @@ Usage (example):
 
 from __future__ import annotations
 
-import os, json, math, warnings
+import json, warnings
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path

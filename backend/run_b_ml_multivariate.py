@@ -72,7 +72,7 @@ if __name__ == "__main__":
     try:
         run_pipeline_ml(cfg)
         print("[runner] DONE")
-    except SystemExit as e:
+    except SystemExit:
         raise
     except Exception as e:
         import traceback
