@@ -7,11 +7,10 @@ and CSV inputs with date columns.
 from __future__ import annotations
 
 import json
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -118,8 +117,8 @@ def parse_balance_by_day_excel(
                 val = df.iloc[i, col_idx]
                 if pd.notna(val):
                     try:
-                        # Try to parse as date
-                        test_date = pd.to_datetime(str(val), errors="raise")
+                        # Try to parse as date (raises if not a date; value unused)
+                        pd.to_datetime(str(val), errors="raise")
                         # Check if next few columns also look like dates
                         if len(df.columns) > col_idx + 1:
                             val2 = df.iloc[i, col_idx + 1]

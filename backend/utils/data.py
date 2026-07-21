@@ -1,6 +1,5 @@
 
 import pandas as pd
-import numpy as np
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     cols = {c: c.strip().lower() for c in df.columns}

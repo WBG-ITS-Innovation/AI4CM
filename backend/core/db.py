@@ -1,6 +1,6 @@
 
 import sqlite3, json, os, time
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any
 
 DB_PATH = os.environ.get("CF_DB_PATH", "data/experiments.db")
 
@@ -40,7 +40,7 @@ def init_db():
     con.commit(); con.close()
 
 def add_dataset(name:str, path:str, meta:Dict[str,Any]):
-    import uuid, time
+    import uuid
     con = connect(); cur=con.cursor()
     ds_id = str(uuid.uuid4())
     cur.execute("INSERT INTO datasets VALUES (?,?,?,?,?)",
@@ -55,7 +55,7 @@ def list_datasets():
     return rows
 
 def create_run(dataset_id:str, model:str, params:Dict[str,Any], horizon:int):
-    import uuid, time
+    import uuid
     con = connect(); cur=con.cursor()
     run_id = str(uuid.uuid4())
     cur.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?)",
