@@ -4,9 +4,18 @@ Write a short plain-text summary of a daily forecast run.
 
 Called by scripts/run_daily_forecast.sh after every pipeline family has run.
 For each family it reports the models that ran, the best model's error, the
-skill vs. the persistence baseline, and — importantly — any *leakage* or
-*shift* flags raised.  It also checks data freshness so a perfect run on a
-stale data file cannot pass unnoticed.
+skill vs. the persistence baseline, and any leakage or shift flags.
+
+Two sources of flags are combined, and both are shown:
+  1. Warnings the *pipeline itself* recorded in artifacts/integrity_report.json
+     (leakage_warning, shift_interpretation, and the "model ≈ naive baseline"
+     guard).  These are surfaced verbatim — not re-thresholded here.
+  2. Two independent checks this summary computes from the predictions
+     (origin_date >= target_date, and detect_lagged_copy).
+
+Every field is always printed; where a family did not produce a value
+(e.g. C_DL quick mode writes no integrity report), the line reads
+"n/a (not produced)" rather than being silently dropped.
 
 The exit code matters: a non-zero exit tells the shell script the run should
 be treated as failed.
@@ -28,6 +37,8 @@ BACKEND_DIR = REPO_ROOT / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 from forecast_integrity import detect_lagged_copy  # noqa: E402  (import after sys.path edit)
+
+NA = "n/a (not produced)"
 
 
 def _find_one(family_dir: Path, filename: str) -> Path | None:
@@ -53,7 +64,7 @@ def _read_json(path: Path | None) -> dict:
         return {}
 
 
-def _fmt_money(x: float) -> str:
+def _fmt_money(x) -> str:
     """Format a large number with thousands separators (or 'n/a')."""
     try:
         return f"{float(x):,.0f}"
@@ -61,24 +72,99 @@ def _fmt_money(x: float) -> str:
         return "n/a"
 
 
-def summarize_family(name: str, family_dir: Path) -> dict:
-    """Collect the summary facts for one pipeline family.
+def _is_number(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
 
-    Returns a dict with the numbers we want to print plus two booleans:
-    leakage_flag and shift_flag.
+
+def pipeline_leakage(report: dict) -> tuple[str, bool]:
+    """Leakage warning the pipeline itself recorded (surfaced verbatim).
+
+    Returns (text, is_flag).  If the field was never produced, text is the
+    "n/a" marker and is_flag is False.
     """
+    if "leakage_warning" not in report:
+        return (NA, False)
+    if report.get("leakage_warning") is True:
+        ratio = report.get("shuffled_to_normal_ratio")
+        ratio_s = f"{float(ratio):.2f}" if _is_number(ratio) else "n/a"
+        return (f"leakage_warning=true (shuffled_to_normal_ratio={ratio_s})", True)
+    return ("none", False)
+
+
+def pipeline_shift(report: dict) -> tuple[list[str], bool]:
+    """Shift warnings the pipeline itself recorded (surfaced verbatim).
+
+    Returns (lines, is_flag).  Combines the pipeline's own shift_interpretation
+    string with its "model ≈ naive baseline" guard.  The guard reproduces the
+    pipeline's exact comparison (b_ml_pipeline.py GUARD B: model MAE within 10%
+    of the shift=-h MAE) using the numbers the pipeline stored, so the numbers
+    shown are the pipeline's own.
+    """
+    has_fields = ("shift_interpretation" in report) or ("best_shift" in report)
+    if not has_fields:
+        return ([NA], False)
+
+    lines: list[str] = []
+
+    interp = report.get("shift_interpretation")
+    if isinstance(interp, str) and not interp.strip().upper().startswith("OK"):
+        lines.append(interp)  # verbatim
+
+    if report.get("is_critical_timestamping_bug") is True:
+        lines.append("is_critical_timestamping_bug=true")
+
+    # GUARD B: model performance ≈ naive (shift=-h) baseline.
+    mae_model = report.get("mae_model")
+    naive_mae = report.get("mae_shift_minus_h")
+    if _is_number(mae_model) and _is_number(naive_mae):
+        denom = max(mae_model, naive_mae, 1.0)
+        if abs(mae_model - naive_mae) / denom < 0.1:
+            lines.append(
+                f"model performance ≈ naive baseline (shift=-h): "
+                f"Model MAE={_fmt_money(mae_model)} vs Naive MAE={_fmt_money(naive_mae)}"
+            )
+
+    if not lines:
+        return (["none"], False)
+    return (lines, True)
+
+
+def summary_leakage_check(preds: pd.DataFrame) -> tuple[str, bool]:
+    """This summary's own leakage check: any prediction that peeks ahead."""
+    if not {"origin_date", "target_date"}.issubset(preds.columns):
+        return (NA, False)
+    origin = pd.to_datetime(preds["origin_date"], errors="coerce")
+    target = pd.to_datetime(preds["target_date"], errors="coerce")
+    violations = int((origin >= target).sum())
+    if violations > 0:
+        return (f"{violations} row(s) with origin_date >= target_date", True)
+    return ("none", False)
+
+
+def summary_shift_check(preds: pd.DataFrame) -> tuple[str, bool]:
+    """This summary's own shift check via detect_lagged_copy."""
+    if not {"y_true", "y_pred"}.issubset(preds.columns):
+        return (NA, False)
+    result = detect_lagged_copy(preds)
+    flagged = [m["model"] for m in result.get("per_model", []) if m.get("flagged")]
+    if flagged:
+        return ("; ".join(result.get("details", [])), True)
+    return ("none", False)
+
+
+def summarize_family(name: str, family_dir: Path) -> dict:
+    """Collect the summary facts for one pipeline family."""
     info: dict = {
         "name": name,
         "ok": False,
-        "models": [],
-        "best_model": None,
-        "best_mae": None,
-        "skill_pct": None,
-        "run_status": None,
-        "leakage_flag": False,
-        "leakage_detail": "",
-        "shift_flag": False,
-        "shift_detail": "",
+        "models": NA,
+        "best_model": NA,
+        "skill_pct": NA,
+        "run_status": NA,
+        "pipe_leak": NA, "pipe_leak_flag": False,
+        "pipe_shift": [NA], "pipe_shift_flag": False,
+        "chk_leak": NA, "chk_leak_flag": False,
+        "chk_shift": NA, "chk_shift_flag": False,
         "notes": [],
     }
 
@@ -98,43 +184,38 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     if lb_path is not None:
         lb = pd.read_csv(lb_path)
         if "model" in lb.columns:
-            info["models"] = [str(m) for m in lb["model"].tolist()]
+            info["models"] = ", ".join(str(m) for m in lb["model"].tolist())
         if "model" in lb.columns and "MAE" in lb.columns:
-            # Ignore baseline rows when choosing the "best" real model.
             real = lb[~lb["model"].astype(str).str.contains("baseline", case=False, na=False)]
             real = real.dropna(subset=["MAE"])
             if not real.empty:
                 best = real.loc[real["MAE"].idxmin()]
-                info["best_model"] = str(best["model"])
-                info["best_mae"] = float(best["MAE"])
+                info["best_model"] = f"{best['model']} (MAE {_fmt_money(best['MAE'])})"
     elif "model" in preds.columns:
-        info["models"] = [str(m) for m in preds["model"].unique().tolist()]
+        info["models"] = ", ".join(str(m) for m in preds["model"].unique().tolist())
 
     # ── Skill vs persistence + run status, from the integrity report ──
     report = _read_json(_find_one(family_dir, "integrity_report.json"))
-    if "skill_pct" in report:
-        info["skill_pct"] = report.get("skill_pct")
-    if "run_status" in report:
-        info["run_status"] = report.get("run_status")
+    if _is_number(report.get("skill_pct")):
+        info["skill_pct"] = f"{float(report['skill_pct']):.2f}%"
+    if report.get("run_status"):
+        info["run_status"] = str(report["run_status"])
 
-    # ── Leakage flag: any prediction that references the future ──
-    if "origin_date" in preds.columns and "target_date" in preds.columns:
-        origin = pd.to_datetime(preds["origin_date"], errors="coerce")
-        target = pd.to_datetime(preds["target_date"], errors="coerce")
-        violations = int((origin >= target).sum())
-        if violations > 0:
-            info["leakage_flag"] = True
-            info["leakage_detail"] = f"{violations} row(s) with origin_date >= target_date"
-
-    # ── Shift flag: models that look like a lagged copy of the target ──
-    if {"y_true", "y_pred"}.issubset(preds.columns):
-        result = detect_lagged_copy(preds)
-        flagged = [m["model"] for m in result.get("per_model", []) if m.get("flagged")]
-        if flagged:
-            info["shift_flag"] = True
-            info["shift_detail"] = "; ".join(result.get("details", []))
+    # ── Flags: pipeline-recorded (verbatim) and this summary's own checks ──
+    info["pipe_leak"], info["pipe_leak_flag"] = pipeline_leakage(report)
+    info["pipe_shift"], info["pipe_shift_flag"] = pipeline_shift(report)
+    info["chk_leak"], info["chk_leak_flag"] = summary_leakage_check(preds)
+    info["chk_shift"], info["chk_shift_flag"] = summary_shift_check(preds)
 
     return info
+
+
+def family_leakage_flag(s: dict) -> bool:
+    return bool(s["pipe_leak_flag"] or s["chk_leak_flag"])
+
+
+def family_shift_flag(s: dict) -> bool:
+    return bool(s["pipe_shift_flag"] or s["chk_shift_flag"])
 
 
 def check_freshness(data_file: Path, date_col: str, run_date: str, stale_days: int) -> tuple[str, bool]:
@@ -171,17 +252,13 @@ def main() -> int:
     data_file = Path(args.data_file)
     families = args.families.split()
 
-    # ── Data freshness ──
     fresh_line, is_stale = check_freshness(data_file, args.date_col, args.run_date, args.stale_days)
-
-    # ── Per-family facts ──
     summaries = [summarize_family(fam, run_dir / fam.lower()) for fam in families]
 
     n_ok = sum(1 for s in summaries if s["ok"])
-    n_leak = sum(1 for s in summaries if s["leakage_flag"])
-    n_shift = sum(1 for s in summaries if s["shift_flag"])
+    n_leak = sum(1 for s in summaries if family_leakage_flag(s))
+    n_shift = sum(1 for s in summaries if family_shift_flag(s))
 
-    # ── Build the report text ──
     lines: list[str] = []
     lines.append("AI4CM Daily Forecast Summary")
     lines.append("=" * 40)
@@ -201,19 +278,22 @@ def main() -> int:
             lines.append(f"  STATUS: no usable output ({'; '.join(s['notes']) or 'unknown'})")
             lines.append("")
             continue
-        models = ", ".join(s["models"]) if s["models"] else "(unknown)"
-        lines.append(f"  Models run: {models}")
-        if s["best_model"] is not None:
-            lines.append(f"  Best model: {s['best_model']} (MAE {_fmt_money(s['best_mae'])})")
-        if s["skill_pct"] is not None:
-            try:
-                lines.append(f"  Skill vs persistence: {float(s['skill_pct']):.2f}%")
-            except (TypeError, ValueError):
-                pass
-        if s["run_status"]:
-            lines.append(f"  Run status: {s['run_status']}")
-        lines.append(f"  Leakage flag: {'YES — ' + s['leakage_detail'] if s['leakage_flag'] else 'none'}")
-        lines.append(f"  Shift flag:   {'YES — ' + s['shift_detail'] if s['shift_flag'] else 'none'}")
+        lines.append(f"  Models run: {s['models']}")
+        lines.append(f"  Best model: {s['best_model']}")
+        lines.append(f"  Skill vs persistence: {s['skill_pct']}")
+        lines.append(f"  Run status: {s['run_status']}")
+
+        leak_flag = "YES" if family_leakage_flag(s) else "none"
+        lines.append(f"  Leakage flag: {leak_flag}")
+        lines.append(f"    - pipeline: {s['pipe_leak']}")
+        lines.append(f"    - summary check (origin_date >= target_date): {s['chk_leak']}")
+
+        shift_flag = "YES" if family_shift_flag(s) else "none"
+        lines.append(f"  Shift flag: {shift_flag}")
+        for i, w in enumerate(s["pipe_shift"]):
+            label = "pipeline" if i == 0 else "pipeline (cont.)"
+            lines.append(f"    - {label}: {w}")
+        lines.append(f"    - summary check (detect_lagged_copy): {s['chk_shift']}")
         lines.append("")
 
     lines.append("-" * 40)
@@ -223,10 +303,8 @@ def main() -> int:
 
     report = "\n".join(lines) + "\n"
     (run_dir / "SUMMARY.txt").write_text(report)
-    # Also echo to stdout so the shell script's log captures it.
     print(report)
 
-    # A family that was requested but produced nothing is a real failure.
     if n_ok < len(families):
         print("ERROR: one or more requested families produced no output.", file=sys.stderr)
         return 1
