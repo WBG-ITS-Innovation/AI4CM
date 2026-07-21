@@ -72,7 +72,7 @@ class ConfigDL:
     nominal_pi: float = 0.90
     sample_weight_scheme: str = "none"  # "none" | "month_end_boost"
     eom_boost_weight: float = 3.0
-    target_transform: str = "none"      # "none" | "log1p" (flows only)
+    target_transform: str = "auto"      # "auto" | "none" | "log1p" | "log1p_std" (flows only)
 
     # Runtime
     random_seed: int = 42
@@ -775,16 +775,43 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                     X_cal = apply_feature_scaler(X_cal, mu, sd)
                     X_te_s = apply_feature_scaler(X_te, mu, sd)
 
-                    # Target transform (flows only if requested)
-                    if (config.target_transform == "log1p") and (not stock):
-                        y_fit_t = np.log1p(np.maximum(y_fit, 0.0))
-                        inv = np.expm1
-                        y_te_raw  = y_te.copy()
-                        y_cal_t = np.log1p(np.maximum(y_cal_t, 0.0))
+                    # Target transform. A neural net needs a target on roughly
+                    # unit scale; a raw revenue target (~1e8) keeps the network
+                    # pinned near its ~0 initialization and it never climbs to
+                    # the right magnitude (model audit 2026-07-21, finding C-1).
+                    # For a flow target we log1p — which maps true zeros to 0 and
+                    # compresses the holiday spikes — then standardize using the
+                    # FIT slice's stats only, so the target lands on the same
+                    # unit scale as the (already standardized) features. Stock /
+                    # level targets stay in raw units.
+                    # The same transform is applied to y_fit, y_val and y_cal so
+                    # the training loss, the early-stopping loss and the conformal
+                    # residuals are all measured on one consistent scale.
+                    mode = config.target_transform
+                    if mode == "auto":
+                        mode = "none" if stock else "log1p_std"
+
+                    if (mode in ("log1p", "log1p_std")) and (not stock):
+                        y_fit_log = np.log1p(np.maximum(y_fit, 0.0))
+                        y_val_log = np.log1p(np.maximum(y_val, 0.0))
+                        y_cal_log = np.log1p(np.maximum(y_cal_t, 0.0))
+                        if mode == "log1p_std":
+                            ty_mu = float(y_fit_log.mean())
+                            ty_sd = float(y_fit_log.std()) or 1.0   # 0 std -> 1.0 (degenerate fold)
+                        else:
+                            ty_mu, ty_sd = 0.0, 1.0
+                        y_fit_t = ((y_fit_log - ty_mu) / ty_sd).astype(np.float32)
+                        y_val_t = ((y_val_log - ty_mu) / ty_sd).astype(np.float32)
+                        y_cal_t = ((y_cal_log - ty_mu) / ty_sd).astype(np.float32)
+                        # Inverse: undo standardization, then expm1 back to currency.
+                        inv = (lambda z, _mu=ty_mu, _sd=ty_sd:
+                               np.expm1(np.asarray(z, dtype=np.float64) * _sd + _mu))
+                        y_te_raw = y_te.copy()
                     else:
                         y_fit_t = y_fit.copy()
+                        y_val_t = y_val.copy()
                         inv = (lambda a: a)
-                        y_te_raw  = y_te.copy()
+                        y_te_raw = y_te.copy()
 
                     for mname in model_list:
                         try:
@@ -793,7 +820,7 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                             print(f"[WARN] Skip model={mname}: {ex}")
                             continue
 
-                        model = train_model(model, X_fit, y_fit_t, X_val, y_val, None, config)
+                        model = train_model(model, X_fit, y_fit_t, X_val, y_val_t, None, config)
 
                         # Conformal from calibration tail (if present)
                         if len(X_cal) > 0:
@@ -823,7 +850,7 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                             "y_hi":  hi.astype(float),
                             "split_id": f"{ld_tr[-1].date()}→{ld_te[0].date()}..{ld_te[-1].date()}",
                             "cadence": cadence,
-                            "defn_variant": f"DL_{family}_{cadence}" + ("_log1p" if ((config.target_transform=='log1p') and (not stock)) else "")
+                            "defn_variant": f"DL_{family}_{cadence}" + (f"_{mode}" if ((mode in ("log1p","log1p_std")) and (not stock)) else "")
                         })
                         predictions_all.append(df_m)
 
