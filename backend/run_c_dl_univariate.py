@@ -76,7 +76,7 @@ def main() -> None:
         nominal_pi=float(ov.get("nominal_pi", 0.90)),
         sample_weight_scheme=str(ov.get("sample_weight_scheme", "none")),
         eom_boost_weight=float(ov.get("eom_boost_weight", 3.0)),
-        target_transform=str(ov.get("target_transform", "none")),
+        target_transform=str(ov.get("target_transform", "auto")),
         min_train_years=int(ov.get("min_train_years", 4)),
         device=str(ov.get("device", "auto")),
         quick_mode=bool(ov.get("quick_mode", False)),
