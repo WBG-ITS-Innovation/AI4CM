@@ -1,8 +1,14 @@
 """
 Leakage detection test on real Georgia Treasury data.
 
-Runs the stat pipeline (NAIVE — fastest model) on the actual processed
+Runs the stat pipeline (ETS — a real forecaster) on the actual processed
 CSV, then verifies every prediction row for temporal leakage signals.
+
+Note: this uses ETS, not the NAIVE baseline.  Since C-3 the stat family
+forecasts h-step-ahead from rolling origins, so the NAIVE model IS a genuine
+h-step persistence (y_pred = y(t-h)) — it correlates perfectly with y_true
+shifted by the horizon by design.  The shift-leakage check below only makes
+sense for a real forecaster, which should NOT look like a lagged copy.
 Skips gracefully if the data file is not available.
 """
 from __future__ import annotations
@@ -34,7 +40,7 @@ def run_output(tmp_path_factory):
     env = os.environ.copy()
     env.update({
         "TG_FAMILY": "A_STAT",
-        "TG_MODEL_FILTER": "NAIVE",
+        "TG_MODEL_FILTER": "ETS",
         "TG_TARGET": "Revenues",
         "TG_CADENCE": "Daily",
         "TG_HORIZON": "5",
@@ -75,12 +81,11 @@ class TestTemporalOrdering:
     def test_origin_at_least_one_day_before_target(self, run_output):
         """origin_date should be at least 1 business day before target_date.
 
-        Note: the stat pipeline forecasts the full test window from a single
-        origin (train_end), so origin-to-target gaps range from 1 day to a
-        full year.  The h-step-ahead guarantee (gap >= horizon) applies only
-        to ML/DL/quantile pipelines that produce per-origin predictions.
-        For the stat pipeline we verify the weaker but still critical
-        invariant: no prediction references future data (origin < target).
+        Since C-3 the stat pipeline forecasts h-step-ahead from rolling
+        origins, so origin is exactly `horizon` business days before target —
+        the same convention as the ML/DL/quantile families.  We assert the
+        critical invariant that no prediction references future data
+        (origin < target); the gap is now `horizon`, comfortably >= 1.
         """
         df = run_output
         for _, row in df.head(100).iterrows():

@@ -274,39 +274,50 @@ def main():
             tr_end = idx[-(max(horizon, 2) + 1)]
             folds_list = [(tr_end, te_start, te_end)]
 
+    # ── Rolling-origin, h-step-ahead evaluation (C-3) ──
+    # For every target date t in the fold's test window we refit the model on
+    # the history up to the ORIGIN (t - h steps back) and take the h-step-ahead
+    # forecast.  The origin therefore advances one step per target, exactly like
+    # the ML family, and origin_value = y(t-h) is a true h-step persistence (not
+    # a flat last-value), so the baseline matches every other family.
+    idx_all = y_all.index
+    pos_of = {ts: i for i, ts in enumerate(idx_all)}
     recs=[]
     for (tr_end, ts_start, ts_end) in folds_list:
-        y_tr = y_all[y_all.index <= tr_end]
-        idx_te = y_all.index[(y_all.index >= ts_start) & (y_all.index <= ts_end)]
-        if len(y_tr)==0 or len(idx_te)==0: continue
-        y_pred, y_lo, y_hi = _fc(model, y_tr, idx_te, ov, cadence)
-        y_pred = np.asarray(y_pred).ravel()
-        y_lo = np.asarray(y_lo).ravel()
-        y_hi = np.asarray(y_hi).ravel()
-        if len(y_pred)!=len(idx_te): y_pred = np.resize(y_pred, len(idx_te))
-        if len(y_lo)!=len(idx_te): y_lo = np.resize(y_lo, len(idx_te))
-        if len(y_hi)!=len(idx_te): y_hi = np.resize(y_hi, len(idx_te))
-        y_true = y_all.reindex(idx_te).values.astype(float)
-        # ✅ FIX STAT-1: origin_date = tr_end (last date in training set).
-        origin_val = float(y_tr.iloc[-1]) if len(y_tr) > 0 else np.nan
-        _has_pi = np.isfinite(y_lo).any()
-        if _has_pi:
-            _log(f"  PI produced for fold {tr_end.date()} ({int(np.isfinite(y_lo).sum())}/{len(y_lo)} values)")
-        for i_te, (dt_i, yp, yt, lo, hi) in enumerate(zip(idx_te, y_pred, y_true, y_lo, y_hi)):
+        idx_te = idx_all[(idx_all >= ts_start) & (idx_all <= ts_end)]
+        n_pi = 0
+        for t in idx_te:
+            pos_t = pos_of[t]
+            origin_pos = pos_t - horizon
+            if origin_pos < 0:
+                continue  # not enough history to form an h-step forecast
+            origin = idx_all[origin_pos]
+            y_hist = y_all.iloc[:origin_pos + 1]              # observed up to the origin
+            idx_future = idx_all[origin_pos + 1:pos_t + 1]    # h dates, last one == t
+            if len(y_hist) == 0 or len(idx_future) != horizon:
+                continue
+            y_pred, y_lo, y_hi = _fc(model, y_hist, idx_future, ov, cadence)
+            yp = float(np.asarray(y_pred).ravel()[-1])        # the h-step-ahead point
+            lo = float(np.asarray(y_lo).ravel()[-1])
+            hi = float(np.asarray(y_hi).ravel()[-1])
+            if np.isfinite(lo):
+                n_pi += 1
             recs.append({
-                "date": dt_i,
-                "target_date": dt_i,
-                "origin_date": tr_end,
-                "origin_value": origin_val,
+                "date": t,
+                "target_date": t,
+                "origin_date": origin,                         # advances one step per target
+                "origin_value": float(y_all.iloc[origin_pos]), # y(t-h) -> h-step persistence
                 "target": target,
                 "horizon": horizon,
-                "horizon_note": "stat_models_forecast_full_test_window",
+                "horizon_note": f"stat_rolling_origin_h{horizon}",
                 "model": model,
-                "y_true": float(yt), "y_pred": float(yp),
-                "y_lo": float(lo), "y_hi": float(hi),
-                "split_id": f"{tr_end.date()}→{ts_start.date()}..{ts_end.date()}",
+                "y_true": float(y_all.loc[t]), "y_pred": yp,
+                "y_lo": lo, "y_hi": hi,
+                "split_id": f"{ts_start.date()}..{ts_end.date()}",
                 "cadence": cadence,
             })
+        if n_pi:
+            _log(f"  PI produced for fold {ts_start.date()}..{ts_end.date()} ({n_pi} values)")
 
     preds = pd.DataFrame.from_records(recs).sort_values("date")
     preds.to_csv(outroot/"predictions_long.csv", index=False)
@@ -321,12 +332,13 @@ def main():
     lb=(metr.groupby("model",as_index=False)["MAE"].mean().sort_values("MAE")
            .assign(rank=lambda x: np.arange(1,len(x)+1)))
 
-    # ✅ FIX STAT-2: Persistence baseline + quality gate
+    # ✅ FIX STAT-2 / C-2: Persistence baseline (shared h-step ruler) + quality gate
     _stat_integrity = {"pipeline": "STAT", "target": target, "horizon": horizon}
     if not preds.empty and "origin_value" in preds.columns:
+        from forecast_integrity import compute_persistence_baseline
         _valid = preds.dropna(subset=["origin_value", "y_true"])
         if len(_valid) > 0:
-            mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+            mae_persist = compute_persistence_baseline(_valid)["mae_persistence"]
             mae_model_all = float(np.mean(np.abs(_valid["y_true"].values - _valid["y_pred"].values)))
             skill_pct = ((mae_persist - mae_model_all) / mae_persist * 100.0) if mae_persist > 0 else np.nan
             persist_row = pd.DataFrame([{"target":target,"horizon":horizon,"cadence":cadence,
