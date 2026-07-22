@@ -375,7 +375,9 @@ def run_pipeline(CONFIG: Config) -> None:
     if not predictions_long.empty and "origin_value" in predictions_long.columns and "yhat_p50" in predictions_long.columns:
         _valid = predictions_long.dropna(subset=["origin_value", "y_true", "yhat_p50"])
         if len(_valid) > 5:
-            mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+            # Shared h-step persistence (one ruler for all families).
+            from forecast_integrity import compute_persistence_baseline
+            mae_persist = compute_persistence_baseline(_valid)["mae_persistence"]
             mae_p50 = float(np.mean(np.abs(_valid["y_true"].values - _valid["yhat_p50"].values)))
             skill_pct = ((mae_persist - mae_p50) / mae_persist * 100.0) if mae_persist > 0 else np.nan
             _quant_integrity.update({
