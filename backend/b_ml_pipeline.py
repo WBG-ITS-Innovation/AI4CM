@@ -815,7 +815,9 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         if "origin_value" in pred_long.columns:
             _valid = pred_long.dropna(subset=["origin_value", "y_true"])
             if len(_valid) > 0:
-                _mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+                # Shared h-step persistence (one ruler for all families).
+                from forecast_integrity import compute_persistence_baseline
+                _mae_persist = compute_persistence_baseline(_valid)["mae_persistence"]
                 persist_row = pd.DataFrame([{
                     "target": cfg.target, "horizon": cfg.horizon,
                     "model": "⚡ Persistence (baseline)", "MAE": _mae_persist, "rank": 0,
