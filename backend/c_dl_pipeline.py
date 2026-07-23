@@ -872,18 +872,21 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                             from forecast_integrity import (
                                 shift_diagnostic_horizon_aware,
                                 compute_skill_score,
+                                compute_persistence_baseline,
                             )
                         except ImportError:
                             from backend.forecast_integrity import (
                                 shift_diagnostic_horizon_aware,
                                 compute_skill_score,
+                                compute_persistence_baseline,
                             )
                         # Persistence baseline from origin_value
                         if "origin_value" in df_pred_h.columns and best_model:
                             _bm_df = df_pred_h[df_pred_h["model"] == best_model]
                             _valid = _bm_df.dropna(subset=["origin_value", "y_true"])
                             if len(_valid) > 5:
-                                mae_persist = float(np.mean(np.abs(_valid["y_true"].values - _valid["origin_value"].values)))
+                                # Shared h-step persistence (one ruler for all families).
+                                mae_persist = compute_persistence_baseline(_valid)["mae_persistence"]
                                 mae_model = float(np.mean(np.abs(_valid["y_true"].values - _valid["y_pred"].values)))
                                 skill_pct = compute_skill_score(mae_model, mae_persist)
                                 # Add persistence baseline to leaderboard
