@@ -218,6 +218,40 @@ def family_shift_flag(s: dict) -> bool:
     return bool(s["pipe_shift_flag"] or s["chk_shift_flag"])
 
 
+# ── Quality gate (M-1) ────────────────────────────────────────────────────────
+# A family's "best model" may only be presented as trustworthy when the run
+# passed its own quality checks.  FAILED_QUALITY / ERROR runs, and runs with
+# leakage or shift flags, must not surface a clean best-model line — that is
+# exactly how a broken model ends up looking like a winner in front of a
+# client.  The raw number is still shown, clearly labelled, for diagnosis.
+
+FAILED_STATUSES = {"FAILED_QUALITY", "ERROR"}
+
+
+def family_gate(s: dict) -> tuple[bool, list[str]]:
+    """Return (passed, reasons_it_failed) for one family summary."""
+    reasons: list[str] = []
+    status = str(s.get("run_status") or "")
+    if status in FAILED_STATUSES:
+        reasons.append(f"run_status={status}")
+    if family_leakage_flag(s):
+        reasons.append("leakage flag raised")
+    if family_shift_flag(s):
+        reasons.append("shift flag raised")
+    return (len(reasons) == 0, reasons)
+
+
+def best_model_line(s: dict) -> str:
+    """The best-model text after applying the quality gate."""
+    passed, reasons = family_gate(s)
+    if passed:
+        return s["best_model"]
+    withheld = f"WITHHELD — quality gate failed ({'; '.join(reasons)})"
+    if s["best_model"] != NA:
+        withheld += f" [ungated best by MAE, diagnosis only: {s['best_model']}]"
+    return withheld
+
+
 def check_freshness(data_file: Path, date_col: str, run_date: str, stale_days: int) -> tuple[str, bool]:
     """Return (message, is_stale) describing how current the data file is."""
     try:
@@ -279,9 +313,11 @@ def main() -> int:
             lines.append("")
             continue
         lines.append(f"  Models run: {s['models']}")
-        lines.append(f"  Best model: {s['best_model']}")
+        lines.append(f"  Best model: {best_model_line(s)}")
         lines.append(f"  Skill vs persistence: {s['skill_pct']}")
         lines.append(f"  Run status: {s['run_status']}")
+        gate_ok, gate_reasons = family_gate(s)
+        lines.append(f"  Quality gate: {'PASSED' if gate_ok else 'FAILED (' + '; '.join(gate_reasons) + ')'}")
 
         leak_flag = "YES" if family_leakage_flag(s) else "none"
         lines.append(f"  Leakage flag: {leak_flag}")
@@ -296,14 +332,54 @@ def main() -> int:
         lines.append(f"    - summary check (detect_lagged_copy): {s['chk_shift']}")
         lines.append("")
 
+    n_gated = sum(1 for s in summaries if not family_gate(s)[0])
+
     lines.append("-" * 40)
     lines.append(f"Overall: {n_ok}/{len(families)} families produced output.")
+    lines.append(f"Quality gate: {len(families) - n_gated}/{len(families)} families passed.")
     lines.append(f"Flags raised: {n_leak} leakage, {n_shift} shift, "
                  f"data {'STALE' if is_stale else 'fresh'}.")
 
     report = "\n".join(lines) + "\n"
     (run_dir / "SUMMARY.txt").write_text(report)
     print(report)
+
+    # Machine-readable twin of SUMMARY.txt.  Downstream consumers (e.g. the
+    # AI4CM-agent UI) must read gate_passed from here instead of re-deriving
+    # trust rules, so text and JSON can never disagree.
+    payload = {
+        "run_date": args.run_date,
+        "data_file": data_file.name,
+        "freshness": {"line": fresh_line, "stale": bool(is_stale)},
+        "target": args.target,
+        "cadence": args.cadence,
+        "horizon": args.horizon,
+        "families": [],
+        "overall": {
+            "families_requested": len(families),
+            "families_with_output": n_ok,
+            "families_gate_passed": len(families) - n_gated,
+            "leakage_flags": n_leak,
+            "shift_flags": n_shift,
+        },
+    }
+    for s in summaries:
+        gate_ok, gate_reasons = family_gate(s)
+        payload["families"].append({
+            "name": s["name"],
+            "produced_output": bool(s["ok"]),
+            "models": s["models"],
+            "best_model": s["best_model"],
+            "best_model_display": best_model_line(s),
+            "skill_pct": s["skill_pct"],
+            "run_status": s["run_status"],
+            "gate_passed": gate_ok,
+            "gate_reasons": gate_reasons,
+            "leakage_flag": family_leakage_flag(s),
+            "shift_flag": family_shift_flag(s),
+            "notes": s["notes"],
+        })
+    (run_dir / "SUMMARY.json").write_text(json.dumps(payload, indent=2))
 
     if n_ok < len(families):
         print("ERROR: one or more requested families produced no output.", file=sys.stderr)
