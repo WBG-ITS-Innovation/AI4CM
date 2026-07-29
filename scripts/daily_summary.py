@@ -64,6 +64,41 @@ def _read_json(path: Path | None) -> dict:
         return {}
 
 
+def _find_integrity_report(family_dir: Path) -> Path | None:
+    """Locate a family's integrity report.
+
+    Most families write `integrity_report.json`.  The DL pipeline instead
+    writes `integrity_<Target>_h<H>.json` (e.g. integrity_Revenues_h5.json),
+    nested under daily/artifacts/.  Try the standard name first (unchanged
+    behaviour for the other families), then fall back to any integrity_*.json,
+    sorted so the choice is deterministic when several match.
+    """
+    standard = _find_one(family_dir, "integrity_report.json")
+    if standard is not None:
+        return standard
+    matches = sorted(family_dir.rglob("integrity_*.json"))
+    return matches[0] if matches else None
+
+
+def gate_reasons(report: dict, leakage_flag: bool) -> list[str]:
+    """Reasons a family fails the quality gate (empty list = no failure).
+
+    A family fails when the pipeline recorded run_status=FAILED_QUALITY (or
+    quality_gate_passed=false in older artifacts), or when any leakage flag
+    was raised — a leaky model is not usable no matter how good it looks.
+    """
+    reasons: list[str] = []
+    if report:
+        status = str(report.get("run_status", "")).strip().upper()
+        if status == "FAILED_QUALITY":
+            reasons.append("run_status=FAILED_QUALITY")
+        elif report.get("quality_gate_passed") is False:
+            reasons.append("quality_gate_passed=false")
+    if leakage_flag:
+        reasons.append("leakage flag raised")
+    return reasons
+
+
 def _fmt_money(x) -> str:
     """Format a large number with thousands separators (or 'n/a')."""
     try:
@@ -161,6 +196,9 @@ def summarize_family(name: str, family_dir: Path) -> dict:
         "best_model": NA,
         "skill_pct": NA,
         "run_status": NA,
+        "quality": NA,
+        "gate_passed": None, "gate_reasons": [],
+        "integrity_found": False,
         "pipe_leak": NA, "pipe_leak_flag": False,
         "pipe_shift": [NA], "pipe_shift_flag": False,
         "chk_leak": NA, "chk_leak_flag": False,
@@ -195,7 +233,8 @@ def summarize_family(name: str, family_dir: Path) -> dict:
         info["models"] = ", ".join(str(m) for m in preds["model"].unique().tolist())
 
     # ── Skill vs persistence + run status, from the integrity report ──
-    report = _read_json(_find_one(family_dir, "integrity_report.json"))
+    report = _read_json(_find_integrity_report(family_dir))
+    info["integrity_found"] = bool(report)
     if _is_number(report.get("skill_pct")):
         info["skill_pct"] = f"{float(report['skill_pct']):.2f}%"
     if report.get("run_status"):
@@ -206,6 +245,15 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     info["pipe_shift"], info["pipe_shift_flag"] = pipeline_shift(report)
     info["chk_leak"], info["chk_leak_flag"] = summary_leakage_check(preds)
     info["chk_shift"], info["chk_shift_flag"] = summary_shift_check(preds)
+
+    # ── Quality gate: computed last, because leakage flags feed into it ──
+    info["gate_reasons"] = gate_reasons(report, family_leakage_flag(info))
+    if info["gate_reasons"]:
+        info["gate_passed"] = False
+    elif info["integrity_found"]:
+        info["gate_passed"] = True
+    else:
+        info["gate_passed"] = None  # never verified — must not look like a pass
 
     return info
 
@@ -258,6 +306,7 @@ def main() -> int:
     n_ok = sum(1 for s in summaries if s["ok"])
     n_leak = sum(1 for s in summaries if family_leakage_flag(s))
     n_shift = sum(1 for s in summaries if family_shift_flag(s))
+    n_quality = sum(1 for s in summaries if s["gate_passed"] is False)
 
     lines: list[str] = []
     lines.append("AI4CM Daily Forecast Summary")
@@ -279,9 +328,24 @@ def main() -> int:
             lines.append("")
             continue
         lines.append(f"  Models run: {s['models']}")
-        lines.append(f"  Best model: {s['best_model']}")
+        if s["gate_passed"] is False:
+            reasons = "; ".join(s["gate_reasons"])
+            best_display = (f"WITHHELD — {reasons}, not usable; "
+                            f"{s['best_model']} for diagnosis only")
+        elif s["gate_passed"] is None:
+            best_display = f"{s['best_model']} (integrity not verified)"
+        else:
+            best_display = s["best_model"]
+        s["best_model_display"] = best_display
+        lines.append(f"  Best model: {best_display}")
         lines.append(f"  Skill vs persistence: {s['skill_pct']}")
         lines.append(f"  Run status: {s['run_status']}")
+        if s["gate_passed"] is True:
+            lines.append("  Quality gate: PASSED")
+        elif s["gate_passed"] is False:
+            lines.append(f"  Quality gate: FAILED ({'; '.join(s['gate_reasons'])})")
+        else:
+            lines.append(f"  Quality gate: {NA}")
 
         leak_flag = "YES" if family_leakage_flag(s) else "none"
         lines.append(f"  Leakage flag: {leak_flag}")
@@ -299,10 +363,48 @@ def main() -> int:
     lines.append("-" * 40)
     lines.append(f"Overall: {n_ok}/{len(families)} families produced output.")
     lines.append(f"Flags raised: {n_leak} leakage, {n_shift} shift, "
-                 f"data {'STALE' if is_stale else 'fresh'}.")
+                 f"{n_quality} quality, data {'STALE' if is_stale else 'fresh'}.")
 
     report = "\n".join(lines) + "\n"
     (run_dir / "SUMMARY.txt").write_text(report)
+
+    # Machine-readable twin of the text report, for downstream tooling.
+    payload = {
+        "run_date": args.run_date,
+        "target": args.target,
+        "cadence": args.cadence,
+        "horizon": args.horizon,
+        "families": [
+            {
+                "name": s["name"],
+                "ok": s["ok"],
+                "models": s["models"],
+                "best_model": s["best_model"],
+                "best_model_display": s.get("best_model_display", s["best_model"]),
+                "skill_pct": s["skill_pct"],
+                "run_status": s["run_status"],
+                "integrity_verified": s["integrity_found"],
+                "gate_passed": s["gate_passed"],
+                "gate_reasons": s["gate_reasons"],
+                "leakage_flag": family_leakage_flag(s),
+                "shift_flag": family_shift_flag(s),
+            }
+            for s in summaries
+        ],
+        "overall": {
+            "families_requested": len(families),
+            "families_ok": n_ok,
+            "families_gate_passed": sum(
+                1 for s in summaries if s["gate_passed"] is True
+            ),
+            "leakage_flags": n_leak,
+            "shift_flags": n_shift,
+            "quality_gate_failures": n_quality,
+        },
+        "freshness": {"line": fresh_line, "stale": bool(is_stale)},
+    }
+    (run_dir / "SUMMARY.json").write_text(json.dumps(payload, indent=2))
+
     print(report)
 
     if n_ok < len(families):
