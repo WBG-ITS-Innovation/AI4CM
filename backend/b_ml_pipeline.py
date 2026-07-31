@@ -156,6 +156,19 @@ def calendar_exog(idx: pd.DatetimeIndex) -> pd.DataFrame:
     df["month"] = idx.month
     df["is_eom"] = ((idx + pd.offsets.BDay(1)).to_period("M") != idx.to_period("M")).astype(int)
     df["is_eoq"] = ((idx + pd.offsets.BDay(1)).to_period("Q") != idx.to_period("Q")).astype(int)
+    # ✅ Position within the month.  Treasury cash flows are driven by fixed
+    # monthly dates — tax deadlines, salary runs, transfer schedules — so a
+    # model with only month and day-of-week cannot represent "the 15th" and
+    # ends up forecasting the monthly average through every spike.
+    #   dom      : calendar day of month
+    #   bdom     : business day of month, counting forward (1 = first workday)
+    #   bdom_rev : business days remaining until month end
+    # bdom matters separately from dom because a deadline that falls on a
+    # weekend shifts to the next working day.
+    _s = idx.to_series()
+    df["dom"] = idx.day
+    df["bdom"] = _s.groupby([idx.year, idx.month]).cumcount() + 1
+    df["bdom_rev"] = df.groupby([idx.year, idx.month])["bdom"].transform("max") - df["bdom"]
     dow = pd.get_dummies(df["dow"], prefix="dow", drop_first=True)
     return pd.concat([df.drop(columns="dow"), dow], axis=1)
 
