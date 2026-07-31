@@ -80,12 +80,23 @@ def _find_integrity_report(family_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
-def gate_reasons(report: dict, leakage_flag: bool) -> list[str]:
+def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> list[str]:
     """Reasons a family fails the quality gate (empty list = no failure).
 
-    A family fails when the pipeline recorded run_status=FAILED_QUALITY (or
-    quality_gate_passed=false in older artifacts), or when any leakage flag
-    was raised — a leaky model is not usable no matter how good it looks.
+    A family fails when:
+      * the pipeline recorded run_status=FAILED_QUALITY (or, in older
+        artifacts, quality_gate_passed=false);
+      * a leakage flag was raised — a leaky model is not usable no matter how
+        good it looks;
+      * the shuffled-target control found no usable signal (M-5).  Note this
+        is reported as "no signal", not "leakage": a low shuffled/real ratio
+        means the features never predicted the target, which is the opposite
+        of the model seeing the future;
+      * a shift diagnostic says the forecast is essentially a lagged copy of
+        the series.  Skill above the threshold and "reproduces persistence"
+        can both be true at once — measured against different baselines — and
+        a model that only replays yesterday is not usable for planning even
+        when it clears the skill bar.
     """
     reasons: list[str] = []
     if report:
@@ -96,6 +107,12 @@ def gate_reasons(report: dict, leakage_flag: bool) -> list[str]:
             reasons.append("quality_gate_passed=false")
     if leakage_flag:
         reasons.append("leakage flag raised")
+    if report.get("signal_detected") is False:
+        ratio = report.get("shuffled_to_normal_ratio")
+        ratio_s = f"{float(ratio):.2f}" if _is_number(ratio) else "n/a"
+        reasons.append(f"no signal beyond shuffled targets (ratio {ratio_s})")
+    if shift_flag:
+        reasons.append("forecast is persistence-like (shift diagnostic)")
     return reasons
 
 
@@ -264,7 +281,9 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     info["chk_shift"], info["chk_shift_flag"] = summary_shift_check(preds)
 
     # ── Quality gate: computed last, because leakage flags feed into it ──
-    info["gate_reasons"] = gate_reasons(report, family_leakage_flag(info))
+    info["gate_reasons"] = gate_reasons(
+        report, family_leakage_flag(info), family_shift_flag(info)
+    )
     if info["gate_reasons"]:
         info["gate_passed"] = False
     elif info["integrity_found"]:
