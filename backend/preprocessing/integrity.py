@@ -207,6 +207,117 @@ def compute_baseline_maes(
     }
 
 
+MIN_SIGNAL_RATIO = 1.5   # shuffled MAE must be at least this multiple of real MAE
+
+
+def signal_sentinel(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    horizon: int,
+) -> Dict:
+    """Shuffled-target control: does this feature set carry real signal?
+
+    Fit a light model (Ridge) twice on the same features — once on the true
+    targets, once on shuffled targets — and compare held-out error.  If the
+    features genuinely predict the target, destroying the pairing should make
+    performance clearly worse, so mae_shuffled / mae_normal should be well
+    above 1.
+
+    ✅ M-5 — what this check does and does NOT mean.
+    The previous version reported a low ratio as ``leakage_warning=true``.
+    That reading is backwards.  Leakage means the model can see the future,
+    which makes its *real*-target error implausibly SMALL, and therefore makes
+    this ratio LARGE.  A low ratio means the opposite: shuffling the targets
+    barely hurt, i.e. the features were never carrying much signal about the
+    target.  A ratio below 1 means the shuffled model actually did better —
+    strong evidence of no usable signal at all.
+
+    So this function answers "is there signal?" and deliberately does not
+    claim to detect leakage.  Leakage is covered by the other checks:
+    origin_date >= target_date, near-perfect feature/target correlation
+    (check_feature_leakage), alignment validation, and the shift diagnostics.
+
+    Features are standardised before fitting.  Without scaling, Ridge on raw
+    treasury magnitudes is ill-conditioned (observed rcond ~1e-18), which made
+    both error figures — and hence the ratio — unreliable.
+
+    Returns a dict with mae_normal, mae_shuffled_target,
+    shuffled_to_normal_ratio, signal_detected, signal_verdict.
+    """
+    insufficient = {
+        "mae_normal": np.nan,
+        "mae_shuffled_target": np.nan,
+        "shuffled_to_normal_ratio": np.nan,
+        "signal_detected": None,
+        "signal_verdict": "not measurable (insufficient data)",
+        # Kept for backward compatibility only; this check cannot detect
+        # leakage, so it never asserts leakage.  See docstring.
+        "leakage_warning": False,
+        "note": "Insufficient data for signal test",
+    }
+    if len(X_train) < 10 or len(X_test) < 5:
+        return insufficient
+
+    Xtr = X_train.to_numpy(dtype=float, copy=True)
+    Xte = X_test.to_numpy(dtype=float, copy=True)
+    Xtr = np.nan_to_num(Xtr, nan=0.0, posinf=0.0, neginf=0.0)
+    Xte = np.nan_to_num(Xte, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Standardise using TRAIN statistics only (test must not inform scaling).
+    mu = Xtr.mean(axis=0)
+    sigma = Xtr.std(axis=0)
+    sigma[sigma == 0] = 1.0
+    Xtr = (Xtr - mu) / sigma
+    Xte = (Xte - mu) / sigma
+
+    y_tr = np.asarray(y_train, dtype=float)
+    y_te = np.asarray(y_test, dtype=float)
+
+    model_normal = Ridge(alpha=1.0)
+    model_normal.fit(Xtr, y_tr)
+    mae_normal = float(np.mean(np.abs(y_te - model_normal.predict(Xte))))
+
+    rng = np.random.default_rng(42)
+    y_tr_shuffled = y_tr.copy()
+    rng.shuffle(y_tr_shuffled)
+
+    model_shuffled = Ridge(alpha=1.0)
+    model_shuffled.fit(Xtr, y_tr_shuffled)
+    mae_shuffled = float(np.mean(np.abs(y_te - model_shuffled.predict(Xte))))
+
+    if not np.isfinite(mae_normal) or mae_normal <= 0:
+        out = dict(insufficient)
+        out["mae_normal"] = mae_normal
+        out["mae_shuffled_target"] = mae_shuffled
+        out["signal_verdict"] = "not measurable (degenerate real-target error)"
+        return out
+
+    ratio = mae_shuffled / mae_normal
+    signal_detected = bool(ratio >= MIN_SIGNAL_RATIO)
+    if ratio < 1.0:
+        verdict = (f"NO SIGNAL: shuffling the targets improved held-out error "
+                   f"(ratio {ratio:.2f} < 1.00) — the features do not predict "
+                   f"the target")
+    elif not signal_detected:
+        verdict = (f"WEAK SIGNAL: shuffling the targets barely hurt "
+                   f"(ratio {ratio:.2f} < {MIN_SIGNAL_RATIO:.2f} required)")
+    else:
+        verdict = (f"signal present: shuffling the targets made error "
+                   f"{ratio:.2f}x worse")
+
+    return {
+        "mae_normal": mae_normal,
+        "mae_shuffled_target": mae_shuffled,
+        "shuffled_to_normal_ratio": float(ratio),
+        "signal_detected": signal_detected,
+        "signal_verdict": verdict,
+        # Backward compatibility: never asserts leakage (see docstring).
+        "leakage_warning": False,
+    }
+
+
 def leakage_sentinel(
     X_train: pd.DataFrame,
     y_train: pd.Series,
@@ -214,59 +325,13 @@ def leakage_sentinel(
     y_test: pd.Series,
     horizon: int,
 ) -> Dict:
+    """Deprecated name for :func:`signal_sentinel`.
+
+    Retained so existing callers keep working.  The name is misleading — this
+    check measures signal presence, not leakage — so new code should call
+    signal_sentinel directly.
     """
-    Test C: Leakage sentinel (detects unreal predictions / future peek).
-    
-    Shuffle y_train randomly, retrain a lightweight model (Ridge), evaluate.
-    Performance should collapse if there's no leakage.
-    
-    Args:
-        X_train: Training features
-        y_train: Training targets
-        X_test: Test features
-        y_test: Test targets
-        horizon: Forecast horizon
-        
-    Returns:
-        Dictionary with shuffled_target_mae and leakage_warning
-    """
-    if len(X_train) < 10 or len(X_test) < 5:
-        return {
-            "mae_shuffled_target": np.nan,
-            "leakage_warning": False,
-            "note": "Insufficient data for leakage test",
-        }
-    
-    # Train normal model
-    model_normal = Ridge(random_state=42, alpha=1.0)
-    model_normal.fit(X_train, y_train)
-    y_pred_normal = model_normal.predict(X_test)
-    mae_normal = float(np.mean(np.abs(y_test - y_pred_normal)))
-    
-    # Shuffle targets and retrain
-    y_train_shuffled = y_train.copy()
-    y_train_shuffled = y_train_shuffled.sample(frac=1.0, random_state=42).reset_index(drop=True)
-    y_train_shuffled.index = y_train.index  # Restore original index
-    
-    model_shuffled = Ridge(random_state=42, alpha=1.0)
-    model_shuffled.fit(X_train, y_train_shuffled)
-    y_pred_shuffled = model_shuffled.predict(X_test)
-    mae_shuffled = float(np.mean(np.abs(y_test - y_pred_shuffled)))
-    
-    # Warning if shuffled performance is suspiciously close to normal
-    # (within 20% of normal performance suggests leakage or very weak signal)
-    if mae_normal > 0:
-        ratio = mae_shuffled / mae_normal
-        leakage_warning = ratio < 1.5  # If shuffled is less than 1.5x worse, suspicious
-    else:
-        leakage_warning = False
-    
-    return {
-        "mae_normal": float(mae_normal),
-        "mae_shuffled_target": float(mae_shuffled),
-        "shuffled_to_normal_ratio": float(ratio) if mae_normal > 0 else np.nan,
-        "leakage_warning": bool(leakage_warning),
-    }
+    return signal_sentinel(X_train, y_train, X_test, y_test, horizon)
 
 
 def validate_alignment(
