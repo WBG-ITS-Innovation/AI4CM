@@ -22,6 +22,8 @@ class Config:
     date_col: str = "date"
     folds: Optional[int] = 3   # None = use ALL possible folds (thorough mode)
     min_train_years: int = 4
+    eval_start: Optional[str] = None  # e.g. "2025-01-01": tile folds over [eval_start..end]
+                                      # (shared benchmark window; overrides `folds` count)
     model_filter: Optional[str] = None   # "GBQuantile", "ResidualRF" | None => all
     quantiles: Tuple[float, ...] = (0.10, 0.50, 0.90)
     lags_daily: Tuple[int, ...] = (1, 5, 20)
@@ -41,7 +43,8 @@ def _pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, q: float) -> float:
     diff = y_true - y_pred
     return float(np.maximum(q * diff, (q - 1) * diff).mean())
 
-def _time_folds(n: int, horizon: int, folds: int, min_train: int) -> List[Tuple[int, int]]:
+def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
+                eval_start_idx: Optional[int] = None) -> List[Tuple[int, int]]:
     """
     Expanding-window time-series cross-validation.
 
@@ -52,23 +55,39 @@ def _time_folds(n: int, horizon: int, folds: int, min_train: int) -> List[Tuple[
     Training always starts at index 0, so later folds always have at least
     as much training data as earlier ones (expanding window).  Test blocks
     are non-overlapping and placed from the end of the series backward.
+
+    Window selection (one of two modes):
+      * eval_start_idx given  -> tile test blocks backward until the block
+        would start before eval_start_idx.  This pins the evaluation to a
+        fixed window (the shared benchmark window used by all families),
+        so results are comparable across families and across runs.  The
+        `folds` count is ignored in this mode.
+      * eval_start_idx None   -> legacy behaviour: `folds` blocks from the
+        end of the series (folds=None means all possible blocks).
     """
-    indices = []
+    indices: List[Tuple[int, int]] = []
     last_test_end = n
-    for _ in range(folds, 0, -1):
+    remaining = None if eval_start_idx is not None else folds  # None => no count limit
+    min_train_rows = max(min_train * 252, horizon, 30)
+    while True:
+        if remaining is not None and remaining <= 0:
+            break
         test_end = last_test_end
         test_start = test_end - horizon
         if test_start < 0:
             break
+        if eval_start_idx is not None and test_start < eval_start_idx:
+            break
         train_end = test_start          # train = [0 : train_end)
-        # min_train is in years; convert to approximate rows (252 biz days/yr).
+        # min_train is in years; converted to approximate rows (252 biz days/yr).
         # Also enforce at least max(horizon, 30) so very short horizons don't
         # create trivially small training sets.
-        min_train_rows = max(min_train * 252, horizon, 30)
         if train_end <= min_train_rows:
             break
         indices.append((train_end, test_end))
         last_test_end = test_start
+        if remaining is not None:
+            remaining -= 1
     indices.reverse()   # earliest fold first
     return indices
 
@@ -200,6 +219,31 @@ def _fit_residual_rf_quantiles(X_tr, y_tr, X_te, quantiles: Tuple[float, ...]) -
         preds[q] = rf.predict(X_te) + shift
     return preds
 
+def quantile_quality_gate(skill_pct: float, coverage: Optional[float],
+                          min_skill: float = 5.0,
+                          coverage_band: Tuple[float, float] = (0.70, 0.90),
+                          ) -> Tuple[bool, List[str]]:
+    """Quality gate for a quantile model: skill AND calibrated intervals.
+
+    A quantile family exists to produce intervals a treasury can plan
+    around, so miscalibrated coverage fails the gate even when P50 skill
+    is excellent.  The band is the nominal 80% (P10–P90) ± 10pp, roughly
+    a 3-sigma binomial tolerance at ~150 evaluation points.
+    Returns (passed, reasons); reasons is empty when passed.
+    """
+    reasons: List[str] = []
+    if not np.isfinite(skill_pct) or skill_pct < min_skill:
+        reasons.append(f"skill {skill_pct:.2f}% < {min_skill:.1f}% required")
+    if coverage is None or not np.isfinite(coverage):
+        reasons.append("coverage not measurable (P10/P90 missing)")
+    elif not (coverage_band[0] <= coverage <= coverage_band[1]):
+        reasons.append(
+            f"coverage {coverage:.1%} outside "
+            f"[{coverage_band[0]:.0%}, {coverage_band[1]:.0%}] (nominal 80%)"
+        )
+    return (len(reasons) == 0, reasons)
+
+
 # ---------- main pipeline ----------
 
 def run_pipeline(CONFIG: Config) -> None:
@@ -232,8 +276,19 @@ def run_pipeline(CONFIG: Config) -> None:
     if n < CONFIG.horizon + 50:
         print("[runner] WARNING: very short series after feature alignment.")
 
-    # CV folds
-    folds = _time_folds(n, CONFIG.horizon, CONFIG.folds, CONFIG.min_train_years)
+    # CV folds — pinned to the shared benchmark window when eval_start is set.
+    eval_start_idx = None
+    if CONFIG.eval_start:
+        od_ts = pd.to_datetime(pd.Series(od_all.values))
+        eval_start_idx = int(np.searchsorted(od_ts.values, np.datetime64(pd.Timestamp(CONFIG.eval_start))))
+        if eval_start_idx >= len(od_ts):
+            raise ValueError(
+                f"eval_start {CONFIG.eval_start} is beyond the last origin date "
+                f"{od_ts.iloc[-1].date()} — nothing to evaluate."
+            )
+        print(f"[runner] Evaluation window pinned: origins >= {CONFIG.eval_start} "
+              f"({len(od_ts) - eval_start_idx} rows)")
+    folds = _time_folds(n, CONFIG.horizon, CONFIG.folds, CONFIG.min_train_years, eval_start_idx)
     if not folds:
         raise ValueError("Unable to create CV folds — series too short for requested horizon/folds.")
 
@@ -305,6 +360,11 @@ def run_pipeline(CONFIG: Config) -> None:
             })
             for q in CONFIG.quantiles:
                 row[f"yhat_p{int(round(q*100))}"] = q_preds[q]
+            if 0.5 in CONFIG.quantiles:
+                # Alias the median as y_pred so shared diagnostics (e.g. the
+                # daily summary's detect_lagged_copy check) treat it as the
+                # family's point forecast.
+                row["y_pred"] = q_preds[0.5]
             preds_rows.append(row)
 
             # Metrics: pinball per quantile + coverage if both lower/upper present
@@ -370,26 +430,87 @@ def run_pipeline(CONFIG: Config) -> None:
     metrics_long = pd.DataFrame(metrics_rows)
     leaderboard = pd.DataFrame(leaderboard_rows).sort_values(f"pinball_q50" if "pinball_q50" in leaderboard_rows[0] else list(leaderboard_rows[0].keys())[1])
 
-    # ✅ FIX QUANT-3: Integrity checks and persistence baseline
-    _quant_integrity = {"pipeline": "QUANTILE", "target": CONFIG.target, "horizon": CONFIG.horizon}
-    if not predictions_long.empty and "origin_value" in predictions_long.columns and "yhat_p50" in predictions_long.columns:
-        _valid = predictions_long.dropna(subset=["origin_value", "y_true", "yhat_p50"])
-        if len(_valid) > 5:
-            # Shared h-step persistence (one ruler for all families).
-            from forecast_integrity import compute_persistence_baseline
-            mae_persist = compute_persistence_baseline(_valid)["mae_persistence"]
-            mae_p50 = float(np.mean(np.abs(_valid["y_true"].values - _valid["yhat_p50"].values)))
-            skill_pct = ((mae_persist - mae_p50) / mae_persist * 100.0) if mae_persist > 0 else np.nan
-            _quant_integrity.update({
-                "mae_p50": mae_p50, "mae_persistence": mae_persist,
+    # ✅ M-2: per-model integrity, coverage-aware gate, shift diagnostic.
+    # The old block pooled every model's rows into one frame, so the reported
+    # skill was an average across models that belonged to none of them.
+    _quant_integrity = {"pipeline": "QUANTILE", "target": CONFIG.target,
+                        "horizon": CONFIG.horizon, "eval_start": CONFIG.eval_start}
+    needed = {"origin_value", "y_true", "yhat_p50", "model"}
+    if not predictions_long.empty and needed.issubset(predictions_long.columns):
+        from forecast_integrity import (
+            compute_persistence_baseline,
+            shift_diagnostic_horizon_aware,
+        )
+        per_model: Dict[str, Dict] = {}
+        valid_all = predictions_long.dropna(subset=["origin_value", "y_true", "yhat_p50"])
+        for model_name, g in valid_all.groupby("model"):
+            if len(g) <= 5:
+                continue
+            mae_persist = compute_persistence_baseline(g)["mae_persistence"]
+            mae_p50 = float(np.mean(np.abs(g["y_true"].values - g["yhat_p50"].values)))
+            skill_pct = ((mae_persist - mae_p50) / mae_persist * 100.0) if mae_persist > 0 else float("nan")
+            coverage = None
+            if {"yhat_p10", "yhat_p90"}.issubset(g.columns):
+                coverage = float(np.mean((g["y_true"].values >= g["yhat_p10"].values)
+                                         & (g["y_true"].values <= g["yhat_p90"].values)))
+            gate_passed, gate_reasons = quantile_quality_gate(skill_pct, coverage)
+            per_model[str(model_name)] = {
+                "n_predictions": int(len(g)),
+                "mae_p50": mae_p50,
+                "mae_persistence": mae_persist,
                 "skill_pct": skill_pct,
-                "quality_gate_passed": (skill_pct >= 5.0) if np.isfinite(skill_pct) else False,
-                "run_status": "SUCCESS" if (np.isfinite(skill_pct) and skill_pct >= 5.0) else "FAILED_QUALITY",
+                "coverage_p10_p90": coverage,
+                "gate_passed": gate_passed,
+                "gate_reasons": gate_reasons,
+            }
+            cov_s = f"{coverage:.1%}" if coverage is not None else "n/a"
+            print(f"[quantile] {model_name}: n={len(g)}, P50 MAE={mae_p50:,.2f}, "
+                  f"Persistence MAE={mae_persist:,.2f}, Skill={skill_pct:.2f}%, "
+                  f"Coverage(P10–P90)={cov_s}, gate={'PASS' if gate_passed else 'FAIL'}")
+
+        if per_model:
+            # Best model = lowest P50 MAE **among gate-passing models** —
+            # calibrated intervals are the point of this family, so a model
+            # with broken coverage cannot be "best" merely on median MAE.
+            # If no model passes, fall back to lowest MAE (and the gate fails).
+            passing = [m for m in per_model if per_model[m]["gate_passed"]]
+            pool = passing if passing else list(per_model)
+            best_model = min(pool, key=lambda m: per_model[m]["mae_p50"])
+            best = per_model[best_model]
+            # Independent shift diagnostic on the best model's median forecast
+            # (same shared helper the other families use).
+            g_best = valid_all[valid_all["model"] == best_model]
+            shift = shift_diagnostic_horizon_aware(
+                g_best["y_true"].values, g_best["yhat_p50"].values, CONFIG.horizon
+            )
+            _quant_integrity.update({
+                "models": per_model,
+                "best_model": best_model,
+                "mae_p50": best["mae_p50"],
+                "mae_persistence": best["mae_persistence"],
+                "skill_pct": best["skill_pct"],
+                "coverage_p10_p90": best["coverage_p10_p90"],
+                "quality_gate_passed": best["gate_passed"],
+                "quality_gate_reasons": best["gate_reasons"],
+                "run_status": "SUCCESS" if best["gate_passed"] else "FAILED_QUALITY",
+                # Fields the daily summary reads for its pipeline shift line.
+                "best_shift": shift.get("best_shift"),
+                "shift_interpretation": shift.get("interpretation"),
+                "mae_model": shift.get("mae_shift0"),
+                "mae_shift_minus_h": shift.get("mae_shift_minus_h"),
+                "is_persistence_like": shift.get("is_persistence_like"),
+                "is_lag0_issue": shift.get("is_lag0_issue"),
             })
-            print(f"[quantile] Persistence MAE={mae_persist:.2f}, P50 MAE={mae_p50:.2f}, Skill={skill_pct:.2f}%")
 
     _save_csv(predictions_long, out_root, "predictions_long.csv")
     _save_csv(metrics_long, out_root, "metrics_long.csv")
+    # MAE of the median forecast per model, so downstream tools (e.g. the
+    # daily summary's best-model line) can rank quantile models too.
+    if not predictions_long.empty and {"y_true", "yhat_p50"}.issubset(predictions_long.columns):
+        _ae = predictions_long.dropna(subset=["y_true", "yhat_p50"]).copy()
+        _ae["abs_err"] = (_ae["y_true"] - _ae["yhat_p50"]).abs()
+        _mae = _ae.groupby("model")["abs_err"].mean().rename("MAE").reset_index()
+        leaderboard = leaderboard.merge(_mae, on="model", how="left")
     _save_csv(leaderboard, out_root, "leaderboard.csv")
 
     # Save integrity report
