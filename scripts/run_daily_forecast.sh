@@ -147,8 +147,8 @@ python "$SCRIPT_DIR/daily_summary.py" \
 
 if [ "$MODE" = "backtest" ]; then
   echo "[daily] === Building backtest report ==="
-  python "$SCRIPT_DIR/backtest_report.py" --run-dir "$OUT_DIR" >/dev/null
-  echo "[daily] Backtest report: $OUT_DIR/BACKTEST_REPORT.md"
+  python "$SCRIPT_DIR/backtest_report.py" --run-dir "$RUN_DIR" >/dev/null
+  echo "[daily] Backtest report: $RUN_DIR/BACKTEST_REPORT.md"
 fi
 
 echo "[daily] DONE. Summary: $RUN_DIR/SUMMARY.txt"
