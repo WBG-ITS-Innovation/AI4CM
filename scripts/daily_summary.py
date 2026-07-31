@@ -240,6 +240,23 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     if report.get("run_status"):
         info["run_status"] = str(report["run_status"])
 
+    # ✅ Prefer the family's OWN verified best model over the leaderboard's
+    # lowest MAE.  A family that evaluates several models (E_QUANTILE) selects
+    # its best among those that PASS the quality gate, so the lowest-MAE model
+    # may be one it rejected.  Taking the name from the leaderboard while the
+    # skill/coverage numbers come from the integrity report produced a report
+    # that named one model and described another.
+    declared_best = report.get("best_model")
+    if isinstance(declared_best, str) and declared_best.strip():
+        mae = None
+        detail = report.get("models")
+        if isinstance(detail, dict) and declared_best in detail:
+            mae = detail[declared_best].get("mae_p50")
+        if mae is None:
+            mae = report.get("mae_p50") or report.get("mae_model")
+        info["best_model"] = (f"{declared_best} (MAE {_fmt_money(mae)})"
+                              if mae is not None else declared_best)
+
     # ── Flags: pipeline-recorded (verbatim) and this summary's own checks ──
     info["pipe_leak"], info["pipe_leak_flag"] = pipeline_leakage(report)
     info["pipe_shift"], info["pipe_shift_flag"] = pipeline_shift(report)
