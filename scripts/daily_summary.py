@@ -294,6 +294,9 @@ def main() -> int:
     parser.add_argument("--run-date", required=True)
     parser.add_argument("--families", required=True, help="space-separated family names")
     parser.add_argument("--stale-days", type=int, default=3)
+    parser.add_argument("--mode", choices=["production", "backtest"], default="production",
+                        help="production: warn when data is stale. backtest: the data "
+                             "deliberately ends in the past; label the run instead of warning.")
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
@@ -314,7 +317,13 @@ def main() -> int:
     lines.append(f"Run date:   {args.run_date}")
     lines.append(f"Data file:  {data_file.name}")
     lines.append(fresh_line)
-    if is_stale:
+    if args.mode == "backtest":
+        # A backtest is *supposed* to end in the past: models are scored on days
+        # they never saw.  Calling that "stale" would report a working historical
+        # evaluation as a production failure, so label it instead.
+        lines.append("MODE: BACKTEST — historical evaluation on held-out days. "
+                     "Models never saw the evaluation window; errors below are out-of-sample.")
+    elif is_stale:
         lines.append(f"WARNING: data appears STALE (older than {args.stale_days} day(s)) — "
                      f"forecasts may be based on out-of-date inputs.")
     lines.append(f"Target: {args.target} | Cadence: {args.cadence} | Horizon: {args.horizon}")
@@ -363,7 +372,8 @@ def main() -> int:
     lines.append("-" * 40)
     lines.append(f"Overall: {n_ok}/{len(families)} families produced output.")
     lines.append(f"Flags raised: {n_leak} leakage, {n_shift} shift, "
-                 f"{n_quality} quality, data {'STALE' if is_stale else 'fresh'}.")
+                 f"{n_quality} quality, "
+                 f"data {'backtest window' if args.mode == 'backtest' else ('STALE' if is_stale else 'fresh')}.")
 
     report = "\n".join(lines) + "\n"
     (run_dir / "SUMMARY.txt").write_text(report)
@@ -401,7 +411,9 @@ def main() -> int:
             "shift_flags": n_shift,
             "quality_gate_failures": n_quality,
         },
-        "freshness": {"line": fresh_line, "stale": bool(is_stale)},
+        "mode": args.mode,
+        "freshness": {"line": fresh_line, "stale": bool(is_stale),
+                      "backtest": args.mode == "backtest"},
     }
     (run_dir / "SUMMARY.json").write_text(json.dumps(payload, indent=2))
 
