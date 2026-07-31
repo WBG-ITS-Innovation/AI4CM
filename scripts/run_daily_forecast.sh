@@ -21,6 +21,10 @@
 #   TG_DATA_PATH    input CSV               (newest master_daily_clean_*.csv)
 #   STAT_MODEL      A_STAT model to run     (ETS)
 #   STALE_DAYS      freshness threshold     (3)
+#   MODE            production | backtest   (production)
+#                   backtest: the data deliberately ends in the past, so the
+#                   summary labels the run instead of warning that it is stale,
+#                   and a cross-family BACKTEST_REPORT.md is generated.
 
 set -euo pipefail
 
@@ -46,6 +50,7 @@ TG_HORIZON="${TG_HORIZON:-5}"
 TG_DATE_COL="${TG_DATE_COL:-date}"
 STAT_MODEL="${STAT_MODEL:-ETS}"
 STALE_DAYS="${STALE_DAYS:-3}"
+MODE="${MODE:-production}"
 RUN_DATE="$(date +%F)"
 
 # ── Choose the latest data file (newest by modification time) unless given ──
@@ -137,6 +142,13 @@ python "$SCRIPT_DIR/daily_summary.py" \
   --horizon "$TG_HORIZON" \
   --run-date "$RUN_DATE" \
   --families "$FAMILIES" \
-  --stale-days "$STALE_DAYS"
+  --stale-days "$STALE_DAYS" \
+  --mode "$MODE"
+
+if [ "$MODE" = "backtest" ]; then
+  echo "[daily] === Building backtest report ==="
+  python "$SCRIPT_DIR/backtest_report.py" --run-dir "$OUT_DIR" >/dev/null
+  echo "[daily] Backtest report: $OUT_DIR/BACKTEST_REPORT.md"
+fi
 
 echo "[daily] DONE. Summary: $RUN_DIR/SUMMARY.txt"
