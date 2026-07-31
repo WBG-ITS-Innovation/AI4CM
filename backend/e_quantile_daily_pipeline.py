@@ -197,26 +197,52 @@ def _fit_gb_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
 
 def _fit_residual_rf_quantiles(X_tr, y_tr, X_te, quantiles: Tuple[float, ...]) -> Dict[float, np.ndarray]:
     """
-    Generic 'residual quantile' wrapper:
-    1) Fit a point model (GBR squared_error),
-    2) Estimate residual quantiles on train via CV-like split (simple and fast),
-    3) Shift the point prediction by residual quantiles.
-    This is distribution-free and avoids extra deps; acts as a baseline.
+    Distribution-free 'residual quantile' intervals around a RandomForest.
+
+    1) Fit a RandomForest point model.
+    2) Estimate residual quantiles from **out-of-bag** predictions.
+    3) Shift the point prediction by those residual quantiles.
+
+    ✅ M-3: the residuals must be out-of-bag.  An unpruned forest nearly
+    memorises its training rows, so *in-sample* residuals are far smaller
+    than real forecast errors and the resulting intervals collapse (measured:
+    26.5% coverage where P10–P90 should cover ~80%).  With OOB predictions
+    each training row is scored only by the trees that did not see it, so the
+    residuals reflect genuine generalisation error.
+
+    Falls back to in-sample residuals only if OOB predictions are unavailable
+    (very small training sets can leave rows with no out-of-bag votes); in
+    that case intervals are known to be optimistic, which the caller's
+    coverage gate will catch.
     """
     from sklearn.ensemble import RandomForestRegressor
 
-    # point model
+    # point model (oob_score=True makes sklearn store oob_prediction_)
     rf = RandomForestRegressor(
-        n_estimators=400, random_state=42, n_jobs=-1, max_depth=None
+        n_estimators=400, random_state=42, n_jobs=-1, max_depth=None,
+        bootstrap=True, oob_score=True,
     )
     rf.fit(X_tr, y_tr)
-    yhat_tr = rf.predict(X_tr)
-    resid = y_tr - yhat_tr
 
+    y_tr_arr = np.asarray(y_tr, dtype=float)
+    resid = None
+    oob_pred = getattr(rf, "oob_prediction_", None)
+    if oob_pred is not None:
+        oob_pred = np.asarray(oob_pred, dtype=float)
+        ok = np.isfinite(oob_pred)          # rows that received OOB votes
+        if ok.sum() >= max(10, int(0.5 * len(y_tr_arr))):
+            resid = y_tr_arr[ok] - oob_pred[ok]
+    if resid is None or resid.size == 0:
+        # Fallback: in-sample residuals (optimistic — flagged by the gate).
+        resid = y_tr_arr - rf.predict(X_tr)
+
+    point = rf.predict(X_te)
     preds = {}
     for q in quantiles:
-        shift = np.quantile(resid, q)
-        preds[q] = rf.predict(X_te) + shift
+        preds[q] = point + float(np.quantile(resid, q))
+    # Guarantee monotone quantiles even if the residual quantiles are noisy.
+    for lo, hi in zip(sorted(quantiles), sorted(quantiles)[1:]):
+        preds[hi] = np.maximum(preds[hi], preds[lo])
     return preds
 
 def quantile_quality_gate(skill_pct: float, coverage: Optional[float],
