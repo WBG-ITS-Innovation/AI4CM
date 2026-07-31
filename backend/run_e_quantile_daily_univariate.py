@@ -18,6 +18,7 @@ def main():
         date_col=_getenv("TG_DATE_COL", "date"),
         folds=json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("folds", 3),  # None = use ALL folds (thorough mode)
         min_train_years=int(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("min_train_years", 4)),
+        eval_start=json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("eval_start", None),
         model_filter=_getenv("TG_MODEL_FILTER", "").strip() or None,
         quantiles=tuple(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("quantiles", [0.1,0.5,0.9])),
         lags_daily=tuple(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("lags_daily", [1,5,20])),

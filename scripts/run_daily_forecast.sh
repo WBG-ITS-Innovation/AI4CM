@@ -97,7 +97,10 @@ run_family() {
       ;;
     E_QUANTILE)
       runner="run_e_quantile_daily_univariate.py"
-      overrides='{"folds":2,"min_train_years":1}'
+      # Evaluate on the shared benchmark window (same as A_STAT/B_ML), not a
+      # hand-picked 2 folds at the series end: skill/coverage need ~150 points
+      # to mean anything.
+      overrides='{"eval_start":"2025-01-01","min_train_years":4}'
       ;;
     C_DL)
       runner="run_c_dl_quick_univariate.py"
