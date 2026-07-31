@@ -706,9 +706,37 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
             sel = st.multiselect("Models to visualize", models, default=models[:1])
 
             fig = go.Figure()
+
+            # ── Training history: the actual series BEFORE the first forecast
+            # origin.  Predictions only exist for test folds, so without this
+            # the chart starts abruptly at the test window and gives no sense
+            # of how much history the model learned from.  Drawn faintly so the
+            # evaluation window stays the focus.
+            _first_pred = pred["date"].min()
+            try:
+                _hist = df[[date_col, target]].dropna().copy()
+                _hist[date_col] = pd.to_datetime(_hist[date_col], errors="coerce")
+                _hist = _hist.dropna(subset=[date_col]).sort_values(date_col)
+                _hist = _hist[_hist[date_col] < _first_pred]
+                if not _hist.empty:
+                    fig.add_scatter(
+                        x=_hist[date_col], y=_hist[target],
+                        name="Actual (training history)", mode="lines",
+                        line=dict(color="rgba(120,120,120,0.45)", width=1),
+                    )
+                    fig.add_vline(
+                        x=_first_pred, line_dash="dash",
+                        line_color="rgba(200,60,60,0.7)",
+                        annotation_text="evaluation starts",
+                        annotation_position="top left",
+                    )
+            except Exception:
+                # History is a nice-to-have; never let it break the overlay.
+                pass
+
             fig.add_scatter(
                 x=pred["date"], y=pred["y_true"],
-                name="Actual", mode="lines",
+                name="Actual (evaluation window)", mode="lines",
                 line=dict(color="black"),
             )
             for m in sel:
