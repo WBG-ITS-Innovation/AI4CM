@@ -33,6 +33,19 @@ import matplotlib.pyplot as plt
 
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, HistGradientBoostingRegressor
+
+# ✅ M-4 thresholds.
+# MIN_SAMPLES_PER_LEAF: a tree leaf holding fewer rows than this can encode
+# individual observations, which is memorisation rather than learning.
+MIN_SAMPLES_PER_LEAF = 5
+# OVERFIT_WARN_RATIO: val/train MAE ratio that merits a warning.
+OVERFIT_WARN_RATIO = 1.5
+# OVERFIT_GATE_RATIO: ratio at which a model is excluded from being crowned
+# "best".  Deliberately looser than the warning threshold — we warn early but
+# only disqualify on strong evidence (validation error 3x training error means
+# the fit describes the training window, not the process).  Revisit in Phase 4
+# on the DEV window.
+OVERFIT_GATE_RATIO = 3.0
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -271,21 +284,74 @@ def available_models() -> Dict[str, object]:
         "ElasticNet": Pipeline([("imp", SimpleImputer(strategy="median")),
                                 ("sc", StandardScaler(with_mean=True, with_std=True)),
                                 ("est", ElasticNet(random_state=0))]),
-        "RandomForest": RandomForestRegressor(n_estimators=400, random_state=0, n_jobs=-1),
-        "ExtraTrees": ExtraTreesRegressor(n_estimators=400, random_state=0, n_jobs=-1),
-        "HistGBDT": HistGradientBoostingRegressor(random_state=0),
+        # ✅ M-4: capacity floors so a model cannot memorise its training rows.
+        # These are principled defaults, not tuned values: with ~2,000 daily
+        # training rows and ~14 features, a tree leaf holding a single
+        # observation is memorisation by construction (ExtraTrees reached
+        # train_MAE=0.00 exactly this way).  Requiring >= 5 samples per leaf
+        # forces every prediction to be an average over several days.
+        # Tuning proper belongs in Phase 4, on the DEV window, with rolling
+        # origins — never searched against the locked 2025 holdout.
+        "RandomForest": RandomForestRegressor(
+            n_estimators=400, random_state=0, n_jobs=-1,
+            min_samples_leaf=MIN_SAMPLES_PER_LEAF,
+        ),
+        "ExtraTrees": ExtraTreesRegressor(
+            n_estimators=400, random_state=0, n_jobs=-1,
+            min_samples_leaf=MIN_SAMPLES_PER_LEAF,
+        ),
+        "HistGBDT": HistGradientBoostingRegressor(
+            random_state=0, min_samples_leaf=20, l2_regularization=1.0,
+        ),
     }
     if HAVE_XGB:
         models["XGBoost"] = XGBRegressor(
-            n_estimators=600, learning_rate=0.05, max_depth=6, subsample=0.8, colsample_bytree=0.8,
+            n_estimators=600, learning_rate=0.05, max_depth=4, subsample=0.8, colsample_bytree=0.8,
+            min_child_weight=5.0, reg_lambda=1.0,
             random_state=0, tree_method="hist", n_jobs=-1
         )
     if HAVE_LGBM:
         models["LightGBM"] = LGBMRegressor(
-            n_estimators=800, learning_rate=0.05, num_leaves=64, subsample=0.8, colsample_bytree=0.8,
-            random_state=0, n_jobs=-1
+            n_estimators=800, learning_rate=0.05, num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+            min_child_samples=20, reg_lambda=1.0,
+            random_state=0, n_jobs=-1, verbose=-1
         )
     return models
+
+
+def select_best_model(leaderboard: pd.DataFrame,
+                      overfit_ratios: Optional[Dict[str, float]] = None,
+                      gate_ratio: float = OVERFIT_GATE_RATIO,
+                      ) -> Tuple[Optional[str], List[str]]:
+    """Pick the family's best model, refusing to crown one that overfits.
+
+    ✅ M-4.  The leaderboard is ordered by test MAE, but test MAE alone will
+    happily crown a model that memorised its training window and got lucky.
+    A model whose validation error is more than ``gate_ratio`` times its
+    training error is describing the training window, not the process, so it
+    is excluded.  If every model is excluded we still name one (the report has
+    to say something) and the caller surfaces the exclusions.
+
+    Returns (best_model_name, excluded_model_names).
+    """
+    if leaderboard is None or len(leaderboard) == 0:
+        return (None, [])
+    ratios = overfit_ratios or {}
+    trained = leaderboard[
+        ~leaderboard["model"].astype(str).str.contains("baseline", case=False, na=False)
+    ]
+    if len(trained) == 0:
+        return (str(leaderboard.iloc[0]["model"]), [])
+
+    excluded = sorted(
+        str(m) for m in trained["model"]
+        if float(ratios.get(str(m), 0.0)) > gate_ratio
+    )
+    eligible = trained[
+        trained["model"].map(lambda m: not (float(ratios.get(str(m), 0.0)) > gate_ratio))
+    ]
+    pool = eligible if len(eligible) > 0 else trained
+    return (str(pool.iloc[0]["model"]), excluded)
 
 
 # =========================
@@ -539,6 +605,8 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         raise ValueError(f"No ML model selected (filter={cfg.model_filter}).")
 
     predictions_all = []
+    # ✅ M-4: worst val/train MAE ratio observed per model, across folds.
+    overfit_ratios: Dict[str, float] = {}
 
     # Pre-build multivariate frame if needed (other columns at 'B' freq)
     df_multi = None
@@ -662,9 +730,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 print(f"[pipeline] {model_name} fold {fold_idx}: "
                       f"train_MAE={train_mae_fold:.2f}, val_MAE={val_mae_fold:.2f}, "
                       f"ratio={ratio:.2f}, conformal_r={conformal_radius:.2f}")
-                if not np.isnan(ratio) and ratio > 1.5:
+                if not np.isnan(ratio) and ratio > OVERFIT_WARN_RATIO:
                     print(f"[WARN] Generalization gap for {model_name}: "
                           f"val/train ratio={ratio:.2f} — possible overfitting")
+                # ✅ M-4: keep the worst ratio seen per model so the leaderboard
+                # can refuse to crown a model that only fits its training window.
+                if not np.isnan(ratio):
+                    prev = overfit_ratios.get(model_name)
+                    overfit_ratios[model_name] = ratio if prev is None else max(prev, ratio)
+                if train_mae_fold == 0.0:
+                    # Zero training error is exact memorisation, not a good fit.
+                    overfit_ratios[model_name] = float("inf")
 
             # PHASE 5: Predict at each test origin (lightweight per-point loop)
             preds, ytrues, target_dates, origin_dates, origin_values = [], [], [], [], []
@@ -835,10 +911,14 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         
         # Compute integrity report — pick best *trained* model (skip baseline row)
         if glb is not None and len(glb) > 0:
-            _trained_for_integrity = glb[~glb["model"].str.contains("baseline", case=False, na=False)]
-            best_model = (_trained_for_integrity.iloc[0]["model"]
-                          if len(_trained_for_integrity) > 0
-                          else glb.iloc[0]["model"])
+            best_model, _excluded = select_best_model(glb, overfit_ratios)
+            if _excluded:
+                print(f"[M-4] Excluded from best-model selection (val/train ratio > "
+                      f"{OVERFIT_GATE_RATIO}): "
+                      + ", ".join(
+                          f"{m} ({overfit_ratios[m]:.2f})" if np.isfinite(overfit_ratios.get(m, np.nan))
+                          else f"{m} (memorised: train MAE 0)"
+                          for m in _excluded))
         else:
             # Fallback: use first model found in predictions
             models_in_preds = pred_long["model"].unique()
@@ -905,6 +985,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     "skill_pct": skill_pct,
                     "run_status": "SUCCESS",
                 }
+                # ✅ M-4: publish the generalisation evidence so the summary and
+                # the backtest report can show it rather than burying it in logs.
+                integrity_report["overfit_ratios"] = {
+                    m: (None if not np.isfinite(r) else float(r))
+                    for m, r in overfit_ratios.items()
+                }
+                integrity_report["overfit_gate_ratio"] = OVERFIT_GATE_RATIO
+                integrity_report["overfit_excluded_models"] = sorted(
+                    m for m, r in overfit_ratios.items() if r > OVERFIT_GATE_RATIO
+                )
+                integrity_report["best_model"] = best_model
                 
                 # Also compute legacy integrity report for backward compatibility
                 legacy_report = compute_integrity_report(pred_long, s, cfg.horizon, best_model, cfg.cadence, date_index=s.index)
