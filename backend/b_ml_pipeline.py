@@ -831,7 +831,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
     
     # ✅ Forecast integrity checks with HARD GATE - run ALWAYS when predictions exist
     try:
-        from preprocessing.integrity import compute_integrity_report, leakage_sentinel
+        from preprocessing.integrity import compute_integrity_report, signal_sentinel
         
         # Compute integrity report — pick best *trained* model (skip baseline row)
         if glb is not None and len(glb) > 0:
@@ -947,20 +947,41 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     ]
                     
                     if len(test_df) > 5 and len(f_train_sample) > 10:
-                        # Build test features (simplified - would need actual origin dates)
-                        # For leakage test, we'll use a subset
-                        X_train_leak = f_train_sample.iloc[:min(500, len(f_train_sample))].fillna(0.0)
-                        y_train_leak = y_train_sample.iloc[:min(500, len(y_train_sample))]
-                        X_test_leak = f_train_sample.iloc[-min(100, len(test_df)):].fillna(0.0)
-                        y_test_leak = y_train_sample.iloc[-min(100, len(test_df)):]
-                        
+                        # ✅ M-5: evaluate the sentinel on a HELD-OUT tail.
+                        # Previously X_train_leak took the first 500 rows and
+                        # X_test_leak the last 100 rows of the SAME training
+                        # frame, so the sentinel scored itself on rows adjacent
+                        # to (or inside) its own training window and the ratio
+                        # was not a held-out measurement at all.
+                        # Split by position with a horizon-sized gap so no
+                        # training row's target overlaps the evaluation slice.
+                        n_rows = len(f_train_sample)
+                        n_eval = int(min(100, max(5, n_rows // 5)))
+                        gap = max(int(cfg.horizon), 1)
+                        train_stop = n_rows - n_eval - gap
+                        if train_stop >= 10:
+                            X_train_leak = f_train_sample.iloc[:train_stop].fillna(0.0)
+                            y_train_leak = y_train_sample.iloc[:train_stop]
+                            X_test_leak = f_train_sample.iloc[train_stop + gap:].fillna(0.0)
+                            y_test_leak = y_train_sample.iloc[train_stop + gap:]
+                        else:
+                            X_train_leak = f_train_sample.iloc[:0]
+                            y_train_leak = y_train_sample.iloc[:0]
+                            X_test_leak = f_train_sample.iloc[:0]
+                            y_test_leak = y_train_sample.iloc[:0]
+
                         if len(X_train_leak) > 10 and len(X_test_leak) > 5:
-                            leakage_check = leakage_sentinel(
+                            leakage_check = signal_sentinel(
                                 X_train_leak, y_train_leak, X_test_leak, y_test_leak, cfg.horizon
                             )
                             integrity_report["mae_shuffled_target"] = leakage_check["mae_shuffled_target"]
-                            integrity_report["leakage_warning"] = leakage_check["leakage_warning"]
                             integrity_report["shuffled_to_normal_ratio"] = leakage_check.get("shuffled_to_normal_ratio", np.nan)
+                            # Signal presence — this check's actual meaning.
+                            integrity_report["signal_detected"] = leakage_check.get("signal_detected")
+                            integrity_report["signal_verdict"] = leakage_check.get("signal_verdict")
+                            # This check cannot evidence leakage; leave the
+                            # leakage verdict to the checks that can.
+                            integrity_report["leakage_warning"] = False
         else:
             # No model found - create minimal report
             integrity_report = {
