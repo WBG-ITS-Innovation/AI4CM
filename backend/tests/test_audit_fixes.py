@@ -154,16 +154,24 @@ class TestPersistenceBaseline:
         idx = pd.bdate_range("2024-01-01", periods=n)
         return pd.Series(100.0 + np.arange(n) * 0.5, index=idx)
 
-    def test_compute_baselines_step_based(self):
+    def test_persistence_is_step_based_not_calendar_based(self):
         """Persistence at target t should equal series[pos(t) - h]."""
-        from preprocessing.integrity import compute_baselines
+        # Migrated in item 1c: the duplicate integrity module was retired (D7).
+        from forecast_integrity import compute_persistence_baseline
 
         s = self._make_series(100)
         h = 6
         target_dates = s.index[h:]  # targets start at position h
 
-        baselines = compute_baselines(s, target_dates, h)
-        persistence = baselines["persistence"]
+        frame = pd.DataFrame([{"target_date": s.index[pos],
+                               "origin_value": float(s.iloc[pos - h]),
+                               "y_true": float(s.iloc[pos])}
+                              for pos in range(h, len(s))])
+        persistence = list(frame["origin_value"])
+        target_dates = list(frame["target_date"])
+        assert np.isclose(
+            compute_persistence_baseline(frame)["mae_persistence"],
+            float(np.mean(np.abs(frame["y_true"] - frame["origin_value"]))), atol=1e-9)
 
         # For step-based: persistence[i] should equal s.iloc[pos(target_dates[i]) - h]
         for i, td in enumerate(target_dates):
@@ -173,12 +181,13 @@ class TestPersistenceBaseline:
             if np.isfinite(actual):
                 assert np.isclose(actual, expected, atol=1e-6), (
                     f"Persistence at {td.date()}: expected {expected}, got {actual}. "
-                    "compute_baselines may still use calendar-day offsets."
+                    "persistence must use index steps, not calendar-day offsets."
                 )
 
     def test_persistence_baseline_matches_origin_value(self):
         """When origin_value is available, baseline should match it."""
-        from preprocessing.integrity import compute_persistence_baseline_from_origin
+        # Migrated in item 1c: the duplicate integrity module was retired (D7).
+        from forecast_integrity import compute_persistence_baseline
 
         n = 50
         df = pd.DataFrame({
@@ -187,7 +196,7 @@ class TestPersistenceBaseline:
             "y_pred": 100.0 + np.arange(n) * 0.5 + np.random.randn(n) * 0.2,
         })
 
-        result = compute_persistence_baseline_from_origin(df)
+        result = compute_persistence_baseline(df)
         assert result["n_valid"] == n
         assert result["mae_persistence"] > 0
         # MAE should be close to std of random noise (0.1)
@@ -195,14 +204,18 @@ class TestPersistenceBaseline:
 
     def test_baselines_no_weekend_dates(self):
         """Step-based baseline should never try to look up weekend dates."""
-        from preprocessing.integrity import compute_baselines
+        # Migrated in item 1c: the duplicate integrity module was retired (D7).
+        from forecast_integrity import compute_persistence_baseline
 
         s = self._make_series(50)
         h = 3
         # All dates in s are business days; baselines should work
-        baselines = compute_baselines(s, s.index[h:], h)
-        # No NaNs expected (all positions are valid)
-        nan_count = sum(1 for v in baselines["persistence"] if np.isnan(v))
+        frame = pd.DataFrame([{"target_date": s.index[pos],
+                               "origin_value": float(s.iloc[pos - h]),
+                               "y_true": float(s.iloc[pos])}
+                              for pos in range(h, len(s))])
+        assert compute_persistence_baseline(frame)["n_valid"] == len(frame)
+        nan_count = sum(1 for v in frame["origin_value"] if np.isnan(v))
         assert nan_count == 0, (
             f"Found {nan_count} NaN persistence values. "
             "Step-based indexing should find all origins."
@@ -329,22 +342,29 @@ class TestShiftDiagnostics:
 
     def test_correctly_aligned_shift_is_zero(self):
         """For well-aligned predictions, best_shift should be 0."""
-        from preprocessing.integrity import shift_sanity_check
+        # Migrated in item 1c: the duplicate integrity module was retired (D7).
+        # shift_diagnostic_horizon_aware returns an `interpretation` string and
+        # is_lag0_issue / is_persistence_like instead of a bare lag_warning bool.
+        from forecast_integrity import shift_diagnostic_horizon_aware
 
         np.random.seed(42)
         n = 200
         y_true = 100 + np.arange(n) * 0.5 + np.random.randn(n) * 0.1
         y_pred = y_true + np.random.randn(n) * 0.3  # Small noise
 
-        result = shift_sanity_check(y_true, y_pred, horizon=6)
+        result = shift_diagnostic_horizon_aware(y_true, y_pred, horizon=6)
         assert result["best_shift"] == 0, (
             f"Expected best_shift=0 for aligned data, got {result['best_shift']}"
         )
-        assert result["lag_warning"] is False
+        assert result["interpretation"].startswith("OK"), result["interpretation"]
+        assert result["is_lag0_issue"] is False
 
     def test_persistence_like_detected(self):
         """Persistence-like predictions should have best_shift near -h."""
-        from preprocessing.integrity import shift_sanity_check
+        # Migrated in item 1c: the duplicate integrity module was retired (D7).
+        # shift_diagnostic_horizon_aware returns an `interpretation` string and
+        # is_lag0_issue / is_persistence_like instead of a bare lag_warning bool.
+        from forecast_integrity import shift_diagnostic_horizon_aware
 
         np.random.seed(42)
         n = 200
@@ -355,7 +375,7 @@ class TestShiftDiagnostics:
         y_pred[:h] = y_true[:h]
         y_pred[h:] = y_true[:-h]
 
-        result = shift_sanity_check(y_true, y_pred, horizon=h)
+        result = shift_diagnostic_horizon_aware(y_true, y_pred, horizon=h)
         # Best shift should be negative (close to -h)
         assert result["best_shift"] <= -h + 2, (
             f"Expected best_shift near -{h}, got {result['best_shift']}"
