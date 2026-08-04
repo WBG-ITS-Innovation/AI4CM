@@ -42,9 +42,6 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from forecast_integrity import compute_persistence_baseline  # noqa: E402
-from preprocessing.integrity import (  # noqa: E402
-    compute_persistence_baseline_from_origin,
-)
 
 HORIZON = 5
 
@@ -67,29 +64,57 @@ def _shared_value(preds: pd.DataFrame, model: str | None) -> float:
     return compute_persistence_baseline(valid)["mae_persistence"]
 
 
-# ── the two implementations must not drift apart ──────────────────────────
+# ── there must be exactly ONE implementation ───────────────────────────────
+#
+# This file used to assert that the two copies of the persistence baseline returned
+# the same number. Item 1c retired the duplicate, so the property to guard is no
+# longer "they agree" but "there is only one". The tests below fail if a second
+# implementation reappears -- which is how the original defect arose.
 
-def test_both_persistence_implementations_return_the_same_number():
-    """Two copies exist; lock them together so duplication cannot bite silently."""
-    rng = np.random.default_rng(7)
-    frame = pd.DataFrame({
-        "y_true": rng.normal(7e7, 1e7, 500),
-        "origin_value": rng.normal(7e7, 1e7, 500),
-    })
-    a = compute_persistence_baseline(frame)["mae_persistence"]
-    b = compute_persistence_baseline_from_origin(frame)["mae_persistence"]
-    assert a == b, f"the two persistence implementations disagree: {a} vs {b}"
+def test_the_duplicate_persistence_implementation_is_gone():
+    """`preprocessing.integrity` must not resurrect its own copy."""
+    import preprocessing.integrity as legacy
+
+    for name in ("compute_persistence_baseline_from_origin",
+                 "compute_baselines",
+                 "compute_baseline_maes",
+                 "shift_sanity_check",
+                 "compute_integrity_report"):
+        assert not hasattr(legacy, name), (
+            f"preprocessing.integrity.{name} is back. It was retired in item 1c "
+            f"because its output overwrote the shared module's via "
+            f"integrity_report.update(legacy_report); use forecast_integrity instead."
+        )
 
 
-def test_both_implementations_agree_when_rows_are_missing():
-    """NaN handling must match too — that is where copies usually diverge."""
-    frame = pd.DataFrame({
-        "y_true": [1.0, 2.0, np.nan, 4.0, 5.0],
-        "origin_value": [1.5, np.nan, 3.0, 4.5, 5.5],
-    })
-    a = compute_persistence_baseline(frame)["mae_persistence"]
-    b = compute_persistence_baseline_from_origin(frame)["mae_persistence"]
-    assert a == b, f"NaN handling differs between implementations: {a} vs {b}"
+def test_the_deprecated_module_still_re_exports_the_sentinel():
+    """Retiring the duplicates must not break the sentinel's existing importers."""
+    import preprocessing.integrity as legacy
+    import forecast_integrity as shared
+
+    for name in ("signal_sentinel", "leakage_sentinel", "MIN_SIGNAL_RATIO"):
+        assert hasattr(legacy, name), f"{name} vanished from the deprecated shim"
+        assert getattr(legacy, name) is getattr(shared, name), (
+            f"{name} is a COPY in the shim rather than a re-export -- that is a "
+            f"second implementation by another route"
+        )
+
+
+def test_b_ml_no_longer_merges_a_legacy_report_over_the_shared_one():
+    """The specific line that made the duplicate authoritative.
+
+    `integrity_report.update(legacy_report)` overwrote mae_persistence, skill_pct,
+    best_shift and the alignment fields with the duplicate's values, and the two
+    disagreed on is_lag0_issue -- so the published report could assert both
+    is_lag0_issue and is_persistence_like simultaneously (review §1.2, §1.4).
+    """
+    src = (BACKEND_DIR / "b_ml_pipeline.py").read_text()
+    offending = [ln.strip() for ln in src.splitlines()
+                 if "update(legacy_report)" in ln and not ln.strip().startswith("#")]
+    assert not offending, f"the legacy merge is back: {offending}"
+    assert "compute_integrity_report" not in src.replace(
+        "# These used to come from preprocessing.integrity.compute_integrity_report,", ""
+    ), "b_ml_pipeline calls the retired compute_integrity_report again"
 
 
 # ── B_ML: the artifact must carry the shared value ────────────────────────

@@ -41,7 +41,7 @@ import pytest
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
-import preprocessing.integrity as integrity_mod  # noqa: E402
+import forecast_integrity as integrity_mod  # noqa: E402
 from b_ml_pipeline import ConfigBML, run_pipeline_ml  # noqa: E402
 
 HORIZON = 5
@@ -71,6 +71,9 @@ def _run_capturing_sentinel(tmp_path: Path, history: tuple) -> list[dict]:
     csv = tmp_path / f"{label}.csv"
     _flow_csv(csv, first, last)
 
+    # Patch on forecast_integrity: item 1c moved signal_sentinel there and
+    # b_ml_pipeline imports it from that module, so patching the deprecated
+    # preprocessing.integrity shim would no longer intercept the call.
     calls: list[dict] = []
     real = integrity_mod.signal_sentinel
 
