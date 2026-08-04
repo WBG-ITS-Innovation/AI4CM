@@ -48,17 +48,17 @@ Recorded here so the reasoning is not lost, and so a reviewer can see what was c
 
 ## Step 1 — Data: make cleaning causal and regeneration reproducible
 
-- [ ] Make imputation causal: weekday reference fitted on rows **strictly before** the imputed row
+- [x] Make imputation causal: weekday reference fitted on rows **strictly before** the imputed row
       (currently `dow_values.tail(weekday_weeks).median()` takes the *last* N occurrences in the whole
       series — 2025 values used to fill a 2016 gap)
-- [ ] Make clipping causal: median/MAD thresholds fitted on rows **strictly before** each row
+- [x] Make clipping causal: median/MAD thresholds fitted on rows **strictly before** each row
       (currently whole-series per-weekday statistics, including the 2025 holdout)
-- [ ] Distinguish absent rows from true zeros at ingestion; keep NaN as NaN through to the modelling
+- [x] Distinguish absent rows from true zeros at ingestion; keep NaN as NaN through to the modelling
       layer rather than `fillna(0.0)` erasing the distinction
-- [ ] Abort on unexpected missing business days, with Georgian holidays treated as expected
+- [x] Abort on unexpected missing business days, with Georgian holidays treated as expected
       (measured: 117 of 118 business-day NaNs are holidays; the single exception is **2018-11-28**,
       which needs an explicit allow-list entry or the historical regeneration cannot run)
-- [ ] Regenerate `master_daily_clean_treasury.csv` with current code
+- [x] Regenerate `master_daily_clean_treasury.csv` with current code
 - [ ] Select the input by **explicit name + recorded SHA-256**, never mtime
       (`run_daily_forecast.sh:60` currently uses `ls -t | head -1`)
 - [ ] Re-run the §4 backtest; paste the new-vs-old tier table
