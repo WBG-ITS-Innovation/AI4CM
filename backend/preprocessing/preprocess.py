@@ -568,10 +568,64 @@ def apply_variant_clean_conservative(
     return df_out, summary
 
 
-# Minimum number of prior same-weekday observations before outlier clipping may
-# fire.  A median/MAD pair estimated from two or three points is not a threshold,
-# it is noise, and clipping against it would corrupt early history.
+# Retained for report compatibility; no longer used to clip.  See
+# _clean_flow_column_causally for why MAD clipping was removed outright.
 MIN_CLIP_HISTORY = 8
+
+# A flow value is *reported* as suspect when it exceeds this multiple of the
+# largest value observed before it in the same column.  Chosen to catch
+# order-of-magnitude data-entry errors (a stray extra digit is 10x) while leaving
+# genuine month-end spikes -- measured at roughly 2-3x a quiet day -- untouched.
+# Nothing is altered on the strength of this: a value being surprising is not
+# evidence that it is wrong, and the whole point of removing the clipper was to
+# stop silently rewriting the spikes we are trying to forecast.
+SUSPECT_JUMP_MULTIPLE = 10.0
+
+
+def flow_validity_report(
+    series: pd.Series,
+    is_business: pd.Series,
+    suspect_multiple: float = SUSPECT_JUMP_MULTIPLE,
+) -> Dict:
+    """Report -- never alter -- flow values that look physically implausible.
+
+    Two checks, both causal:
+
+      * negative values, which no gross-flow line should take;
+      * values exceeding ``suspect_multiple`` times the maximum observed *earlier*
+        in the same column, which is the shape an extra digit makes.
+
+    Returns counts and the offending dates so an operator can look, and so the
+    validator in Step 5 has something concrete to gate on.
+    """
+    vals = series.to_numpy(dtype=float)
+    idx = series.index
+    business = np.asarray(is_business, dtype=bool)
+
+    negatives, jumps = [], []
+    running_max = 0.0
+    for pos in np.flatnonzero(business):
+        v = vals[pos]
+        if np.isnan(v):
+            continue
+        if v < 0:
+            negatives.append(str(idx[pos].date()))
+        if running_max > 0 and v > suspect_multiple * running_max:
+            jumps.append({
+                "date": str(idx[pos].date()),
+                "value": float(v),
+                "prior_max": float(running_max),
+                "ratio": float(v / running_max),
+            })
+        running_max = max(running_max, abs(v))
+
+    return {
+        "n_negative": len(negatives),
+        "negative_dates": negatives[:20],
+        "n_suspect_jumps": len(jumps),
+        "suspect_jumps": jumps[:20],
+        "suspect_jump_multiple": suspect_multiple,
+    }
 
 
 def _clean_flow_column_causally(
@@ -600,16 +654,33 @@ def _clean_flow_column_causally(
     strictly before *t*:
 
       * imputation reference -- median of the last ``weekday_weeks`` observed
-        values before *t*;
-      * clipping threshold -- expanding median / MAD over all observed values
-        before *t*, applied only once ``min_clip_history`` of them exist.
+        values before *t*.
 
-    Imputed values never enter either statistic.  Letting them would compound: one
-    fabricated value would shift the reference used to fabricate the next.  For the
-    same reason imputed values are not themselves clipped -- they are already a
-    median and cannot be outliers.
+    Imputed values never enter that statistic.  Letting them would compound: one
+    fabricated value would shift the reference used to fabricate the next.
 
-    Returns ``(series, n_imputed, n_clipped, imputed_dates)``.
+    Why there is no outlier clipping any more
+    ----------------------------------------
+    The old code clipped at 8*MAD of the per-weekday distribution, computed over
+    the WHOLE series.  Making that threshold causal was tried and abandoned on
+    measurement: any causally-estimated pool is a *sample* of same-weekday values
+    that frequently excludes the month-end and tax-deadline spikes, so MAD comes
+    out small, 8*MAD is tight, and the spikes get clipped.  Measured on the real
+    workbook, causal clipping suppressed the annual mean of Revenues by 41% in
+    2024 (98,123,411 -> 58,213,784) and touched 216 of 2,763 business days.
+
+    The old version survived only *because* it was leaky: including the spikes in
+    the pool inflated MAD into a generous threshold, which is why it clipped just
+    105 values.  In other words MAD clipping was never appropriate for this
+    series, and the leak was masking that.
+
+    Those spikes are the signal -- fixed monthly dates are exactly what the
+    day-of-month features exist to predict -- so they are left alone.  Validity
+    problems are *reported* by ``flow_validity_report`` rather than silently
+    altered, because a value being surprising is not evidence it is wrong.
+
+    Returns ``(series, n_imputed, n_clipped, imputed_dates)``; ``n_clipped`` is
+    retained as 0 so the report shape is unchanged for existing consumers.
     """
     values = series.to_numpy(dtype=float, copy=True)
     idx = series.index
@@ -626,7 +697,6 @@ def _clean_flow_column_causally(
             continue
 
         recent_observed: list = []   # last `weekday_weeks` observed, for imputation
-        all_observed: list = []      # every observed value so far, for clipping
 
         for pos in positions:
             v = values[pos]
@@ -642,24 +712,13 @@ def _clean_flow_column_causally(
                 # in apply_variant_raw means this is a holiday or allow-listed.
                 continue
 
-            # -- clip an observed value against strictly prior observed values --
-            if len(all_observed) >= min_clip_history:
-                prior = np.asarray(all_observed, dtype=float)
-                med = float(np.median(prior))
-                mad = float(np.median(np.abs(prior - med)))
-                spread = mad if (mad > 0 and np.isfinite(mad)) else float(np.std(prior))
-                if spread > 0 and np.isfinite(spread):
-                    lo, hi = med - 8.0 * spread, med + 8.0 * spread
-                    clipped_v = min(max(v, lo), hi)
-                    if clipped_v != v:
-                        values[pos] = clipped_v
-                        n_clipped += 1
-
-            # The statistic pool tracks what was OBSERVED, not what we wrote.
+            # Observed values are kept as reported -- see the docstring on why
+            # outlier clipping was removed rather than made causal.
+            #
+            # The pool tracks what was OBSERVED, not what we wrote.
             recent_observed.append(v)
             if len(recent_observed) > weekday_weeks:
                 recent_observed.pop(0)
-            all_observed.append(v)
 
     return (
         pd.Series(values, index=idx, name=series.name),
@@ -704,6 +763,7 @@ def apply_variant_clean_treasury(
     imputation_counts = {}
     clipping_counts = {}
     imputed_dates: Dict[str, list] = {}
+    validity: Dict[str, Dict] = {}
 
     for col in flow_cols:
         if col not in df_out.columns:
@@ -720,17 +780,24 @@ def apply_variant_clean_treasury(
         if imp_dates:
             imputed_dates[col] = imp_dates
 
+        # Reported, not applied.  Values stay exactly as the source gave them.
+        rep = flow_validity_report(series, is_business)
+        if rep["n_negative"] or rep["n_suspect_jumps"]:
+            validity[col] = rep
+
     summary = {
         "variant": "clean_treasury",
         "level_columns": level_cols,
         "flow_columns": flow_cols,
         "business_days_zero_flows": business_days_zero_flows,
         "weekday_weeks": weekday_weeks,
-        "min_clip_history": MIN_CLIP_HISTORY,
         "causal_cleaning": True,
+        "flow_outlier_clipping": "disabled",
         "imputations": imputation_counts,
-        "clipped_outliers": clipping_counts,
+        "clipped_outliers": clipping_counts,   # all zero; kept for report shape
         "imputed_dates": imputed_dates,
+        "validity_warnings": validity,
+        "n_columns_with_validity_warnings": len(validity),
         "coverage": base_summary.get("coverage"),
         "n_imputed_total": int(sum(imputation_counts.values())),
         "n_clipped_total": int(sum(clipping_counts.values())),
