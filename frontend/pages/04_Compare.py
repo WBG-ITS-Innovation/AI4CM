@@ -18,9 +18,11 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
+from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Compare · Treasury Forecast", page_icon="⚖️", layout="wide")
 inject_global_css()
 inject_design_system()
+render_app_header("Compare runs", "Put several runs side by side on the same target and horizon")
 st.markdown(
     page_header("📊 Compare Runs",
                 "Select 2-6 runs to compare forecasts, metrics, and find the best model"),
@@ -337,6 +339,7 @@ with tab_intervals:
         fig_cov.add_hline(y=0.90, line_dash="dash", line_color="red",
                           annotation_text="Target 90%")
         fig_cov.update_yaxes(range=[0, 1.05])
+        plotly_chrome(fig_cov)
         st.plotly_chart(fig_cov, use_container_width=True, config={"displaylogo": False})
 
         # Width chart
@@ -345,6 +348,7 @@ with tab_intervals:
             barmode="group", title="Average PI Width by Run (narrower = more precise)",
             height=380,
         )
+        plotly_chrome(fig_w)
         st.plotly_chart(fig_w, use_container_width=True, config={"displaylogo": False})
     else:
         st.info(

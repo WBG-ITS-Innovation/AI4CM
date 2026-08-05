@@ -25,10 +25,13 @@ sys.path.insert(0, str(REPOROOT / "backend"))
 from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
+from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Forecast · Treasury Forecast", page_icon="🔭", layout="wide")
 inject_global_css()
 
 inject_design_system()
+
+render_app_header("Forward forecast", "The next working days — dates beyond the end of the data")
 GEN_CMD = "./backend/.venv/bin/python backend/run_forward_forecast.py"
 
 
