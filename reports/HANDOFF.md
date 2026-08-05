@@ -3,9 +3,9 @@
 **Single self-contained document for resuming work.** Everything needed is inlined; no other file is
 required. Share this one file.
 
-**Generated:** 2026-08-04, updated 2026-08-05 · **Branch:** `model/excellence` @ `98a1da4`
+**Generated:** 2026-08-04, updated 2026-08-05 · **Branch:** `model/excellence` @ `e7b3159`
 **`origin/main`** @ `4a925ac` (**Phase 1 merged via PR #23**)
-**Suite:** 246 passing · **TEST (2025) reads: 0**
+**Suite:** 272 passing · **TEST (2025) reads: 0**
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
 ---
@@ -33,11 +33,16 @@ should continue to:
 |---|---|
 | Audit (`docs/reviews/2026-08-04_review.md`) | Complete. Findings valid; **all its metrics superseded** by the Phase-1 data fix |
 | Phase 1 — data trust | **Merged to `origin/main`** via PR #23. Step 1 done; Steps 2–7 open |
-| Phase 2 — modelling | In progress on `model/excellence`. Ground rule 1 done; item 1: 1a/1c/1d done, 1b/1e/1f open; workstreams 1–7 not started |
+| Phase 2 — modelling | In progress on `model/excellence`. Ground rule 1 done; **item 1 is 5/6** (1a–1e done, **1f open**); workstreams 1–7 not started |
 
 ### Commits on `model/excellence` (6 ahead of `main`)
 
 ```
+e7b3159  docs: yardstick-completion session record (items 1b, 1e, DATA_SEMANTICS)
+94db732  docs: DATA_SEMANTICS.md -- negatives characterization + Treasury questions
+db06426  feat: input by name + SHA-256; provenance in all four families (1e)
+b7bccd7  fix: pin C_DL to TEST_START so it reports on the shared window (1b)
+7c89e5d  docs: update HANDOFF with phase-4 commits and PR #23 merge
 98a1da4  docs: integrity-consolidation session record (items 1c, 1d, PR #23)
 904a520  fix: alias mae_seasonal_naive so it stops impersonating persistence (1d, A2)
 154efbe  refactor: retire the duplicate integrity module; one implementation (1c, D7)
@@ -102,15 +107,15 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Item 1 of the Phase-2 plan, sub-task 1b.** 1c and 1d are done. Remaining, in order:
+**Item 1f — the backtest re-run and one-ruler verification.** 1a–1e are all done, so every prerequisite is in place. Remaining, in order:
 
 | # | Task | Notes |
 |---|---|---|
 | ~~1c~~ | ~~Retire the duplicate integrity module (D7)~~ | **DONE** `154efbe`. 649 -> 59 lines; `.update(legacy_report)` gone; 10 tests migrated not deleted; mutation-validated |
 | ~~1d~~ | ~~Alias `mae_seasonal_naive` (A2)~~ | **DONE** `904a520`. 16/16 Dashboard fields; `NaN` + `seasonal_naive_degenerate` at season == horizon |
-| **1b** | Pin C_DL to `TEST_START` | Needs an `eval_start` concept added to `c_dl_pipeline`. C_DL is parked (Q6), but the pin is needed for the one-ruler check |
-| 1e | Input selection by explicit name + recorded SHA-256 | `run_daily_forecast.sh:60` still uses `ls -t \| head -1` |
-| 1f | Backtest re-run + one-ruler verification + new-vs-old tier table | The verification for item 1. Needs 1b–1e first |
+| ~~1b~~ | ~~Pin C_DL to `TEST_START`~~ | **DONE** `b7bccd7`. 7 folds -> 1, test block 2025-01-01..2025-08-06 |
+| ~~1e~~ | ~~Input by explicit name + recorded SHA-256~~ | **DONE** `db06426`. `ls -t` gone; one shared provenance module for all four families; pinning fails closed |
+| **1f** | Backtest re-run + one-ruler verification + new-vs-old tier table | Item 1's verification. 3 targets x 4 families; Expenditure's first honest numbers; per-target skill / sentinel ratio / per-tercile coverage |
 
 **Then:** item 2 (ground rule 2 — `experiments/log.csv`), item 3 (workstream 1 — L1 objectives), items
 4–7 (workstreams 2–7).
@@ -156,7 +161,7 @@ unpinned and B_ML's published baseline still comes from the duplicate implementa
 
 | # | Question | Blocks |
 |---|---|---|
-| **OQ1** | **Treasury confirmation on negative flow values** (Revenues min −443,977,588; validity report flags 39 of 41 columns). Question sent; Q1 is the interim position | Nothing immediately, but confirms or overturns workstream 4's transform set |
+| **OQ1** | **Treasury confirmation on negative flow values.** Characterized in `docs/DATA_SEMANTICS.md`: 72 business days, driven by `Increase in liabilities`/`Domestic` netting (corr 0.971/0.969). **Question T1 sent; answer OUTSTANDING.** Proceeding under Q1's interim policy: legitimate signed flows | Confirms or overturns workstream 4's transform set (raw / asinh / ratio-to-trailing-level; log1p inapplicable) |
 | **OQ2** | Should `main` / `model/excellence` be **pushed**? Nothing has been pushed; all merges are local | Sharing with the team |
 | **OQ3** | Treasury sign-off on `docs/FISCAL_CALENDAR_SOURCES.md` once drafted | Whether workstream 3's features are UNVERIFIED or confirmed |
 | **OQ4** | Agent-team sign-off on contract Phase-2 CSV-content changes | Phase-1 Step 5 second commit |
@@ -176,7 +181,7 @@ All identified and evidenced in the audit. **None fixed unless marked.** Grouped
 | ~~E_QUANTILE has no stock path~~ — **fixed** `15fb6ee` |
 | ~~`integrity_report.update(legacy_report)` lets a duplicate overwrite the shared one~~ — **fixed** `154efbe` |
 | ~~`mae_seasonal_naive` identical to `mae_persistence` at h=5~~ — **fixed** `904a520` |
-| C_DL unpinned: folds 2019–2025, reported +10.84% while being −5.19% on the 2025 window |
+| ~~C_DL unpinned: reported +10.84% while being −5.19% on the 2025 window~~ — **fixed** `b7bccd7` |
 
 ### The four known-unfixed bugs (Phase-1 Step 3)
 
@@ -218,12 +223,12 @@ All identified and evidenced in the audit. **None fixed unless marked.** Grouped
 | No run-log capture at all (`run_daily_forecast.sh` has no `tee`) |
 | `rm -rf "$RUN_DIR"` runs **before** any family, so a failed re-run destroys the last good run |
 | No `flock`; concurrent triggers corrupt the same directory |
-| Input selected by **mtime**, not name + hash |
+| ~~Input selected by **mtime**, not name + hash~~ — **fixed** `db06426` |
 | `RUN_DATE` timezone unpinned |
 | No minimum-evaluation-points enforcement (A_STAT published a verdict off 10 points) |
 | `data_preflight.py` not wired into the batch path |
 | Exit code 0 when every family is withheld |
-| Provenance for 1 of 4 families; no git SHA, package versions or seeds recorded |
+| ~~Provenance for 1 of 4 families; no git SHA, versions or seeds~~ — **fixed** `db06426` |
 
 ### Contract (Step 5) and cleanup (Step 7)
 
