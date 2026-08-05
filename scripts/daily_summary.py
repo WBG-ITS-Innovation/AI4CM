@@ -103,8 +103,13 @@ def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> 
         status = str(report.get("run_status", "")).strip().upper()
         if status == "FAILED_QUALITY":
             reasons.append("run_status=FAILED_QUALITY")
-        elif report.get("quality_gate_passed") is False:
-            reasons.append("quality_gate_passed=false")
+        else:
+            # X9: read through the single canonical reader. This function previously checked
+            # only `quality_gate_passed`, so a B_ML run -- which wrote the INVERTED
+            # `quality_gate_failed` -- was reported as PASSING its gate when it had failed.
+            from forecast_integrity import read_gate
+            if read_gate(report) is False:
+                reasons.append("quality gate failed (per the family's integrity report)")
     if leakage_flag:
         reasons.append("leakage flag raised")
     if report.get("signal_detected") is False:
@@ -252,6 +257,19 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     # ── Skill vs persistence + run status, from the integrity report ──
     report = _read_json(_find_integrity_report(family_dir))
     info["integrity_found"] = bool(report)
+
+    # X11: a persistence baseline computed over zero prediction rows is not a baseline. It
+    # previously appeared in the leaderboard as an ordinary row, indistinguishable from one
+    # measured on real predictions, so a reader could not tell "computed on nothing" from
+    # "computed and equal to zero".
+    _n_pred = int(len(preds)) if preds is not None else 0
+    info["n_prediction_rows"] = _n_pred
+    _has_baseline = bool(report) and report.get("mae_persistence") is not None
+    info["baseline_without_predictions"] = bool(_has_baseline and _n_pred == 0)
+    if info["baseline_without_predictions"]:
+        info["gate_reasons"] = list(info.get("gate_reasons", [])) + [
+            "persistence baseline reported with zero prediction rows"
+        ]
     if _is_number(report.get("skill_pct")):
         info["skill_pct"] = f"{float(report['skill_pct']):.2f}%"
     if report.get("run_status"):
@@ -284,12 +302,24 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     info["gate_reasons"] = gate_reasons(
         report, family_leakage_flag(info), family_shift_flag(info)
     )
+    # X10: ONE PUBLISHER, and this is not it. The family's integrity_report.json publishes the
+    # verdict; SUMMARY.json derives from it and from the summary-side flags. Both computing it
+    # independently is what let SUMMARY.json contradict integrity_report.json on the
+    # 2026-08-04 C_DL run. The derivation is recorded alongside the value so a reader can see
+    # which source produced it.
+    from forecast_integrity import read_gate
+    _published = read_gate(report) if info["integrity_found"] else None
     if info["gate_reasons"]:
         info["gate_passed"] = False
-    elif info["integrity_found"]:
-        info["gate_passed"] = True
-    else:
+        info["gate_source"] = "derived: summary-side flags raised"
+    elif _published is None:
         info["gate_passed"] = None  # never verified — must not look like a pass
+        info["gate_source"] = ("never verified: no integrity report, or it records no gate "
+                               "verdict")
+    else:
+        info["gate_passed"] = _published
+        info["gate_source"] = "published by the family's integrity_report.json"
+    info["gate_published"] = _published
 
     return info
 
@@ -416,6 +446,10 @@ def main() -> int:
 
     # Machine-readable twin of the text report, for downstream tooling.
     payload = {
+        # run_id: SUMMARY.json previously carried no identifier of its own run, so a consumer
+        # holding the file could not say which run produced it or join it to anything.
+        "run_id": run_dir.name,
+        "schema_version": 2,
         "run_date": args.run_date,
         "target": args.target,
         "cadence": args.cadence,
@@ -432,6 +466,14 @@ def main() -> int:
                 "integrity_verified": s["integrity_found"],
                 "gate_passed": s["gate_passed"],
                 "gate_reasons": s["gate_reasons"],
+                # X10: which source produced the verdict above, and what the family itself
+                # published, so the two can never silently disagree again.
+                "gate_source": s.get("gate_source"),
+                "gate_published_by_family": s.get("gate_published"),
+                # X11: a persistence baseline without prediction rows is not a result. Recorded
+                # so a consumer can tell "baseline computed on nothing" from "baseline 0".
+                "n_prediction_rows": s.get("n_prediction_rows"),
+                "baseline_without_predictions": s.get("baseline_without_predictions"),
                 "leakage_flag": family_leakage_flag(s),
                 "shift_flag": family_shift_flag(s),
             }
