@@ -63,6 +63,16 @@ try:
 except Exception:
     HAVE_LGBM = False
 
+# CatBoost is optional and NOT currently installed in the project venv, so the two
+# CatBoost entries below do not register. The code is here so adding the dependency is a
+# one-line change rather than a code change -- but nothing has been measured with it, and
+# no result anywhere in this repository involves CatBoost.
+try:
+    from catboost import CatBoostRegressor  # type: ignore
+    HAVE_CATBOOST = True
+except Exception:
+    HAVE_CATBOOST = False
+
 
 # =========================
 # Config
@@ -409,6 +419,20 @@ def available_models() -> Dict[str, object]:
         )
         models["LightGBM"] = LGBMRegressor(**_lgbm)
         models["LightGBM_L1"] = LGBMRegressor(objective="l1", **_lgbm)
+    if HAVE_CATBOOST:
+        # Same discipline as the other L1 variants: hyperparameters are principled
+        # defaults, and the L1 entry differs from nothing else because there is no
+        # squared-error CatBoost twin to compare against yet. UNABLATED -- these have
+        # not been run on any fold, so they must not be promoted or quoted until they
+        # have been through the same TRAIN-folds-then-one-DEV-confirmation protocol as
+        # workstream 1.
+        _cb = dict(iterations=800, learning_rate=0.05, depth=6, l2_leaf_reg=3.0,
+                   random_seed=0, verbose=False, allow_writing_files=False)
+        models["CatBoost_L1"] = CatBoostRegressor(loss_function="MAE", **_cb)
+        # Quantile loss at alpha=0.5 is absolute error, so this is the interval-capable
+        # sibling rather than a different model class.
+        models["CatBoost_Quantile"] = CatBoostRegressor(
+            loss_function="Quantile:alpha=0.5", **_cb)
     return models
 
 
