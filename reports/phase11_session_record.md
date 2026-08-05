@@ -148,11 +148,65 @@ repaired — so the crossing-safe port is behaving, on this target at least.
 > re-running the probe only — the search itself does not need repeating. The trustworthy
 > sentinel readings remain the WS3/WS5 ones: Revenues 1.2255, Expenditure 1.0882.
 
-### Remaining targets: in flight, results not yet incorporated
+### Expenditure COMPLETE — also lost on DEV
+
+**100/100 trials, 0 failed, 754s.** Best model `LGBMQuantile`.
+
+| | TRAIN objective | DEV MAE |
+|---|---:|---:|
+| Untuned incumbent (raw) | 35,069,403 | **51,602,951** |
+| Tuned (100 trials) | **34,803,976** | 51,692,664 |
+| Change | +0.76% | **−0.17%** |
+
+Same shape as Revenues: a sub-1% TRAIN gain that does not survive to DEV. **Tuning lost on
+both flow targets.** Neither tuned configuration is promoted.
+
+Interval coverage was **57.2%** against a nominal 80% — much worse than Revenues' 83.2% and a
+reminder that the interval defect is target-specific. 0 crossings repaired.
+
+> ### ⚠️ SECOND HARNESS DEFECT: the WS2 skill percentages use a NON-CANONICAL ruler
+>
+> Measured from the logged runs:
+>
+> | Target | WS2 harness ruler | Canonical DEV ruler | Difference |
+> |---|---:|---:|---:|
+> | Revenues | 90,800,654 | 88,317,355 | **+2.8%** |
+> | Expenditure | 76,722,514 | 73,117,667 | **+4.9%** |
+>
+> So **every `skill_vs_ruler` figure from the WS2 runs is incomparable** with the WS3/WS4/WS5
+> figures, and the apparent "32.62% vs 29.42%" improvement on Expenditure is an artefact of a
+> different denominator, not a gain. This breaks the one-ruler discipline the project rests on.
+>
+> Cause: the driver builds target dates as `origin + BDay(h)` — calendar business days, which
+> ignore Georgian public holidays and so can land off the series — and filters rows by
+> `X.notna()`, giving a different `(y_true, origin_value)` set from the pipeline's. Both change
+> which pairs enter the baseline.
+>
+> **The MAE comparisons above are unaffected** — MAE does not depend on the ruler — so the
+> "tuning lost on both flow targets" conclusion stands. Only the skill percentages must be
+> discarded and recomputed through `compute_persistence_baseline` on the pipeline's own row set.
+
+### Sentinel validity, target by target
+
+The `sentinel=1.0000` artefact does **not** affect every target. The probe is valid exactly
+when the training and test targets share units:
+
+| Target | Transform / modelling | Sentinel | Valid? |
+|---|---|---:|---|
+| Revenues | `ratio` (transformed train vs original-scale truth) | 1.0000 | **No — units mismatch** |
+| Expenditure | `raw`, flow (same units both sides) | **1.0710** | **Yes** |
+| State budget balance | `raw` but delta-modelled vs level truth | pending | **Expect no — delta vs level** |
+
+**So for Expenditure the question is answered with a valid measurement: the sentinel did not
+move.** 1.0710 tuned against 1.0882 untuned — unchanged within noise, and still far below the
+1.50 threshold. That is the fifth consecutive lever to improve nothing about signal on the
+flows. For Revenues and the stock target it remains unmeasured pending the units fix.
+
+### Remaining target: in flight, results not yet incorporated
 
 The Optuna study is running in the background: 100 trials per target across
 `{LGBMQuantile, CatBoostQuantile}` on TRAIN-internal folds, then one DEV confirmation each.
-Expenditure and the stock target had not completed when this record closed.
+The stock target had not completed when this record closed.
 
 **Nothing from the search has been reported, promoted, or written into the registry.** No
 `reports/ws2_tuning.md` exists, because writing one now would mean either waiting past the
@@ -196,7 +250,7 @@ grepping for the import, `full_study` and the main guard rather than trusting th
 
 | # | Task | Notes |
 |---|---|---|
-| **1** | **Finish the WS2 search and report it** | **Resume point.** Driver committed; results land in `experiments/log.csv`. **Revenues is done and LOST on DEV (−3.13%) — do not promote it.** Two targets remain. **Fix the sentinel harness bug first** (§4) or the "did the sentinel move" question stays unanswerable |
+| **1** | **Finish the WS2 search and report it** | **Resume point.** Driver committed; results land in `experiments/log.csv`. **Revenues (−3.13%) and Expenditure (−0.17%) are done and BOTH LOST on DEV — do not promote either.** Stock remains. **Two harness defects must be fixed before any WS2 skill figure is quoted:** the non-canonical ruler and the sentinel units mismatch (§4) |
 | 2 | WS6 ensembling; WS7 selection + conformal intervals | WS7 now owns **four** null-distribution / diagnostic studies: tree probe, model agreement, the ratio-transform "fluctuations scale with level" hypothesis, and CQR |
 | 3 | Send **T2** — forward auction/redemption calendar is the top ask | Ready |
 | 4 | Ops P0, artifact validator, Phase-1 cleanup (untrack `.venv`/`.env` **without printing contents**) | Deferred since Phase 1 |
