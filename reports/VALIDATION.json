@@ -1,0 +1,23 @@
+{
+  "status": "NOT_RUN",
+  "reason": "No artifact validator exists. Phase-1 Step 5 (declarative validator + CLI) has not been built; `git ls-files '*.py' | xargs grep -l validate_artifact` returns nothing.",
+  "blocked_on": [
+    "backend/artifact_contract.py (declarative spec + validate_run)",
+    "scripts/validate_artifacts.py (CLI, writes VALIDATION.json, non-zero on ERROR)",
+    "a backtest run on the regenerated data for the validator to validate"
+  ],
+  "contract_defects_the_validator_must_catch": {
+    "source": "docs/reviews/2026-08-04_review.md section 6.4",
+    "count": 12,
+    "examples": [
+      "C1: data_file key absent from SUMMARY.json (present in SUMMARY.txt only)",
+      "C2: per-family notes absent from SUMMARY.json, so ok=false carries no machine-readable reason",
+      "C5: A_STAT leaderboard has NaN target/horizon on model rows, so a join drops every real model",
+      "C6: rank means three different things across families; E_QUANTILE has no rank column",
+      "C9: C_DL's empty-run stub omits target_date, origin_date and origin_value"
+    ]
+  },
+  "test_window_reads": 0,
+  "generated": "2026-08-04",
+  "generated_by": "stub, written deliberately rather than omitted so the gap is legible"
+}

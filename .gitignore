@@ -23,3 +23,6 @@ backend/forecast_runs/
 # OS cruft
 .DS_Store
 Thumbs.db
+# Phase 2 experiments: the append-only log is tracked, transient artifacts are not
+experiments/test_access.log
+experiments/runs/

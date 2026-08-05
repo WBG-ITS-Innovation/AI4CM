@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 # Import the DL pipeline (must be in the same folder)
 import c_dl_pipeline as pipe
 from c_dl_pipeline import ConfigDL
+from evaluation_windows import TEST_START as _TEST_START
 
 def _log(msg: str) -> None:
     print(time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg, flush=True)
@@ -78,6 +79,10 @@ def main() -> None:
         eom_boost_weight=float(ov.get("eom_boost_weight", 3.0)),
         target_transform=str(ov.get("target_transform", "auto")),
         min_train_years=int(ov.get("min_train_years", 4)),
+        # Item 1b: report on the shared window by default, so C_DL is graded
+        # against the same persistence number as the other families. Override
+        # with TG_PARAM_OVERRIDES {"eval_start": null} to fold over all years.
+        eval_start=ov.get("eval_start", _TEST_START),
         device=str(ov.get("device", "auto")),
         quick_mode=bool(ov.get("quick_mode", False)),
         thorough_mode=bool(ov.get("thorough_mode", False)),
@@ -101,6 +106,11 @@ def main() -> None:
     # Run and catch any exceptions so rc != 0 bubbles to the bridge
     try:
         _log(f"[runner] START pipeline for target='{target}' cadence={cadence.capitalize()} horizon={horizon} (univariate)")
+        from provenance import record_run, verify_expected_sha
+        verify_expected_sha(cfg.data_path)
+        record_run(out_root, "C_DL", cfg.data_path,
+                   config={k: v for k, v in vars(cfg).items() if k != "data_path"},
+                   date_col=cfg.date_col, seed=cfg.random_seed)
         pipe.run_pipeline(config=cfg, run_univariate=True, run_multivariate=False)
         _log(f"[OK] Master outputs in: {Path(out_root).resolve()}")
         _log("[runner] DONE")

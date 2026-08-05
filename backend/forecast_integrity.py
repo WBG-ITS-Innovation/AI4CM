@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import Ridge
 
 
 def validate_alignment_step_based(
@@ -297,6 +298,93 @@ def compute_persistence_baseline(
     }
 
 
+#: Season length for the seasonal-naive reference, in index steps.
+#: 5 business days = one week on this index.
+SEASONAL_NAIVE_SEASON_STEPS = 5
+
+
+def compute_seasonal_naive_baseline(
+    predictions_df: pd.DataFrame,
+    horizon: int,
+    season_steps: int = SEASONAL_NAIVE_SEASON_STEPS,
+) -> Dict:
+    """Seasonal-naive reference: y_hat(t) = y(t - season_steps).
+
+    ✅ A2.  This replaces the ``mae_seasonal_naive`` that the retired
+    ``preprocessing.integrity.compute_baselines`` produced, and fixes what was wrong
+    with it: ``season_steps`` was hardcoded to 5 while the production horizon is also
+    5, so the "seasonal naive" baseline returned **exactly the persistence baseline**
+    and was displayed beside it as if it were independent corroboration.  Verified on
+    the real artifact: ``mae_seasonal_naive == mae_persistence`` to the cent at h=5,
+    and not at h=3 or h=7 (review §1.2).
+
+    Rather than silently drop the field the Dashboard reads, the degeneracy is made
+    explicit.  When ``season_steps == horizon`` the two references coincide, so the
+    value is returned as NaN with ``seasonal_naive_degenerate=True``: a reader sees
+    "not available, and here is why" instead of a duplicate wearing another name.
+
+    Requires ``target_date`` and ``y_true``; the season origin is taken positionally
+    from the sorted target dates, so it is step-based rather than calendar-based.
+    """
+    out = {
+        "mae_seasonal_naive": np.nan,
+        "seasonal_naive_season_steps": int(season_steps),
+        "seasonal_naive_degenerate": bool(int(season_steps) == int(horizon)),
+    }
+    if out["seasonal_naive_degenerate"]:
+        out["seasonal_naive_note"] = (
+            f"season_steps ({season_steps}) equals the horizon ({horizon}), so a "
+            f"seasonal-naive reference is identical to h-step persistence. Reported "
+            f"as NaN rather than duplicating mae_persistence under another name."
+        )
+        return out
+
+    if not {"target_date", "y_true"}.issubset(predictions_df.columns):
+        out["seasonal_naive_note"] = "target_date or y_true missing"
+        return out
+
+    df = predictions_df.dropna(subset=["y_true"]).copy()
+    df["target_date"] = pd.to_datetime(df["target_date"])
+    df = df.sort_values("target_date").drop_duplicates(subset=["target_date"])
+    y = df["y_true"].to_numpy(dtype=float)
+    if len(y) <= season_steps:
+        out["seasonal_naive_note"] = (
+            f"only {len(y)} target dates; need more than season_steps={season_steps}"
+        )
+        return out
+
+    out["mae_seasonal_naive"] = float(np.mean(np.abs(y[season_steps:] - y[:-season_steps])))
+    out["n_seasonal_naive"] = int(len(y) - season_steps)
+    return out
+
+
+def compute_point_metrics(y_true, y_pred) -> Dict[str, float]:
+    """MAE / RMSE / R2 for one point forecast, from one place.
+
+    Added when the duplicate integrity module was retired.  ``compute_integrity_report``
+    used to compute these inline and its results then overwrote the shared ones via
+    ``integrity_report.update(legacy_report)``, so the numbers a consumer read came
+    from the duplicate rather than the shared implementation (review §1.2).  Callers
+    now build the same fields from this helper, so there is one definition.
+
+    R2 is NaN when the target has no variance, rather than dividing by zero.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    ok = np.isfinite(y_true) & np.isfinite(y_pred)
+    if ok.sum() == 0:
+        return {"mae": np.nan, "rmse": np.nan, "r2": np.nan, "n": 0}
+    yt, yp = y_true[ok], y_pred[ok]
+    ss_tot = float(np.sum((yt - yt.mean()) ** 2))
+    ss_res = float(np.sum((yt - yp) ** 2))
+    return {
+        "mae": float(np.mean(np.abs(yt - yp))),
+        "rmse": float(np.sqrt(np.mean((yt - yp) ** 2))),
+        "r2": float(1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan,
+        "n": int(ok.sum()),
+    }
+
+
 def compute_skill_score(
     mae_model: float,
     mae_baseline: float,
@@ -319,6 +407,138 @@ def compute_skill_score(
     skill = ((mae_baseline - mae_model) / mae_baseline) * 100.0
     return float(skill)
 
+
+# ---------------------------------------------------------------------------
+# Shuffled-target signal control (moved here from preprocessing/integrity.py)
+# ---------------------------------------------------------------------------
+# Lives beside the other diagnostics so there is ONE integrity module. The old
+# location remains as a deprecated re-export; see preprocessing/integrity.py.
+
+MIN_SIGNAL_RATIO = 1.5   # shuffled MAE must be at least this multiple of real MAE
+
+
+def signal_sentinel(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    horizon: int,
+) -> Dict:
+    """Shuffled-target control: does this feature set carry real signal?
+
+    Fit a light model (Ridge) twice on the same features — once on the true
+    targets, once on shuffled targets — and compare held-out error.  If the
+    features genuinely predict the target, destroying the pairing should make
+    performance clearly worse, so mae_shuffled / mae_normal should be well
+    above 1.
+
+    ✅ M-5 — what this check does and does NOT mean.
+    The previous version reported a low ratio as ``leakage_warning=true``.
+    That reading is backwards.  Leakage means the model can see the future,
+    which makes its *real*-target error implausibly SMALL, and therefore makes
+    this ratio LARGE.  A low ratio means the opposite: shuffling the targets
+    barely hurt, i.e. the features were never carrying much signal about the
+    target.  A ratio below 1 means the shuffled model actually did better —
+    strong evidence of no usable signal at all.
+
+    So this function answers "is there signal?" and deliberately does not
+    claim to detect leakage.  Leakage is covered by the other checks:
+    origin_date >= target_date, near-perfect feature/target correlation
+    (check_feature_leakage), alignment validation, and the shift diagnostics.
+
+    Features are standardised before fitting.  Without scaling, Ridge on raw
+    treasury magnitudes is ill-conditioned (observed rcond ~1e-18), which made
+    both error figures — and hence the ratio — unreliable.
+
+    Returns a dict with mae_normal, mae_shuffled_target,
+    shuffled_to_normal_ratio, signal_detected, signal_verdict.
+    """
+    insufficient = {
+        "mae_normal": np.nan,
+        "mae_shuffled_target": np.nan,
+        "shuffled_to_normal_ratio": np.nan,
+        "signal_detected": None,
+        "signal_verdict": "not measurable (insufficient data)",
+        # Kept for backward compatibility only; this check cannot detect
+        # leakage, so it never asserts leakage.  See docstring.
+        "leakage_warning": False,
+        "note": "Insufficient data for signal test",
+    }
+    if len(X_train) < 10 or len(X_test) < 5:
+        return insufficient
+
+    Xtr = X_train.to_numpy(dtype=float, copy=True)
+    Xte = X_test.to_numpy(dtype=float, copy=True)
+    Xtr = np.nan_to_num(Xtr, nan=0.0, posinf=0.0, neginf=0.0)
+    Xte = np.nan_to_num(Xte, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Standardise using TRAIN statistics only (test must not inform scaling).
+    mu = Xtr.mean(axis=0)
+    sigma = Xtr.std(axis=0)
+    sigma[sigma == 0] = 1.0
+    Xtr = (Xtr - mu) / sigma
+    Xte = (Xte - mu) / sigma
+
+    y_tr = np.asarray(y_train, dtype=float)
+    y_te = np.asarray(y_test, dtype=float)
+
+    model_normal = Ridge(alpha=1.0)
+    model_normal.fit(Xtr, y_tr)
+    mae_normal = float(np.mean(np.abs(y_te - model_normal.predict(Xte))))
+
+    rng = np.random.default_rng(42)
+    y_tr_shuffled = y_tr.copy()
+    rng.shuffle(y_tr_shuffled)
+
+    model_shuffled = Ridge(alpha=1.0)
+    model_shuffled.fit(Xtr, y_tr_shuffled)
+    mae_shuffled = float(np.mean(np.abs(y_te - model_shuffled.predict(Xte))))
+
+    if not np.isfinite(mae_normal) or mae_normal <= 0:
+        out = dict(insufficient)
+        out["mae_normal"] = mae_normal
+        out["mae_shuffled_target"] = mae_shuffled
+        out["signal_verdict"] = "not measurable (degenerate real-target error)"
+        return out
+
+    ratio = mae_shuffled / mae_normal
+    signal_detected = bool(ratio >= MIN_SIGNAL_RATIO)
+    if ratio < 1.0:
+        verdict = (f"NO SIGNAL: shuffling the targets improved held-out error "
+                   f"(ratio {ratio:.2f} < 1.00) — the features do not predict "
+                   f"the target")
+    elif not signal_detected:
+        verdict = (f"WEAK SIGNAL: shuffling the targets barely hurt "
+                   f"(ratio {ratio:.2f} < {MIN_SIGNAL_RATIO:.2f} required)")
+    else:
+        verdict = (f"signal present: shuffling the targets made error "
+                   f"{ratio:.2f}x worse")
+
+    return {
+        "mae_normal": mae_normal,
+        "mae_shuffled_target": mae_shuffled,
+        "shuffled_to_normal_ratio": float(ratio),
+        "signal_detected": signal_detected,
+        "signal_verdict": verdict,
+        # Backward compatibility: never asserts leakage (see docstring).
+        "leakage_warning": False,
+    }
+
+
+def leakage_sentinel(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    horizon: int,
+) -> Dict:
+    """Deprecated name for :func:`signal_sentinel`.
+
+    Retained so existing callers keep working.  The name is misleading — this
+    check measures signal presence, not leakage — so new code should call
+    signal_sentinel directly.
+    """
+    return signal_sentinel(X_train, y_train, X_test, y_test, horizon)
 
 def detect_lagged_copy(
     predictions_df: pd.DataFrame,

@@ -66,9 +66,29 @@ def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
         end of the series (folds=None means all possible blocks).
     """
     indices: List[Tuple[int, int]] = []
-    last_test_end = n
-    remaining = None if eval_start_idx is not None else folds  # None => no count limit
     min_train_rows = max(min_train * 252, horizon, 30)
+
+    # Pinned mode: tile FORWARD from eval_start so the first block begins exactly
+    # there. Tiling backward from the end (the original behaviour) left a remainder
+    # at the START of the window whenever its length was not a multiple of horizon:
+    # with 156 target dates and h=5 the family evaluated 150 of them, starting
+    # 2025-01-09 instead of 2025-01-01. That is a different window from every other
+    # family, so the one-ruler check reported different persistence numbers -- on
+    # Expenditure a 5.8M difference (78,036,083 vs 83,839,124). The final block may
+    # be shorter than `horizon`; a partial block is a smaller sample, not a wrong one.
+    if eval_start_idx is not None:
+        start = max(eval_start_idx, min_train_rows + 1)
+        while start < n:
+            test_end = min(start + horizon, n)
+            if start <= min_train_rows:
+                start = test_end
+                continue
+            indices.append((start, test_end))
+            start = test_end
+        return indices
+
+    last_test_end = n
+    remaining = folds  # None => no count limit
     while True:
         if remaining is not None and remaining <= 0:
             break
@@ -90,6 +110,43 @@ def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
             remaining -= 1
     indices.reverse()   # earliest fold first
     return indices
+
+def is_stock(target: str) -> bool:
+    """Level (stock) targets vs flow targets.
+
+    Kept byte-identical to b_ml_pipeline.is_stock and c_dl_pipeline.is_stock so the
+    three families cannot disagree about what kind of series they are modelling.
+    """
+    return str(target).strip().lower() in {"state budget balance", "balance", "t0"}
+
+
+def to_business_index(df: pd.DataFrame, target: str) -> pd.DataFrame:
+    """Reindex to a business-day calendar so h=5 means 5 BUSINESS days.
+
+    Why this matters (review §1.2, §4.3): E_QUANTILE was the only family that did
+    not reindex, so it ran on the raw 7-day calendar index and its ``h=5`` meant 5
+    *calendar* days -- a 5-day-ahead forecast against every other family's 7-day
+    (5 business day) one, graded against a persistence baseline computed over the
+    same shorter gap. Measured on the pre-Phase-1 data, that gave E_QUANTILE a
+    9.8% weaker (easier to beat) ruler: 66,161,268 vs the shared 60,273,679 on the
+    same 148 target dates, and 28% of its evaluation targets were weekends no
+    other family scored.
+
+    Flows are filled with 0.0 on non-business days (no trading day, no flow);
+    levels are forward-filled (a balance persists). Same convention as
+    b_ml_pipeline.to_business_index.
+    """
+    out = df.copy()
+    bidx = pd.date_range(out.index.min().normalize(), out.index.max().normalize(), freq="B")
+    out = out.reindex(bidx)
+    out.index.name = df.index.name or "date"
+    stock = is_stock(target)
+    for col in out.columns:
+        if not pd.api.types.is_numeric_dtype(out[col]):
+            continue
+        out[col] = out[col].ffill() if stock else out[col].fillna(0.0)
+    return out
+
 
 def _calendar_feats(idx: pd.DatetimeIndex) -> pd.DataFrame:
     return pd.DataFrame({
@@ -113,9 +170,25 @@ def _build_features(df: pd.DataFrame, cfg: Config) -> Tuple[pd.DataFrame, pd.Ser
     ✅ FIX QUANT-1: The target is now y(t + h) instead of y(t).
     This makes the quantile pipeline a genuine h-step-ahead forecaster,
     consistent with ML pipeline semantics.
+
+    Stock targets (D12).  For a level series such as ``State budget balance`` the
+    modelling target is the CHANGE, ``y(t+h) - y(t)``, not the level.  A level is
+    dominated by its own current value, so predicting it directly makes the model a
+    trivial persistence predictor that scores well while learning nothing -- the
+    trap b_ml_pipeline documents at :103-110.  ``lag_0`` (the value at origin) is
+    added as a feature only in this mode, where it supplies change-context rather
+    than the answer: it is known at the origin by definition, so it is not leakage.
+    Callers reconstruct the level as ``origin_value + predicted_delta``; see
+    ``run_pipeline``.
     """
     y = df[cfg.target].astype(float).copy()
     X = pd.DataFrame(index=df.index)
+    stock = is_stock(cfg.target)
+
+    # lag_0 = the value AT the origin. Known at forecast time by construction.
+    # Only useful (and only safe from the persistence trap) under delta modelling.
+    if stock:
+        X["y_lag_0"] = y
 
     # Target-derived features (all backward-looking: safe)
     for l in cfg.lags_daily:
@@ -146,8 +219,14 @@ def _build_features(df: pd.DataFrame, cfg: Config) -> Tuple[pd.DataFrame, pd.Ser
     for i in range(len(y) - h):
         y_target.iloc[i] = y_vals[i + h]
 
-    # origin_values = y at feature dates
+    # origin_values = y at feature dates. Always the LEVEL, never the delta:
+    # downstream persistence and level reconstruction both need the real y(t).
     origin_values = y.copy()
+
+    # Stock targets are modelled as the change from origin (D12). The level target
+    # stays available to the caller via origin_value + delta.
+    if stock:
+        y_target = y_target - origin_values
 
     # Align: drop rows where features or target are NaN
     both = pd.concat([X, y_target.rename("__target__"),
@@ -296,8 +375,25 @@ def run_pipeline(CONFIG: Config) -> None:
     if CONFIG.target not in df.columns:
         raise ValueError(f"target column '{CONFIG.target}' not found.")
 
-    # Features — now returns h-step-ahead targets + origin metadata
+    # Reindex to business days so h=CONFIG.horizon means h BUSINESS days, matching
+    # every other family. Without this the family ran on a 7-day calendar index and
+    # h=5 meant 5 calendar days -- a shorter forecast graded against an easier
+    # ruler (review §4.3).
+    _n_before = len(df)
+    df = to_business_index(df, CONFIG.target)
+    print(f"[runner] Reindexed to business days: {_n_before} -> {len(df)} rows "
+          f"({'ffill' if is_stock(CONFIG.target) else 'fillna(0)'} for a "
+          f"{'stock' if is_stock(CONFIG.target) else 'flow'} target)")
+
+    # Features — now returns h-step-ahead targets + origin metadata.
+    # For a stock target y_all holds the DELTA from origin; levels are
+    # reconstructed below.
     X_all, y_all, od_all, ov_all = _build_features(df, CONFIG)
+    _stock = is_stock(CONFIG.target)
+    if _stock:
+        print(f"[runner] Stock target '{CONFIG.target}': modelling delta "
+              f"y(t+{CONFIG.horizon}) - y(t); predictions reconstructed as "
+              f"origin_value + delta")
     n = len(y_all)
     if n < CONFIG.horizon + 50:
         print("[runner] WARNING: very short series after feature alignment.")
@@ -306,7 +402,15 @@ def run_pipeline(CONFIG: Config) -> None:
     eval_start_idx = None
     if CONFIG.eval_start:
         od_ts = pd.to_datetime(pd.Series(od_all.values))
-        eval_start_idx = int(np.searchsorted(od_ts.values, np.datetime64(pd.Timestamp(CONFIG.eval_start))))
+        # Pin on TARGET dates, not origin dates. The other three families define
+        # their window by target_date, so pinning origins >= eval_start put
+        # E_QUANTILE's first target h steps LATER (2025-01-08 instead of
+        # 2025-01-01) -- a different window, and therefore a different persistence
+        # number, which is exactly what the one-ruler check exists to catch.
+        # target[i] lies h positions after origin[i], so the origin index that
+        # yields the first in-window target is (index of eval_start) - h.
+        _k = int(np.searchsorted(od_ts.values, np.datetime64(pd.Timestamp(CONFIG.eval_start))))
+        eval_start_idx = max(0, _k - int(CONFIG.horizon))
         if eval_start_idx >= len(od_ts):
             raise ValueError(
                 f"eval_start {CONFIG.eval_start} is beyond the last origin date "
@@ -372,13 +476,25 @@ def run_pipeline(CONFIG: Config) -> None:
                 else:
                     target_dates_list.append(pd.NaT)
 
+            # Reconstruct levels for a stock target: the model predicted the
+            # change from origin, so the reported forecast is origin + change, and
+            # y_true is restored to the level. Every quantile is shifted by the
+            # same origin, so the interval width is unchanged and monotonicity is
+            # preserved.
+            if _stock:
+                _ov = np.asarray(ov_te.values, dtype=float)
+                y_te_out = _ov + np.asarray(y_te.values, dtype=float)
+                q_preds = {q: _ov + np.asarray(v, dtype=float) for q, v in q_preds.items()}
+            else:
+                y_te_out = y_te.values
+
             # Collect predictions_long rows
             row = pd.DataFrame({
                 "date": target_dates_list,     # ✅ now = target_date (h-step-ahead)
                 "target_date": target_dates_list,
                 "origin_date": od_te.values,
                 "origin_value": ov_te.values,
-                "y_true": y_te.values,
+                "y_true": y_te_out,
                 "model": model_name,
                 "fold": fold_ix,
                 "horizon": CONFIG.horizon,
@@ -393,15 +509,19 @@ def run_pipeline(CONFIG: Config) -> None:
                 row["y_pred"] = q_preds[0.5]
             preds_rows.append(row)
 
-            # Metrics: pinball per quantile + coverage if both lower/upper present
+            # Metrics: pinball per quantile + coverage if both lower/upper present.
+            # Uses y_te_out / q_preds, i.e. LEVELS for a stock target, so the
+            # metrics describe the quantity actually reported. (Both are shifted by
+            # the same origin, so pinball diffs and coverage are invariant -- this
+            # is for consistency, not to change the numbers.)
             for q in CONFIG.quantiles:
-                pl = _pinball_loss(y_te.values, q_preds[q], q)
+                pl = _pinball_loss(y_te_out, q_preds[q], q)
                 pinballs[q].append(pl)
 
             if 0.1 in CONFIG.quantiles and 0.9 in CONFIG.quantiles:
                 lower = q_preds[0.1]
                 upper = q_preds[0.9]
-                cov = float(((y_te.values >= lower) & (y_te.values <= upper)).mean())
+                cov = float(((y_te_out >= lower) & (y_te_out <= upper)).mean())
                 coverages.append(cov)
 
             # Optional fold plot
