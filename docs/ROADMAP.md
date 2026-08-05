@@ -40,7 +40,9 @@ error there fails silently. Verify the benchmark is byte-identical before and af
 ## 2 · Workstream 2 — hyperparameter tuning
 
 LightGBM quantile port (P10/P50/P90, crossing-safe), Optuna ≈100 trials with horizon-gapped
-early stopping. Build on the absolute-error objective — pinball loss at the median *is*
+early stopping. **CatBoost joins the pool here** (installed 2026-08-05; `CatBoost_L1` and
+`CatBoost_Quantile` register but are unablated, so they are not promotable until they have
+been through the same TRAIN-folds-then-one-DEV-confirmation protocol as workstream 1). Build on the absolute-error objective — pinball loss at the median *is*
 absolute error, so the objectives are already consistent.
 
 Deliberately sequenced after WS3/WS4/WS5, all of which changed the feature set or target
@@ -53,10 +55,21 @@ representation. Tuning before them would have tuned a recipe that no longer exis
   Expenditure the best 2024 model is a squared-error one.
 - **Conformalised quantile regression** — the fix for the known interval defect: on the
   largest third of days the nominal 80% range currently captures ~50% of outcomes.
-- **Dual-probe signal reporting** — report a linear and a nonlinear signal reading side by
-  side, each against its own threshold. Requires deriving a null distribution for the tree
-  probe first; the existing 1.50 threshold is calibrated for the linear probe and does not
-  transfer. **Awaiting a decision** (`reports/sentinel_probe_study.md` §3).
+- **Dual-probe signal reporting** — **decided 2026-08-05: adopt.** Report both the linear
+  (ridge) and nonlinear (tree) signal readings side by side. The 1.50 threshold stays with
+  ridge and continues to gate. The tree reading is **reported only** until a null
+  distribution is derived for it, which is WS7 work — a threshold calibrated for one
+  instrument does not transfer to another, and the same feature set reads 1.167 under ridge
+  and 1.421 under a tree.
+- **Model-agreement disagreement** — **decided 2026-08-05: report, do not gate.** The
+  independent point and interval models disagree by up to 35.6% on Expenditure and 21.0% on
+  Revenues against 1.5% on the stock target. It goes in artifacts and the narrative as a
+  readable confidence signal. Gating on it needs its own null distribution first: we do not
+  know what disagreement looks like when a model is behaving well, so any threshold today
+  would be invented rather than derived.
+- **The Expenditure tie-break** — **decided 2026-08-05.** The champion stays `LightGBM_L1`
+  on five-TRAIN-fold evidence, with `not_the_dev_best` disclosed. WS7 owns the formal
+  tie-break rule and **must keep squared-error candidates in the pool**.
 
 ## 4 · Operations — daily automation
 
