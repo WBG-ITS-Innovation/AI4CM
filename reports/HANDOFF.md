@@ -93,12 +93,13 @@ window are worth more than care.
 | Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
 | Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
-### Commits on `model/excellence` (3 ahead of `main`)
+### Commits on `model/excellence` (4 ahead of `main`)
 
-Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Three phase-7 commits sit on
-top and need a new PR. Recent history:
+Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Four phase-7 commits sit on
+top, carried by **PR #25**. Recent history:
 
 ```
+fa6dec6  docs: phase-7 session record; HANDOFF resume point -> workstream 2
 db27cd4  Item 3 / workstream 1: absolute-error objectives for B_ML (L1 wins 17 of 18)
 5f2990c  Item 2: append-only experiments log; fix the unbounded evaluation window it exposed
 40d391b  docs: HANDOFF -- phase-6 commits, resume at item 2, and an honest TEST-window disclosure
@@ -184,8 +185,15 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Item 4 — workstream 2 (LightGBM quantile + Optuna).** Items 1–3 are complete. Tune on top of
-**L1**: pinball loss at τ=0.5 *is* absolute error, so the objectives are already consistent.
+**Workstream 3 — the fiscal calendar.** Items 1–3 are complete.
+
+> **Reorder, 2026-08-05: WS3 now precedes WS2.** Phase 7 established that the sentinel ratio is
+> measured by a fixed Ridge probe **on the feature set**, so only WS3 (fiscal calendar) and WS5
+> (multivariate) can move it — no objective, hyperparameter or ensemble work can. Optuna is
+> expensive and should therefore be spent **once, on the winning feature set**, not on the
+> current one and again afterwards. WS2 tunes on top of whatever WS3 leaves standing, still on
+> **L1** (pinball at τ=0.5 *is* absolute error, so the objectives are already consistent).
+
 Remaining, in order:
 
 | # | Task | Notes |
@@ -197,9 +205,9 @@ Remaining, in order:
 | ~~1f~~ | ~~Backtest re-run + one-ruler verification~~ | **DONE** `87fc971`. Spread 0.000000 across families on all three targets |
 | ~~2~~ | ~~Ground rule 2 — experiments log~~ | **DONE** `5f2990c`. 38 rows, integrity OK, `runs/` now tracked. Exposed the unbounded `eval_start` (see §0a, second disclosure). **"Never report an unlogged number" is now in force** |
 | ~~3~~ | ~~Workstream 1 — L1 objectives for B_ML~~ | **DONE** `db27cd4`. L1 wins **17 of 18**; also added `eval_start`/`eval_end` to B_ML, whose yearly folds previously ran into the 2025 holdout on any default run |
-| **4** | Workstream 2 — LightGBM quantile, crossing-safe, Optuna ~100 trials with h-gapped early stopping; Revenues + Expenditure, stock via delta | **Next.** Build on `LightGBM_L1` |
-| 5 | Workstream 3 — fiscal calendar; draft `docs/FISCAL_CALENDAR_SOURCES.md` so T2 can be sent | **Highest value of what remains** — one of only two workstreams that can move the flow sentinel ratio |
-| 6 | Workstreams 4–7 | 7 owns the top-tercile coverage fix (CQR) |
+| **4** | **Workstream 3 — fiscal calendar.** Shared `backend/preprocessing/fiscal_calendar.py` consumed by B_ML *and* E_QUANTILE; `docs/FISCAL_CALENDAR_SOURCES.md` as the Treasury sign-off artifact so T2 can be sent; five feature groups ablated on TRAIN folds, one DEV confirmation per target | **Next.** The headline metric is the **sentinel ratio**, not MAE. Every entry cites rs.ge / matsne.gov.ge / mof.ge / nbg.gov.ge or is marked **UNVERIFIED** — never a fabricated citation. `calendar_version` (content hash) recorded on every experiment row |
+| 5 | Workstream 2 — LightGBM quantile, crossing-safe, Optuna ~100 trials with h-gapped early stopping; Revenues + Expenditure, stock via delta | Now **after** WS3, on the winning feature set. Build on `LightGBM_L1` |
+| 6 | Workstreams 4–7 | 5 (multivariate) is the **other** lever on the sentinel ratio; 7 owns the top-tercile coverage fix (CQR) |
 | 7 | Phase-1 Steps 4/5/7 — ops P0, Agent contract + validator, cleanup | Deferred since Phase 1 |
 
 **The central finding to carry forward:** the two flow targets have **no detectable feature
@@ -208,6 +216,12 @@ with a fixed Ridge — so no objective, hyperparameter or ensemble work can move
 workstreams 3 and 5 can. Meanwhile `LightGBM_L1` reports 36.65% DEV skill on Revenues: real
 error reduction against a spiky ruler, but not a forecast. Never quote one number without the
 other.
+
+**And keep the L1 claim exact.** L1 wins 17 of 18 *paired* comparisons against its own twin.
+It does **not** supply the best model on every target: on Expenditure the DEV-best is the
+squared-error `HistGBDT` at **30.13%**, ahead of `LightGBM_L1`'s 28.64% — the same single cell
+where the paired comparison also went against L1 (−4.44%). Per-target selection (WS7) must
+therefore keep L2 candidates in the pool rather than assume L1 dominates.
 
 **The one-ruler check has not been performed.** E_QUANTILE is on the right index now, but C_DL is
 unpinned and B_ML's published baseline still comes from the duplicate implementation.
