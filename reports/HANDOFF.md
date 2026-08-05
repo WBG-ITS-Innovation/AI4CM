@@ -93,12 +93,13 @@ window are worth more than care.
 | Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
 | Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
-### Commits on `model/excellence` (7 ahead of `main`)
+### Commits on `model/excellence` (8 ahead of `main`)
 
 Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Seven commits sit on top,
 carried by **PR #25** (open, ready for review, not merged). Recent history:
 
 ```
+136ae76  docs: phase-8 session record; HANDOFF resume point -> workstream 2
 2ab1c3e  WS3 step 2: wire the fiscal calendar into both families; ablate; it does NOT lift the flows
 7b8da25  WS3 step 1: shared Georgian fiscal calendar module + Treasury sign-off artifact
 efafa02  docs: HANDOFF phase-7 commits; resume -> WS3 (reordered ahead of WS2)
@@ -188,8 +189,18 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Workstream 2 — LightGBM quantile + Optuna**, on the WS3-winning feature set per target.
-Workstream 3 is complete.
+**Workstream 5 — multivariate.** Workstream 3 is complete.
+
+> **Second reorder, 2026-08-05: WS5 and WS4 now precede WS2.** Same tune-once reason as the
+> first reorder. WS3 changed the feature set and WS5/WS4 will change it again (exogenous
+> columns, target scaling); ~100 Optuna trials spent before those land would be spent on a
+> recipe that no longer exists. WS2 tunes once, on the final recipe.
+>
+> The substantive reason WS5 goes first: **WS1 and WS3 have both failed to move the flow
+> sentinel** (Revenues 1.226, Expenditure 1.088, threshold 1.50). WS5 is the last modelling
+> lever on it, and the debt-operation lines are the specific hypothesis — `docs/DATA_SEMANTICS.md`
+> §1 measured the 72 negative-`Revenues` days as netting in `Increase in liabilities`
+> (corr 0.971) and `Domestic` (0.969).
 
 > **Reorder, 2026-08-05: WS3 now precedes WS2.** Phase 7 established that the sentinel ratio is
 > measured by a fixed Ridge probe **on the feature set**, so only WS3 (fiscal calendar) and WS5
@@ -211,10 +222,11 @@ Remaining, in order:
 | ~~3~~ | ~~Workstream 1 — L1 objectives for B_ML~~ | **DONE** `db27cd4`. L1 wins **17 of 18**; also added `eval_start`/`eval_end` to B_ML, whose yearly folds previously ran into the 2025 holdout on any default run |
 | ~~4~~ | ~~Workstream 3 — fiscal calendar~~ | **DONE** `7b8da25`+`2ab1c3e`. MAE +1.1–6.3% on DEV across all three targets; **the flow sentinel did NOT move into signal territory** (Revenues 1.138→1.226, Expenditure 1.088→1.088, threshold 1.50). `docs/FISCAL_CALENDAR_SOURCES.md` ready — **T2 can be sent**. Winning subsets: Revenues A+B+C+D+E, Expenditure A+B+C+D, stock A+B+C+D |
 | ~~4b~~ | ~~Workstream 3 — fiscal calendar (original row)~~ | Shared `backend/preprocessing/fiscal_calendar.py` consumed by B_ML *and* E_QUANTILE; `docs/FISCAL_CALENDAR_SOURCES.md` as the Treasury sign-off artifact so T2 can be sent; five feature groups ablated on TRAIN folds, one DEV confirmation per target | **Next.** The headline metric is the **sentinel ratio**, not MAE. Every entry cites rs.ge / matsne.gov.ge / mof.ge / nbg.gov.ge or is marked **UNVERIFIED** — never a fabricated citation. `calendar_version` (content hash) recorded on every experiment row |
-| **5** | **Workstream 2** — LightGBM quantile, crossing-safe, Optuna ~100 trials with h-gapped early stopping; Revenues + Expenditure, stock via delta | **Next.** Use the WS3-winning feature set per target; build on `LightGBM_L1` |
-| 6 | **Workstream 5 — multivariate** | **Now the highest-value modelling work: the last remaining lever on the flow sentinel.** WS1 and WS3 have both failed to move it. The 38 other Treasury lines include the debt-operation components the negative-`Revenues` analysis points at |
-| 7 | Send **T2**; then the sentinel-probe question (shallow-tree probe vs Ridge on an identical feature set — a measurement study on its own merits, **not** a way to rescue a failing model) | The auction calendar is the top ask, and on present evidence more promising than anything left in the modelling backlog |
-| 8 | Workstreams 4, 6, 7 | 7 owns the top-tercile coverage fix (CQR) |
+| **5** | **Workstream 5 — multivariate, leak-safe** | **Next.** The last remaining lever on the flow sentinel. Debt-ops block tested on its own first — it is the hypothesised mechanism for the unpredictable days. Lags ≥ 1 step, transforms and any top-K fit per fold only |
+| 6 | **Workstream 4 — target scaling** | raw vs asinh vs ratio-to-trailing-level, statistics fit per fold; stock keeps its delta path. `log1p` remains inapplicable while T1 is open (negatives) |
+| 7 | Workstream 2 — LightGBM quantile + Optuna ~100 trials | Now **after** WS5/WS4, on the final recipe |
+| 8 | Send **T2**; then the sentinel-probe question (shallow-tree probe vs Ridge on an identical feature set — a measurement study on its own merits, **not** a way to rescue a failing model) | The auction calendar is the top ask, and on present evidence more promising than anything left in the modelling backlog |
+| 9 | Workstreams 6, 7 | 7 owns the top-tercile coverage fix (CQR) |
 | 7 | Phase-1 Steps 4/5/7 — ops P0, Agent contract + validator, cleanup | Deferred since Phase 1 |
 
 **The central finding to carry forward:** the two flow targets have **no detectable feature
