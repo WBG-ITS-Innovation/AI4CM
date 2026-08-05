@@ -84,6 +84,10 @@ class ConfigBML:
     min_train_years: int = 4
     # Workstream 3 fiscal-calendar feature groups; None == pre-WS3 feature set.
     fiscal_groups: Optional[Tuple[str, ...]] = None
+    # Workstream 5 exogenous Treasury-line blocks; None == univariate.
+    exog_blocks: Optional[Tuple[str, ...]] = None
+    exog_lags: Tuple[int, ...] = (1, 5, 21)
+    exog_aligned: bool = True
     # Evaluation-window bounds (workstream 1). Both INCLUSIVE, by target date.
     # Left None the builder folds up to the last year present, which for this dataset
     # means the final fold is the 2025 holdout -- fine for the single sealed read,
@@ -646,6 +650,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         print(f"[pipeline] Data loaded: {len(s)} observations from {s.index.min().date()} to {s.index.max().date()}")
     
     cal = calendar_exog(s.index, y=s, fiscal_groups=cfg.fiscal_groups)
+    if cfg.exog_blocks:
+        # Workstream 5. Appended to `cal` because every downstream site joins that frame,
+        # so one concat wires the exogenous features into training, prediction and the
+        # sentinel alike -- rather than four separate edits that could drift apart.
+        from preprocessing.multivariate import build_exog_features
+        _ex = build_exog_features(raw, cfg.target, list(cfg.exog_blocks), s.index,
+                                  lags=cfg.exog_lags, aligned=cfg.exog_aligned,
+                                  date_col=cfg.date_col)
+        print(f"[pipeline] Exogenous blocks {list(cfg.exog_blocks)}: "
+              f"+{_ex.shape[1]} features (all lagged >= 1)")
+        cal = pd.concat([cal, _ex], axis=1)
 
     # Optional demo clip (kept for compatibility)
     if cfg.demo_clip_months and cfg.demo_clip_months > 0:
