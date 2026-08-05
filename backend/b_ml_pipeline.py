@@ -25,7 +25,7 @@ import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Sequence, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -82,6 +82,8 @@ class ConfigBML:
     # overrides
     folds: Optional[int] = None
     min_train_years: int = 4
+    # Workstream 3 fiscal-calendar feature groups; None == pre-WS3 feature set.
+    fiscal_groups: Optional[Tuple[str, ...]] = None
     # Evaluation-window bounds (workstream 1). Both INCLUSIVE, by target date.
     # Left None the builder folds up to the last year present, which for this dataset
     # means the final fold is the 2025 holdout -- fine for the single sealed read,
@@ -156,7 +158,15 @@ def to_business_index(df: pd.DataFrame, date_col: str, target: str) -> pd.Series
     return s.fillna(0.0)
 
 
-def calendar_exog(idx: pd.DatetimeIndex) -> pd.DataFrame:
+def calendar_exog(idx: pd.DatetimeIndex,
+                  y: Optional[pd.Series] = None,
+                  fiscal_groups: Optional[Sequence[str]] = None) -> pd.DataFrame:
+    """Calendar exogenous features.
+
+    ``fiscal_groups`` appends the shared Georgian fiscal calendar (workstream 3). Left
+    None the frame is exactly what it was before, so the WS1 results remain comparable;
+    the ablation passes explicit group lists.
+    """
     df = pd.DataFrame(index=idx)
     df["dow"] = idx.dayofweek
     df["month"] = idx.month
@@ -176,7 +186,13 @@ def calendar_exog(idx: pd.DatetimeIndex) -> pd.DataFrame:
     df["bdom"] = _s.groupby([idx.year, idx.month]).cumcount() + 1
     df["bdom_rev"] = df.groupby([idx.year, idx.month])["bdom"].transform("max") - df["bdom"]
     dow = pd.get_dummies(df["dow"], prefix="dow", drop_first=True)
-    return pd.concat([df.drop(columns="dow"), dow], axis=1)
+    out = pd.concat([df.drop(columns="dow"), dow], axis=1)
+    if fiscal_groups:
+        from preprocessing.fiscal_calendar import build_fiscal_features, drop_raw_year
+        fx = build_fiscal_features(idx, y=y, groups=list(fiscal_groups))
+        fx = fx.loc[:, [c for c in fx.columns if c not in out.columns]]
+        out = drop_raw_year(pd.concat([out, fx], axis=1))
+    return out
 
 
 def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int, folds_override: Optional[int],
@@ -629,7 +645,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
 
         print(f"[pipeline] Data loaded: {len(s)} observations from {s.index.min().date()} to {s.index.max().date()}")
     
-    cal = calendar_exog(s.index)
+    cal = calendar_exog(s.index, y=s, fiscal_groups=cfg.fiscal_groups)
 
     # Optional demo clip (kept for compatibility)
     if cfg.demo_clip_months and cfg.demo_clip_months > 0:

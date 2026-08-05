@@ -265,3 +265,50 @@ def test_groups_are_independently_selectable():
 def test_series_groups_require_the_target():
     with pytest.raises(ValueError, match="need the target"):
         build_fiscal_features(IDX, None, [GROUP_D])
+
+
+# ── pipeline wiring ───────────────────────────────────────────────────────────
+
+def test_e_quantile_no_longer_emits_raw_year():
+    """Regression: E_QUANTILE was the last family carrying a raw `year` feature.
+
+    A tree that splits on the calendar year puts every 2025 row into a terminal bucket
+    learned from 2024, so it fits the trend rather than the mechanism and cannot
+    extrapolate past the training range.
+    """
+    import e_quantile_daily_pipeline as eq
+
+    cols = list(eq._calendar_feats(IDX).columns)
+    assert "year" not in cols, cols
+    assert {"dow", "dom", "week", "month"} <= set(cols)
+
+
+def test_b_ml_default_feature_set_is_unchanged_without_fiscal_groups():
+    """Passing no groups must reproduce the pre-WS3 frame exactly.
+
+    Otherwise the workstream-1 numbers stop being comparable to anything measured after
+    it, and the ablation's own baseline row would silently include calendar features.
+    """
+    from b_ml_pipeline import calendar_exog
+
+    y = _y()
+    base = calendar_exog(IDX)
+    assert "is_deadline_any" not in base.columns
+    with_groups = calendar_exog(IDX, y=y, fiscal_groups=ALL_GROUPS)
+    assert "is_deadline_any" in with_groups.columns
+    # the original columns survive untouched
+    pd.testing.assert_frame_equal(base, with_groups[base.columns])
+
+
+def test_both_families_accept_the_same_groups():
+    """The module is shared; a group that works for one family must work for the other."""
+    import e_quantile_daily_pipeline as eq
+    from b_ml_pipeline import calendar_exog
+
+    y = _y()
+    a = calendar_exog(IDX, y=y, fiscal_groups=ALL_GROUPS)
+    b = eq._calendar_feats(IDX, y=y, fiscal_groups=ALL_GROUPS)
+    shared = set(a.columns) & set(b.columns)
+    assert "is_deadline_any" in shared and "y_ewm_hl21" in shared
+    for c in ("is_deadline_any", "deadline_shift_days", "bdays_to_eom"):
+        pd.testing.assert_series_equal(a[c], b[c], check_names=False)

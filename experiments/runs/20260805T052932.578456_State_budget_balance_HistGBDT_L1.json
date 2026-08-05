@@ -1,0 +1,45 @@
+{
+  "run_id": "20260805T052932.578456_State_budget_balance_HistGBDT_L1",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T05:29:32.578456+00:00",
+  "git_sha": "7b8da254f00f",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "State budget balance",
+  "feature_set_hash": "42669f5b7eaf",
+  "params": "df8d7ac06e79",
+  "seed": 0,
+  "fold_scheme": "DEV confirmation, single 2024 fold",
+  "dev_mae": "194926463.6602",
+  "mase": "1.585000",
+  "skill_vs_ruler": "19.6686",
+  "sentinel_ratio": "6.9263",
+  "coverage_low": "",
+  "coverage_mid": "",
+  "coverage_high": "",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS3 ablation groups=A+B+C+D, dev window, n=262",
+  "model": "HistGBDT_L1",
+  "git_sha_full": "7b8da254f00f1c9e676bf5861906464d7971ec24",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws3:A+B+C+D"
+  ],
+  "params_full": {
+    "family": "B_ML",
+    "model": "HistGBDT_L1",
+    "horizon": 5,
+    "min_train_years": 4,
+    "eval_start": "2024-01-01",
+    "eval_end": "2024-12-31",
+    "fiscal_groups": [
+      "A_deadline",
+      "B_holiday",
+      "C_month",
+      "D_aligned_lags"
+    ],
+    "objective": "L1"
+  },
+  "ruler": 242653025.4638168,
+  "coverage_terciles": {},
+  "per_fold": []
+}
