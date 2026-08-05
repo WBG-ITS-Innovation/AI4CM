@@ -95,9 +95,12 @@ class Champion:
     fiscal_groups: Tuple[str, ...]
     exog_blocks: Tuple[str, ...] = ()
     recipe_id: str = ""
-    # Target scaling is deliberately raw: workstream 4 has not run. Recorded so the
-    # artifact cannot imply a tuning or scaling decision that was never made.
-    scaling: str = "raw (WS4 pending)"
+    scaling: str = "raw"
+    # Workstream 4 target transform, from the recipe's params. The forward forecast MUST
+    # apply the same transform the DEV credentials were earned with -- publishing a raw fit
+    # under a recipe that won on `ratio` would make the quoted accuracy belong to a
+    # different model.
+    transform: str = "raw"
 
 
 def _is_stock(target: str) -> bool:
@@ -136,20 +139,30 @@ def _build_design(raw: pd.DataFrame, champ: Champion, date_col: str = "date"
     return X, s
 
 
-def _fit_predict_point(X_tr, y_tr, X_new, model_name: str) -> float:
+def _wrap(est, transform: str, level=None):
+    """Apply the recipe's target transform, if any."""
+    if transform in (None, "", "raw"):
+        return est
+    from target_scaling import ScaledRegressor
+    return ScaledRegressor(base=est, transform=transform, level=level)
+
+
+def _fit_predict_point(X_tr, y_tr, X_new, model_name: str,
+                       transform: str = "raw", level=None) -> float:
+    from sklearn.base import clone
+
     from b_ml_pipeline import available_models
     models = available_models()
     if model_name not in models:
         raise KeyError(f"point model {model_name!r} not in available_models()")
-    est = models[model_name]
-    from sklearn.base import clone
-    est = clone(est)
+    est = _wrap(clone(models[model_name]), transform, level)
     est.fit(X_tr, y_tr)
     return float(np.asarray(est.predict(X_new)).ravel()[0])
 
 
 def _fit_predict_quantiles(X_tr, y_tr, X_new,
-                           quantiles: Sequence[float] = QUANTILES) -> Dict[float, float]:
+                           quantiles: Sequence[float] = QUANTILES,
+                           transform: str = "raw", level=None) -> Dict[float, float]:
     """GBQuantile per quantile, then enforce monotonicity.
 
     Independently fitted quantiles can cross -- p90 below p50 -- which is not a wide
@@ -159,7 +172,8 @@ def _fit_predict_quantiles(X_tr, y_tr, X_new,
     from sklearn.ensemble import GradientBoostingRegressor
     out: Dict[float, float] = {}
     for q in quantiles:
-        m = GradientBoostingRegressor(loss="quantile", alpha=float(q), random_state=0)
+        m = _wrap(GradientBoostingRegressor(loss="quantile", alpha=float(q),
+                                            random_state=0), transform, level)
         m.fit(X_tr, y_tr)
         out[float(q)] = float(np.asarray(m.predict(X_new)).ravel()[0])
     vals = sorted(out.values())
@@ -177,6 +191,14 @@ def run_forward(raw: pd.DataFrame,
     """
     X, s = _build_design(raw, champ, date_col)
     stock = _is_stock(champ.target)
+
+    # For `ratio`, the divisor is a causal trailing level taken at the ORIGIN. For a stock
+    # target the pipeline models the change, so the level must be derived from the change --
+    # a level-scale divisor against a delta-scale target is an order-of-magnitude error.
+    level = None
+    if champ.transform == "ratio":
+        from target_scaling import trailing_level
+        level = trailing_level(s.diff(max(horizons)) if stock else s)
 
     # The final origin is the last row whose features are all present. Features are
     # backward-looking, so this is normally the last business day in the data.
@@ -202,8 +224,10 @@ def run_forward(raw: pd.DataFrame,
         X_tr, y_tr = X[usable], y_h[usable]
         X_new = X.loc[[origin]]
 
-        p50_raw = _fit_predict_point(X_tr, y_tr, X_new, champ.point_model)
-        qs = _fit_predict_quantiles(X_tr, y_tr, X_new)
+        p50_raw = _fit_predict_point(X_tr, y_tr, X_new, champ.point_model,
+                                     transform=champ.transform, level=level)
+        qs = _fit_predict_quantiles(X_tr, y_tr, X_new,
+                                    transform=champ.transform, level=level)
 
         base = origin_value if stock else 0.0
         rows.append({
@@ -221,6 +245,7 @@ def run_forward(raw: pd.DataFrame,
             "n_train_rows": int(usable.sum()),
             "n_features": int(X.shape[1]),
             "modelled_as": "delta (level reconstructed)" if stock else "level",
+            "target_transform": champ.transform,
         })
 
     df = pd.DataFrame(rows)
@@ -247,6 +272,7 @@ def build_provenance(data_path: str, champions: Sequence[Champion]) -> Dict:
                      "point_model": c.point_model, "interval_model": "GBQuantile",
                      "fiscal_groups": sorted(c.fiscal_groups),
                      "exog_blocks": sorted(c.exog_blocks),
+                     "target_transform": c.transform,
                      "scaling": c.scaling} for c in champions],
         "test_window_touched": False,
         "notes": [

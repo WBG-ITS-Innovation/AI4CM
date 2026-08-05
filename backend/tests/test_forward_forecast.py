@@ -110,17 +110,44 @@ def test_training_rows_shrink_as_horizon_grows(small_forward):
     assert n[0] > n[1], f"training rows did not shrink with horizon: {n}"
 
 
-def test_provenance_records_the_sealed_window_and_pending_scaling():
+def test_provenance_records_the_sealed_window_and_the_scaling_decision():
+    """WS4 has now run, so provenance must record WHICH transform was applied.
+
+    This test previously asserted the string "WS4 pending". It failed the moment WS4 landed,
+    which is the correct behaviour: the artifact must never describe a scaling decision that
+    does not match the model that was actually fitted.
+    """
     champ = Champion(target="Revenues", point_model="LightGBM_L1",
-                     fiscal_groups=(GROUP_A,), recipe_id="r1")
+                     fiscal_groups=(GROUP_A,), recipe_id="r1", transform="ratio",
+                     scaling="ratio-to-trailing-level (WS4 winner)")
     prov = build_provenance(str(DATA), [champ])
     assert prov["test_window_touched"] is False
     assert prov["run_kind"] == "forward_forecast"
     assert prov["data"]["sha256"]
     assert prov["calendar_version"]
-    # WS4 has not run; the artifact must not imply a scaling decision was made.
-    assert "WS4 pending" in prov["recipes"][0]["scaling"]
+    assert prov["recipes"][0]["target_transform"] == "ratio"
+    assert "ratio" in prov["recipes"][0]["scaling"]
     assert any("no truth was read" in n for n in prov["notes"])
+
+
+def test_forward_run_applies_the_registry_transform():
+    """The published forecast must use the transform its DEV credentials were earned with.
+
+    Publishing a raw fit under a recipe that won on `ratio` would make the quoted accuracy
+    belong to a different model than the one that produced the numbers.
+    """
+    from registry import load_registry
+
+    reg = load_registry()
+    from run_forward_forecast import champions_from_registry
+
+    champs = {c.target: c for c in champions_from_registry()}
+    for r in reg["recipes"]:
+        expected = r.get("params", {}).get("target_transform", "raw")
+        assert champs[r["target"]].transform == expected, (
+            f"{r['target']}: forward run would use {champs[r['target']].transform!r} "
+            f"but the recipe specifies {expected!r}"
+        )
 
 
 def test_registry_champions_are_loadable_and_honest():
