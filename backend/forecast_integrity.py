@@ -417,12 +417,49 @@ def compute_skill_score(
 MIN_SIGNAL_RATIO = 1.5   # shuffled MAE must be at least this multiple of real MAE
 
 
+PROBE_RIDGE = "ridge"
+PROBE_TREE = "tree"
+PROBE_FOREST = "forest"
+DEFAULT_PROBE = PROBE_RIDGE
+
+
+def _probe_factory(probe: str):
+    """Return a zero-argument constructor for the requested sentinel probe.
+
+    The probe is the *instrument*, not a model under evaluation, so every option is
+    fixed and untuned: a tuned probe would make the ratio a function of the tuning.
+
+    ``ridge``  — the historical default. Linear, so it can only register signal a
+                 linear model can use.
+    ``tree``   — a single depth-4 decision tree. The minimal nonlinear instrument.
+    ``forest`` — 100 depth-4 trees. Same hypothesis class as ``tree`` but far lower
+                 variance, so a null result is more trustworthy.
+
+    See reports/sentinel_probe_study.md. Changing the default would change what the
+    1.50 threshold means, so the default is not changed here.
+    """
+    if probe == PROBE_RIDGE:
+        return lambda: Ridge(alpha=1.0)
+    if probe == PROBE_TREE:
+        from sklearn.tree import DecisionTreeRegressor
+        return lambda: DecisionTreeRegressor(max_depth=4, random_state=0)
+    if probe == PROBE_FOREST:
+        from sklearn.ensemble import RandomForestRegressor
+        return lambda: RandomForestRegressor(
+            n_estimators=100, max_depth=4, random_state=0, n_jobs=1)
+    raise ValueError(
+        f"unknown sentinel probe {probe!r}; expected one of "
+        f"{(PROBE_RIDGE, PROBE_TREE, PROBE_FOREST)}"
+    )
+
+
 def signal_sentinel(
     X_train: pd.DataFrame,
     y_train: pd.Series,
     X_test: pd.DataFrame,
     y_test: pd.Series,
     horizon: int,
+    probe: str = DEFAULT_PROBE,
 ) -> Dict:
     """Shuffled-target control: does this feature set carry real signal?
 
@@ -459,6 +496,7 @@ def signal_sentinel(
         "shuffled_to_normal_ratio": np.nan,
         "signal_detected": None,
         "signal_verdict": "not measurable (insufficient data)",
+        "probe": probe,
         # Kept for backward compatibility only; this check cannot detect
         # leakage, so it never asserts leakage.  See docstring.
         "leakage_warning": False,
@@ -482,7 +520,9 @@ def signal_sentinel(
     y_tr = np.asarray(y_train, dtype=float)
     y_te = np.asarray(y_test, dtype=float)
 
-    model_normal = Ridge(alpha=1.0)
+    _make = _probe_factory(probe)
+
+    model_normal = _make()
     model_normal.fit(Xtr, y_tr)
     mae_normal = float(np.mean(np.abs(y_te - model_normal.predict(Xte))))
 
@@ -490,7 +530,7 @@ def signal_sentinel(
     y_tr_shuffled = y_tr.copy()
     rng.shuffle(y_tr_shuffled)
 
-    model_shuffled = Ridge(alpha=1.0)
+    model_shuffled = _make()
     model_shuffled.fit(Xtr, y_tr_shuffled)
     mae_shuffled = float(np.mean(np.abs(y_te - model_shuffled.predict(Xte))))
 
@@ -520,6 +560,9 @@ def signal_sentinel(
         "shuffled_to_normal_ratio": float(ratio),
         "signal_detected": signal_detected,
         "signal_verdict": verdict,
+        # Which instrument produced these numbers. Reported so a ratio can never be
+        # compared across probes by accident -- the threshold is calibrated to ridge.
+        "probe": probe,
         # Backward compatibility: never asserts leakage (see docstring).
         "leakage_warning": False,
     }
