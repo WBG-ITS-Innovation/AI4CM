@@ -16,7 +16,7 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
-st.set_page_config(page_title="Data Pre-processing • Georgia Treasury", layout="wide")
+st.set_page_config(page_title="Data · Treasury Forecast", page_icon="🧹", layout="wide")
 inject_global_css()
 st.markdown(
     page_header("🧺 Data Pre-processing",

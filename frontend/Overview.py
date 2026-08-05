@@ -13,7 +13,7 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
-st.set_page_config(page_title="Overview • Treasury Forecast Lab", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Overview · Treasury Forecast", page_icon="📊", layout="wide")
 inject_global_css()
 
 APPROOT = Path(__file__).resolve().parent

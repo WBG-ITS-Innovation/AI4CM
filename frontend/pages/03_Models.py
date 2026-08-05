@@ -11,7 +11,7 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
-st.set_page_config(page_title="Models • Georgia Treasury", layout="wide")
+st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
 st.markdown(
     page_header("🧩 Model Families & Parameters",
@@ -32,8 +32,7 @@ from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "backend"))
 
 
-def _gel_m(v, dp=1):
-    return f"{v / 1_000_000:,.{dp}f}"
+from format_gel import gel_millions as _gel_m  # noqa: E402
 
 
 def _render_registry() -> None:

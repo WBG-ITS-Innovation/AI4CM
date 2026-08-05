@@ -154,7 +154,8 @@
           "its_dev_mae": 51088706.0,
           "this_dev_mae": 51602951.0,
           "gap_pct": 1.01,
-          "why_promoted_anyway": "Selection was made on five TRAIN-internal folds, where this recipe is clearly ahead (35,069,403 vs 37,093,156 MAE). DEV is a single confirmation fold and the 1.0% gap there is within its noise. Recorded rather than hidden: on this target the promoted recipe is not the single best DEV number, and per-target selection in WS7 must keep squared-error candidates in the pool."
+          "why_promoted_anyway": "Selection was made on five TRAIN-internal folds, where this recipe is clearly ahead (35,069,403 vs 37,093,156 MAE). DEV is a single confirmation fold and the 1.0% gap there is within its noise. Recorded rather than hidden: on this target the promoted recipe is not the single best DEV number, and per-target selection in WS7 must keep squared-error candidates in the pool.",
+          "why_promoted_plain": "The choice was made on five separate year-long tests, where the model we published was clearly ahead. The 2024 figure above comes from a single year, and a one percent gap over one year is well within normal variation. We record this openly because on this budget line the published model is not the single best 2024 number."
         }
       },
       "publication": {
