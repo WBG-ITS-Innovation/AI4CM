@@ -13,8 +13,12 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
+from ui_styles import inject_design_system, gate_badge_tri, reading_this_chart
+from format_gel import NOT_REPORTED
+
 st.set_page_config(page_title="Overview · Treasury Forecast", page_icon="📊", layout="wide")
 inject_global_css()
+inject_design_system()
 
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
@@ -28,6 +32,50 @@ st.markdown(
                 "A production-grade multi-model forecasting sandbox — Statistical, ML, Deep Learning, Quantile"),
     unsafe_allow_html=True,
 )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT THIS LAB IS / WHAT IT DOES NOT CLAIM
+#
+# First thing on the landing page, deliberately. Everything downstream is easier to read
+# correctly once a viewer knows the scope, and easier to misread without it.
+# ══════════════════════════════════════════════════════════════════════════════
+with st.container():
+    _a, _b = st.columns(2)
+    with _a:
+        st.markdown("#### What this lab is")
+        st.markdown(
+            "- A **research and evaluation** workbench for daily Treasury cash-flow "
+            "forecasting.\n"
+            "- It forecasts **five working days ahead** for three budget lines: "
+            "**Revenues**, **Expenditure** and **State budget balance**.\n"
+            "- Every model is measured against **one shared benchmark** — predict that the "
+            "value five working days ago repeats — so numbers are comparable across model "
+            "families.\n"
+            "- Every figure on these pages traces to a saved artifact or a row in "
+            "`experiments/log.csv`, with the data and code fingerprints that produced it."
+        )
+    with _b:
+        st.markdown("#### What it does not claim")
+        st.markdown(
+            "- **No model here is approved or production-ready.** Every recipe's status is "
+            "*candidate*, and no approval workflow exists yet.\n"
+            "- **The 2025 holdout has never been evaluated against.** Accuracy figures are "
+            "validated on 2024 and should be read as provisional; the final independent "
+            "check is a one-shot test that has deliberately not been spent.\n"
+            "- **On Revenues and Expenditure the system reports a typical level, not an "
+            "event forecast.** Its own signal self-test fails on those two lines, and it "
+            "labels them accordingly rather than quietly presenting them as forecasts.\n"
+            "- **It covers 3 of 41 budget lines** and one week ahead. It is not a view of "
+            "the whole budget."
+        )
+    st.caption(
+        "The distinction in the third point is the one worth carrying into every other page: "
+        "a model can post a large improvement over the benchmark while its inputs carry no "
+        "information about the target. This lab measures both and shows both."
+    )
+
+st.divider()
+
 
 c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
 with c1:
