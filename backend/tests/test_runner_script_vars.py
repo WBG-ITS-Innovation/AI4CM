@@ -23,6 +23,10 @@ EXTERNAL = {
     "FAMILIES", "MODE", "RUN_DATE", "STALE_DAYS", "STAT_MODEL",
     "TG_CADENCE", "TG_DATA_PATH", "TG_DATE_COL", "TG_HORIZON", "TG_TARGET",
     "TG_FAMILY", "TG_MODEL_FILTER", "TG_OUT_ROOT", "TG_PARAM_OVERRIDES",
+    # Item 1e: optional pin. When set, the script and every runner refuse to
+    # proceed unless the input file's SHA-256 matches, so "the same run" means the
+    # same bytes rather than the same filename. Documented in the script header.
+    "AI4CM_EXPECTED_DATA_SHA256",
     "HOME", "PATH", "PWD", "IFS", "OSTYPE", "BASH_SOURCE",
 }
 

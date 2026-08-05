@@ -40,7 +40,13 @@ def main():
     print(f"[runner] RUNNER = {__file__}")
     print("[runner] Loading data…")
 
+    from provenance import record_run, verify_expected_sha
+    verify_expected_sha(cfg.data_path)
     run_pipeline(cfg)
+    record_run(cfg.out_root, "E_QUANTILE", cfg.data_path,
+               config={k: v for k, v in vars(cfg).items() if k != "data_path"},
+               date_col=cfg.date_col, seed=42,
+               extra={"note": "GBQuantile/ResidualRF seeds are fixed at 42 in-pipeline"})
     print(f"[runner] Elapsed: {time.time()-t0:.1f}s")
 
 if __name__ == "__main__":
