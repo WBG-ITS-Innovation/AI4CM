@@ -14,17 +14,18 @@ from backend_consts import QUALITY_GATE_SKILL_PCT
 from recommender import recommend_model, format_scorecard_markdown
 from ui_styles import (
     inject_global_css, metric_card, status_badge, section_header,
-    callout_box, grade_badge, page_header, info_tip, glossary_table,
+    callout_box, page_header, info_tip, glossary_table,
     COLORS,
     inject_design_system, ds_metric, gate_badge_tri, reading_this_chart,
     empty_state, plotly_layout, plotly_chrome, HELP, HOVER_BAR_PCT,
 )
 from format_gel import (NOT_REPORTED, NOT_VERIFIED, UNIT_LABEL, gel_millions,
-                        is_missing, number, pct)
+                        is_missing, number, pct, pct_points)
 from intervals import (calibration_verdict, coverage_by_model, coverage_by_tercile,
                        detect_intervals, reliability_curve)
 
 APPROOT = Path(__file__).resolve().parents[1]
+REPOROOT_BACKEND = APPROOT.parent / "backend"
 from paths import runs_dir
 RUNS_DIR = runs_dir()
 
@@ -327,85 +328,131 @@ else:
 # ── Scorecard cards row ──────────────────────────────────────────────
 st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# KPI STRIP — only what the project actually measures, sourced from artifacts
+#
+# What was removed and why:
+#   * The LETTER GRADE (A–F / "POOR"). It was a composite with no logged definition, so it could
+#     not be traced to anything and it compressed six independent judgements into one letter that
+#     hid all of them. A model can be accurate and have an unusable band; a grade cannot say that.
+#   * "Monthly Acc (within 10% tol)" from the strip. Its formula IS traceable
+#     (b_ml_pipeline.py:517) so it survives in the detail table WITH the formula stated, but it is
+#     not one of the six things this project measures and gates on.
+#   * R-Squared from the strip — a real metric, kept in the detail table, but not one of the six.
+#   * Every emoji from a metric label.
+#
+# Everything below reads from the run's integrity_report.json and metrics_long.csv. Where a metric
+# was never written, it renders "not reported" rather than a zero or an em dash.
+# ══════════════════════════════════════════════════════════════════════════════
+
 _mae_v = _sc.get("MAE", np.nan)
 _r2_v = _sc.get("R2", np.nan)
-_smape_v = _sc.get("sMAPE", np.nan)
-_pi_cov = _sc.get("PI Coverage", np.nan)
-_monthly_acc = _sc.get("Monthly Accuracy (10% tol)", np.nan)
 
-# Determine R² status (negative R² is a red flag)
-_r2_status = "neutral"
-if not np.isnan(_r2_v):
-    if _r2_v < 0:
-        _r2_status = "fail"
-    elif _r2_v >= 0.85:
-        _r2_status = "trust"
-    elif _r2_v >= 0.50:
-        _r2_status = "caution"
-    else:
-        _r2_status = "fail"
+# ── read the interval nominal AS DATA, from the column that names it ─────────────────
+# metrics_long.csv writes "PI_coverage@90" / "PI_width@90": the advertised level is in the column
+# NAME. That is the same principle intervals.py uses for yhat_p10/p90 and it is why the dashboard
+# no longer assumes 90% — if the pipeline changes the level, the column name changes with it.
+_pi_cov = np.nan
+_pi_nominal = None
+_pi_source = "no interval columns in metrics_long.csv"
+if metr is not None and not metr.empty:
+    import re as _re
+    _cov_cols = [c for c in metr.columns if _re.fullmatch(r"PI_coverage@(\d{1,2})", str(c))]
+    if _cov_cols:
+        _c = _cov_cols[0]
+        _pi_nominal = int(_re.fullmatch(r"PI_coverage@(\d{1,2})", _c).group(1)) / 100.0
+        _mf = metr
+        if _best and "model" in _mf.columns and (_mf["model"] == _best).any():
+            _mf = _mf[_mf["model"] == _best]
+        _vals = pd.to_numeric(_mf[_c], errors="coerce").dropna()
+        if len(_vals):
+            _pi_cov = float(_vals.mean())
+        _pi_source = f"read from the column name `{_c}`"
 
-g1, g2, g3, g4, g5, g6 = st.columns(6)
+# ── MASE: measured, but not written to these artifacts ──────────────────────────────
+# metrics_long.csv carries MAE, RMSE, sMAPE, MAPE, R2 and the PI columns — no MASE. It IS logged
+# for registry champions in experiments/log.csv, so this renders "not reported" here rather than
+# being recomputed on the page, which would produce a second implementation of a published number.
+_mase_v = np.nan
+if metr is not None and not metr.empty:
+    for _cand in ("MASE", "mase"):
+        if _cand in metr.columns:
+            _mf2 = metr
+            if _best and "model" in _mf2.columns and (_mf2["model"] == _best).any():
+                _mf2 = _mf2[_mf2["model"] == _best]
+            _mv = pd.to_numeric(_mf2[_cand], errors="coerce").dropna()
+            if len(_mv):
+                _mase_v = float(_mv.mean())
+            break
 
-with g1:
-    st.markdown(grade_badge(_grade), unsafe_allow_html=True)
+_mae_persist = _integ.get("mae_persistence", np.nan) if _integ else np.nan
+_skill_pct = _integ.get("skill_pct", np.nan) if _integ else np.nan
+_sent = _integ.get("shuffled_to_normal_ratio", np.nan) if _integ else np.nan
+_SENTINEL_THRESHOLD = 1.50
 
-with g2:
-    _best_display = _best or "N/A"
-    _best_delta = ""
-    if _quality_gate_failed:
-        _best_delta = "Not useful — below baseline"
-    st.markdown(
-        metric_card("Best Model", _best_display, delta=_best_delta,
-                     icon="🏆" if not _quality_gate_failed else "⚠️",
-                     status=_grade_status),
-        unsafe_allow_html=True,
-    )
+# Gate: the single canonical reader, so a run that wrote only the legacy inverted key is read
+# correctly instead of appearing to pass by absence.
+_gate_state = None
+if _integ:
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(REPOROOT_BACKEND))
+        from forecast_integrity import read_gate as _read_gate
+        _gate_state = _read_gate(_integ)
+    except Exception:
+        _gate_state = _integ.get("quality_gate_passed", None)
 
-with g3:
-    _mae_delta = ""
-    if _integ and not np.isnan(_mae_v):
-        _mae_persist = _integ.get("mae_persistence", np.nan)
-        if not np.isnan(_mae_persist) and _mae_persist > 0:
-            _skill_v = (1 - _mae_v / _mae_persist) * 100
-            _mae_delta = f"Skill: {_skill_v:.1f}%"
-    st.markdown(
-        metric_card("MAE", _fmt_large(_mae_v), delta=_mae_delta,
-                     icon="📐", status=_grade_status),
-        unsafe_allow_html=True,
-    )
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 
-with g4:
-    _r2_display = f"{_r2_v:.4f}" if not np.isnan(_r2_v) else "N/A"
-    _r2_delta = ""
-    if not np.isnan(_r2_v) and _r2_v < 0:
-        _r2_delta = "Worse than mean"
-    st.markdown(
-        metric_card("R-Squared", _r2_display, delta=_r2_delta,
-                     icon="📊", status=_r2_status),
-        unsafe_allow_html=True,
-    )
+with k1:
+    st.metric(f"Model MAE ({UNIT_LABEL})", gel_millions(_mae_v),
+              help=("Average absolute error of the best model on this run's evaluation window, in "
+                    "millions of lari. Lower is better. Read from the run's own metrics, not "
+                    "recomputed here."))
+with k2:
+    st.metric(f"Benchmark MAE ({UNIT_LABEL})", gel_millions(_mae_persist),
+              help=HELP["ruler"])
+with k3:
+    st.metric("Skill vs benchmark",
+              pct_points(_skill_pct) if not is_missing(_skill_pct) else NOT_REPORTED,
+              help=HELP["skill"])
+with k4:
+    st.metric("Scaled error (MASE)", number(_mase_v),
+              help=(HELP["mase"] + "  This run's artifacts do not record MASE, so it shows as "
+                    "not reported; it is logged for the registry champions in "
+                    "experiments/log.csv."
+                    if is_missing(_mase_v) else HELP["mase"]))
+with k5:
+    _sent_txt = (f"{float(_sent):.2f} / {_SENTINEL_THRESHOLD:.2f} needed"
+                 if not is_missing(_sent) else NOT_REPORTED)
+    st.metric("Signal check", _sent_txt, help=HELP["sentinel"])
+with k6:
+    _cov_txt = (f"{_pi_cov:.0%} of {_pi_nominal:.0%}"
+                if not is_missing(_pi_cov) and _pi_nominal is not None
+                else (pct(_pi_cov) if not is_missing(_pi_cov) else NOT_REPORTED))
+    st.metric("Range coverage", _cov_txt,
+              help=(HELP["coverage"] + f"  Advertised level {_pi_source}."
+                    if _pi_nominal is not None
+                    else HELP["coverage"] + "  " + HELP["nominal"]))
 
-with g5:
-    _pi_display = f"{_pi_cov:.0%}" if not np.isnan(_pi_cov) else "N/A"
-    _pi_status = "neutral"
-    if not np.isnan(_pi_cov):
-        _pi_status = "trust" if _pi_cov >= 0.85 else ("caution" if _pi_cov >= 0.70 else "fail")
-    st.markdown(
-        metric_card("PI Coverage", _pi_display, icon="🎯", status=_pi_status),
-        unsafe_allow_html=True,
-    )
-
-with g6:
-    _ma_display = f"{_monthly_acc:.0%}" if not np.isnan(_monthly_acc) else "N/A"
-    _ma_status = "neutral"
-    if not np.isnan(_monthly_acc):
-        _ma_status = "trust" if _monthly_acc >= 0.80 else ("caution" if _monthly_acc >= 0.50 else "fail")
-    st.markdown(
-        metric_card("Monthly Acc", _ma_display, delta="within 10% tol",
-                     icon="📅", status=_ma_status),
-        unsafe_allow_html=True,
-    )
+# ── gate status and the best model, on their own row so neither is a number ──────────
+_gcol1, _gcol2 = st.columns([1, 2])
+with _gcol1:
+    st.markdown(gate_badge_tri(_gate_state, label="Quality gate"), unsafe_allow_html=True)
+with _gcol2:
+    _bm = _best or NOT_REPORTED
+    st.markdown(f"**Best model:** `{_bm}`"
+                + ("  ·  selected after the overfitting gate" if _gate_state is not None else ""))
+if _gate_state is None:
+    st.caption("No gate verdict is recorded in this run's artifact, so it reads as never "
+               "verified. That is not the same as passing.")
+elif _gate_state is False:
+    st.caption("This run failed its quality gate. Treat its figures as diagnostic, not as a "
+               "usable forecast.")
+if not is_missing(_sent) and float(_sent) < _SENTINEL_THRESHOLD:
+    st.caption(f"The signal check is below {_SENTINEL_THRESHOLD:.2f}, so the skill figure above "
+               f"reflects tracking a typical level rather than anticipating individual days. "
+               f"Both numbers only mean something together.")
 
 # ── Scorecard detail table + warnings ────────────────────────────────
 st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
@@ -420,7 +467,7 @@ with st.expander("Detailed Scorecard & Recommendations", expanded=False):
             "MAPE": "Mean Absolute Percentage Error — percentage-based error",
             "sMAPE": "Symmetric MAPE — handles near-zero actuals better",
             "R2": "R-Squared — fraction of variance explained (1.0 = perfect)",
-            "Monthly Accuracy (10% tol)": "Share of months where forecast is within 10% of actual",
+            "Monthly Accuracy (10% tol)": ("Share of MONTHS whose forecast total is within 10% of the actual total. Formula (b_ml_pipeline.py:517): mean(|monthly_actual - monthly_pred| / max(|monthly_actual|, 1e-9) <= 0.10). A composite, kept for continuity and not gated on."),
             "PI Coverage": HELP["coverage"],
             "PI Avg Width": "Average width of prediction intervals (narrower = more precise)",
             "N predictions": "Number of out-of-sample prediction points used",
@@ -532,8 +579,8 @@ if has_pi_cols and not has_pi:
 st.markdown('<div class="spacer-lg"></div>', unsafe_allow_html=True)
 
 tab_overlay, tab_leader, tab_errors, tab_intervals, tab_integrity, tab_feat_imp, tab_ensemble, tab_downloads = st.tabs(
-    ["📈 Overlay", "🏆 Leaderboard", "📉 Errors", "🎯 Intervals",
-     "🔒 Integrity", "🔍 Features", "🔗 Ensemble", "📥 Downloads"]
+    ["Overlay", "Leaderboard", "Errors", "Intervals",
+     "Integrity", "Features", "Ensemble", "Downloads"]
 )
 
 # ── Tab: Overlay ─────────────────────────────────────────────────────
@@ -1108,7 +1155,7 @@ with tab_integrity:
                 _sk_display = _fmt_pct(skill_pct, 2) if not np.isnan(skill_pct) else "N/A"
                 _sk_st = "trust" if (not np.isnan(skill_pct) and skill_pct >= skill_threshold) else "fail"
                 st.markdown(
-                    metric_card("Skill %", _sk_display, icon="📊", status=_sk_st),
+                    metric_card("Skill %", _sk_display, status=_sk_st),
                     unsafe_allow_html=True,
                 )
 
