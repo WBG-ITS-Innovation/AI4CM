@@ -244,6 +244,40 @@ def build() -> str:
                      f"lari, {nb['gap_pct']:.1f}% apart). "
                      f"{esc(nb.get('why_promoted_plain', ''))}</p></div>")
 
+    # ── track record ──
+    P.append("<h2>Track record of past forecasts</h2>")
+    try:
+        from published_forecasts import list_published, score_published
+        tr = score_published(REPO / "backend" / "data" / "processed" /
+                             "master_daily_clean_treasury.csv")
+        n_issues = len(list_published())
+    except Exception:
+        tr, n_issues = {"scored": 0, "pending": 0, "summary": {}}, 0
+
+    if tr["scored"] == 0:
+        P.append(
+            f"<div class='banner info'><p><strong>No scored history yet.</strong> "
+            f"{n_issues} forecast issue(s) have been retained and {tr['pending']} predicted "
+            f"working days are still in the future. A published forecast is scored only once "
+            f"its actual value arrives — the scorer will not evaluate a date whose outcome we "
+            f"do not yet hold. This section fills in as time passes, which is how accuracy "
+            f"gets demonstrated without re-running history.</p></div>")
+    else:
+        P.append("<div class='card'><div class='tblwrap'><table><thead><tr>"
+                 "<th>Budget line</th><th>Days scored</th><th>Actual error</th>"
+                 "<th>Benchmark error</th><th>Better by</th><th>Within range</th>"
+                 "</tr></thead><tbody>")
+        for target, s_ in tr["summary"].items():
+            P.append(
+                f"<tr><td>{esc(target)}</td><td>{s_['n']}</td>"
+                f"<td>{m(s_['realized_mae'])}</td><td>{m(s_['persistence_mae'])}</td>"
+                f"<td>{s_['skill_vs_ruler_pct']:.1f}%</td>"
+                f"<td>{s_['interval_hit_rate']:.0%} "
+                f"(aim {s_['nominal_coverage']:.0%})</td></tr>")
+        P.append("</tbody></table></div><p class='sub'>Millions of lari. These are "
+                 "out-of-sample results on forecasts that were published before the outcome "
+                 "was known.</p></div>")
+
     # ── keep in mind ──
     P.append("<h2>What to keep in mind</h2><div class='card'><ul>")
     for l in nar["limitations"]:

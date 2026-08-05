@@ -189,6 +189,60 @@ for target in fc["target"].unique():
 
     st.divider()
 
+# ── Track record: how have PAST published forecasts actually done? ────────────
+#
+# This is the section that makes the accuracy claim auditable over time. It reads the
+# scorecard, which only ever contains dates whose truth has arrived -- so it can grow
+# without ever touching the sealed holdout.
+st.markdown(section_header("Track record",
+                          "How past published forecasts actually performed"),
+            unsafe_allow_html=True)
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def load_track_record():
+    from published_forecasts import list_published, score_published
+    DATA = REPOROOT / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
+    try:
+        out = score_published(DATA)
+        return out, len(list_published())
+    except Exception as exc:  # pragma: no cover - defensive on a demo machine
+        return {"error": str(exc)}, 0
+
+
+tr, n_issues = load_track_record()
+if "error" in tr:
+    st.info(f"No track record available yet ({tr['error']}).")
+elif tr["scored"] == 0:
+    st.info(
+        f"**Nothing scoreable yet.** {n_issues} forecast issue(s) retained, "
+        f"{tr['pending']} predicted days still in the future.\n\n"
+        "A published forecast is scored only once its actual value arrives in the data — "
+        "the scorer refuses to evaluate a date whose truth we do not yet hold. That is "
+        "what keeps this an honest track record rather than a re-run of history."
+        + (f"\n\nEarliest awaiting truth: **{tr['pending_dates'][0][1]}**."
+           if tr.get("pending_dates") else "")
+    )
+else:
+    st.caption(f"{tr['scored']} scored predictions across {n_issues} issue(s). "
+               f"Millions of lari.")
+    rows = []
+    for target, s_ in tr["summary"].items():
+        rows.append({
+            "Target": target,
+            "Days scored": s_["n"],
+            "Realized error": m(s_["realized_mae"]),
+            "Benchmark error": m(s_["persistence_mae"]),
+            "Better by": f"{s_['skill_vs_ruler_pct']:.1f}%",
+            "In range": f"{s_['interval_hit_rate']:.0%} (target {s_['nominal_coverage']:.0%})",
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    with st.expander("Every scored prediction"):
+        sc = pd.read_csv(REPOROOT / "forecasts" / "scorecard.csv")
+        st.dataframe(sc, hide_index=True, use_container_width=True)
+
+st.divider()
+
 # ── Provenance footer ─────────────────────────────────────────────────
 st.markdown(section_header("Provenance", "Everything needed to reproduce this page"),
             unsafe_allow_html=True)
