@@ -1,0 +1,37 @@
+{
+  "run_id": "20260805T094707.828982_Expenditure_WS4robust_raw",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T09:47:07.828982+00:00",
+  "git_sha": "98c93e1ca381",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "Expenditure",
+  "feature_set_hash": "653fe6386d78",
+  "params": "9de4085a4dae",
+  "seed": 0,
+  "fold_scheme": "TRAIN-internal rolling-origin fold, eval year 2022",
+  "dev_mae": "37869932.3041",
+  "mase": "",
+  "skill_vs_ruler": "21.4257",
+  "sentinel_ratio": "",
+  "coverage_low": "",
+  "coverage_mid": "",
+  "coverage_high": "",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS4 robustness: raw on eval window 2022, level drift 92.6%, n=260",
+  "model": "WS4robust_raw",
+  "git_sha_full": "98c93e1ca381ae08c3b8abe22acd007b7ae79cf6",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws4robust:raw"
+  ],
+  "params_full": {
+    "study": "ws4_robustness",
+    "target_transform": "raw",
+    "eval_window": "2022",
+    "level_drift_pct": 92.6164,
+    "horizon": 5
+  },
+  "ruler": 48196318.44857692,
+  "coverage_terciles": {},
+  "per_fold": []
+}
