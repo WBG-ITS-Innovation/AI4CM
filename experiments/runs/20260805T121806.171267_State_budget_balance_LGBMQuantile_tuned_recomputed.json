@@ -1,0 +1,57 @@
+{
+  "run_id": "20260805T121806.171267_State_budget_balance_LGBMQuantile_tuned_recomputed",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T12:18:06.171267+00:00",
+  "git_sha": "c1b795cb2170",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "State budget balance",
+  "feature_set_hash": "29fc7a56fbd2",
+  "params": "0c45ec5ba6be",
+  "seed": 0,
+  "fold_scheme": "DEV confirmation refitted from the stored best_params (search not re-run)",
+  "dev_mae": "182294096.4074",
+  "mase": "1.482283",
+  "skill_vs_ruler": "24.8746",
+  "sentinel_ratio": "3.9919",
+  "coverage_low": "0.5714",
+  "coverage_mid": "0.6747",
+  "coverage_high": "0.5181",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS2 RECOMPUTED: canonical ruler and units-consistent sentinel; supersedes 20260805T104829.215483_State_budget_balance_LGBMQuantile_tuned",
+  "model": "LGBMQuantile_tuned_recomputed",
+  "git_sha_full": "c1b795cb2170ce3f1b0abe7d0c6b2485e83ebe32",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws2recompute:20260805T104829.215483_State_budget_balance_LGBMQuantile_tuned"
+  ],
+  "params_full": {
+    "study": "ws2_tuning_recomputed",
+    "model": "LGBMQuantile",
+    "best_params": {
+      "learning_rate": 0.12318865535761775,
+      "num_leaves": 23,
+      "min_child_samples": 69,
+      "subsample": 0.911157842435642,
+      "subsample_freq": 0,
+      "colsample_bytree": 0.6298587941762777,
+      "reg_lambda": 7.589870917266859,
+      "reg_alpha": 0.6908170437108905
+    },
+    "target_transform": "raw",
+    "horizon": 5,
+    "supersedes_run_id": "20260805T104829.215483_State_budget_balance_LGBMQuantile_tuned",
+    "ruler_source": "canonical DEV h-step persistence",
+    "sentinel_probes": {
+      "ridge": 3.991885218133043,
+      "tree": 3.1821208137833965,
+      "forest": 3.58008751514954
+    }
+  },
+  "ruler": 242653025.4638168,
+  "coverage_terciles": {
+    "low": 0.5714285714285714,
+    "mid": 0.6746987951807228,
+    "high": 0.5180722891566265
+  },
+  "per_fold": []
+}
