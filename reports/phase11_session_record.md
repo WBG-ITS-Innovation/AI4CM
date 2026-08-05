@@ -202,15 +202,61 @@ move.** 1.0710 tuned against 1.0882 untuned — unchanged within noise, and stil
 1.50 threshold. That is the fifth consecutive lever to improve nothing about signal on the
 flows. For Revenues and the stock target it remains unmeasured pending the units fix.
 
-### Remaining target: in flight, results not yet incorporated
+### State budget balance COMPLETE — the one target where tuning WON
 
-The Optuna study is running in the background: 100 trials per target across
-`{LGBMQuantile, CatBoostQuantile}` on TRAIN-internal folds, then one DEV confirmation each.
-The stock target had not completed when this record closed.
+**100/100 trials, 0 failed, 225s.** Best model `LGBMQuantile` — note this is a **model swap**,
+not just a retune: the incumbent is `HistGBDT_L1`.
 
-**Nothing from the search has been reported, promoted, or written into the registry.** No
-`reports/ws2_tuning.md` exists, because writing one now would mean either waiting past the
-point where I can finish cleanly or publishing partial results as if they were the study.
+| | TRAIN objective | DEV MAE |
+|---|---:|---:|
+| Untuned incumbent (`HistGBDT_L1`, raw, delta) | 130,265,217 | 194,104,922 |
+| Tuned (`LGBMQuantile`) | **128,417,593** | **182,294,096** |
+| Change | **+1.42%** | **+6.09%** |
+
+Unlike both flow targets, the gain **grew** from TRAIN to DEV rather than reversing. This is
+the first positive WS2 result and the only one of three.
+
+**`crossings = 6`** — the first non-zero crossing count in the study. The crossing-safe repair
+did real work here, which is exactly what the counter exists to surface; on the two flow
+targets it was 0.
+
+Interval coverage 58.8% against a nominal 80%, so this target shares Expenditure's calibration
+problem rather than Revenues' relatively healthy 83.2%.
+
+### The complete WS2 study
+
+| Target | TRAIN gain | **DEV MAE change** | Promote? |
+|---|---:|---:|---|
+| Revenues | +0.96% | **−3.13%** | **No** |
+| Expenditure | +0.76% | **−0.17%** | **No** |
+| State budget balance | +1.42% | **+6.09%** | **Candidate — see conditions** |
+
+The TRAIN gain predicted the DEV outcome in none of the three cases: two sub-1% TRAIN gains
+reversed, and the largest TRAIN gain grew. **A TRAIN-fold objective is not a reliable guide to
+DEV here**, which is itself worth knowing before any future search is trusted.
+
+### Conditions on promoting the stock recipe — NOT satisfied yet
+
+The +6.09% DEV MAE improvement is ruler-independent and therefore sound. But promotion needs
+more than that, and none of it was done this session:
+
+1. **Fix the non-canonical ruler** and recompute the skill figure. The logged 26.73% cannot be
+   published next to the incumbent's 20.01%.
+2. **Fix the sentinel units mismatch.** The logged 0.9835 is invalid (delta target vs level
+   truth), as predicted.
+3. **Re-point the registry** to the tuned run and re-run `verify_against_log`.
+4. **Regenerate the forward forecast**, since a model swap changes the published numbers, and
+   decide whether that warrants a new published issue date.
+5. **Consider whether one DEV fold is enough** to justify a cross-family swap. WS4's robustness
+   study exists because a single DEV fold misled us once already.
+
+All three targets completed: 100 trials each across `{LGBMQuantile, CatBoostQuantile}` on
+TRAIN-internal folds, 0 failures, then one DEV confirmation each.
+
+**Nothing from the search has been promoted or written into the registry**, and no
+`reports/ws2_tuning.md` exists — the results are recorded here and in `experiments/log.csv`
+instead. Writing the workstream report requires the two harness fixes first, or it would
+publish skill figures computed against the wrong denominator.
 
 **Durability:** `scripts/ws2_tune.py` is version-controlled (`20d4469`) precisely so this is
 resumable — a 45-minute search whose driver lives in a session-scoped scratch directory cannot
@@ -250,7 +296,7 @@ grepping for the import, `full_study` and the main guard rather than trusting th
 
 | # | Task | Notes |
 |---|---|---|
-| **1** | **Finish the WS2 search and report it** | **Resume point.** Driver committed; results land in `experiments/log.csv`. **Revenues (−3.13%) and Expenditure (−0.17%) are done and BOTH LOST on DEV — do not promote either.** Stock remains. **Two harness defects must be fixed before any WS2 skill figure is quoted:** the non-canonical ruler and the sentinel units mismatch (§4) |
+| **1** | **Fix the two WS2 harness defects, then write `reports/ws2_tuning.md`** | **Resume point.** The search is COMPLETE (all three targets, 100 trials each, 0 failures) — do not re-run it. Fix the non-canonical ruler and the sentinel units mismatch (§4), recompute the metrics from the existing runs, then report. **Do not promote Revenues (−3.13%) or Expenditure (−0.17%).** **State budget balance gained +6.09% on DEV and is a promotion candidate** subject to the five conditions in §4 |
 | 2 | WS6 ensembling; WS7 selection + conformal intervals | WS7 now owns **four** null-distribution / diagnostic studies: tree probe, model agreement, the ratio-transform "fluctuations scale with level" hypothesis, and CQR |
 | 3 | Send **T2** — forward auction/redemption calendar is the top ask | Ready |
 | 4 | Ops P0, artifact validator, Phase-1 cleanup (untrack `.venv`/`.env` **without printing contents**) | Deferred since Phase 1 |
