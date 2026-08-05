@@ -948,6 +948,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                         shift_diagnostic_horizon_aware,
                         compute_persistence_baseline,
                         compute_point_metrics,
+                        compute_seasonal_naive_baseline,
                         compute_skill_score,
                     )
                 except ImportError:
@@ -956,6 +957,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                         shift_diagnostic_horizon_aware,
                         compute_persistence_baseline,
                         compute_point_metrics,
+                        compute_seasonal_naive_baseline,
                         compute_skill_score,
                     )
                 
@@ -1047,6 +1049,11 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     "mae_best": shift_check.get("best_mae", np.nan),
                     "is_critical_timestamping_bug": False,
                 })
+                # A2: keep the field the Dashboard reads, but never let a
+                # season == horizon coincidence masquerade as an independent
+                # second baseline.
+                integrity_report.update(
+                    compute_seasonal_naive_baseline(pred_model, cfg.horizon))
             except ImportError as _exc:
                 # forecast_integrity is now the ONLY integrity module. There is no
                 # legacy fallback to degrade to, so a failure here is fatal rather
