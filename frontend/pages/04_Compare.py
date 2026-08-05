@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import json
 import streamlit as st
+from ui_styles import (inject_design_system, gate_badge_tri, reading_this_chart,
+                       empty_state, plotly_layout, ds_metric, HELP, COLORS)
+from format_gel import NOT_REPORTED, UNIT_LABEL, gel_millions, pct_points, ratio
+
 
 from utils_frontend import list_runs, load_run_outputs, RUNS_ROOT
 
@@ -19,6 +24,7 @@ except ImportError:
 
 st.set_page_config(page_title="Compare · Treasury Forecast", page_icon="⚖️", layout="wide")
 inject_global_css()
+inject_design_system()
 st.markdown(
     page_header("📊 Compare Runs",
                 "Select 2-6 runs to compare forecasts, metrics, and find the best model"),
@@ -107,9 +113,139 @@ if len(filtered) < 2:
 st.success(f"Comparing **{len(filtered)} runs** for target='{tgt}', horizon={hz}")
 
 # -------------------- tabs --------------------
-tab_overlay, tab_metrics, tab_winner, tab_intervals = st.tabs(
-    ["Overlay Chart", "Metric Comparison", "Winner Summary", "Interval Comparison"]
+tab_ruler, tab_overlay, tab_metrics, tab_winner, tab_intervals = st.tabs(
+    ["Skill vs the shared ruler", "Overlay Chart", "Metric Comparison",
+     "Winner Summary", "Interval Comparison"]
 )
+
+# ── Tab: cross-family skill on the ONE shared ruler ───────────────────────────
+#
+# The point of this tab is that every family is measured against the same h-step persistence
+# benchmark, computed by one shared function. Without that, skill numbers from different
+# families are not comparable and a bar chart of them is misleading. Two things are shown
+# alongside each bar because neither means much alone:
+#   * the sentinel reading -- a model can post large skill while its inputs carry no
+#     information about the target, which is central tendency rather than forecasting;
+#   * a note when a run's evaluation window or horizon unit differs from the others, since
+#     that alone can move skill by tens of points.
+with tab_ruler:
+    st.subheader("Skill against the shared persistence benchmark")
+
+    _rows = []
+    for _name, _pred in filtered.items():
+        _rd = RUNS_ROOT / _name
+        _integ = {}
+        for _cand in (_rd / "outputs" / "artifacts" / "integrity_report.json",
+                      _rd / "artifacts" / "integrity_report.json"):
+            if _cand.exists():
+                try:
+                    _integ = json.loads(_cand.read_text(encoding="utf-8"))
+                except Exception:
+                    _integ = {}
+                break
+        # The ruler and skill are READ from the run's own integrity report, never
+        # recomputed here. The backend computes them with the single shared function; a
+        # second implementation in the frontend could silently diverge, which is exactly
+        # the failure mode that made an earlier tuning harness produce incomparable skill
+        # figures. Where a run does not record them, they render as not reported.
+        _best = _integ.get("best_model")
+        _sub = _pred.copy()
+        if _best and "model" in _sub.columns and (_sub["model"] == _best).any():
+            _sub = _sub[_sub["model"] == _best]
+        _td = (pd.to_datetime(_sub["target_date"], errors="coerce")
+               if "target_date" in _sub.columns else None)
+        _rows.append({
+            "run": _name,
+            "model": _best or NOT_REPORTED,
+            "skill": _integ.get("skill_pct", np.nan),
+            "ruler": _integ.get("mae_persistence", np.nan),
+            "mae": _integ.get("mae_best", np.nan),
+            "n": int(len(_sub)),
+            "sentinel": _integ.get("shuffled_to_normal_ratio", np.nan),
+            "family": _integ.get("pipeline", NOT_REPORTED),
+            "win_from": _td.min().date() if _td is not None and _td.notna().any() else None,
+            "win_to": _td.max().date() if _td is not None and _td.notna().any() else None,
+            "horizon": _integ.get("horizon", np.nan),
+        })
+    _cmp = pd.DataFrame(_rows)
+
+    if _cmp.empty or _cmp["skill"].isna().all():
+        st.markdown(
+            empty_state(
+                "No run has the columns needed to compute skill on the shared ruler.",
+                filename="artifacts/integrity_report.json (needs skill_pct and mae_persistence)",
+                looked_in=str(RUNS_ROOT),
+                command="Re-run any family; the runner writes the shared benchmark into its integrity report",
+            ), unsafe_allow_html=True)
+    else:
+        _MIN_SENTINEL = 1.50
+        _plot = _cmp.dropna(subset=["skill"]).sort_values("skill", ascending=False)
+        _cols = [COLORS["trust"] if (pd.notna(sv) and sv >= _MIN_SENTINEL)
+                 else COLORS["caution"] for sv in _plot["sentinel"]]
+        _labels = [f"{s:.1f}%  (signal {('x%.2f' % sv) if pd.notna(sv) else 'not reported'})"
+                   for s, sv in zip(_plot["skill"], _plot["sentinel"])]
+        fig_r = go.Figure()
+        fig_r.add_trace(go.Bar(
+            x=_plot["skill"], y=_plot["run"], orientation="h", marker_color=_cols,
+            text=_labels, textposition="outside", name="Skill",
+            customdata=np.stack([
+                _plot["sentinel"].fillna(-1.0), _plot["ruler"].fillna(0) / 1e6,
+                _plot["n"], _plot["model"].astype(str)], axis=-1),
+            hovertemplate=("<b>%{y}</b><br>Model: %{customdata[3]}<br>"
+                           "Skill vs shared ruler: %{x:.2f}%<br>"
+                           "Signal check: x%{customdata[0]:.2f}<br>"
+                           "Ruler: %{customdata[1]:,.1f} M GEL<br>"
+                           "Days scored: %{customdata[2]:,}<extra></extra>")))
+        fig_r.add_vline(x=0, line_color=COLORS["neutral"])
+        plotly_layout(fig_r, height=90 + 42 * len(_plot),
+                      xtitle="Skill vs the shared persistence benchmark (%)",
+                      legend_bottom=False)
+        st.plotly_chart(fig_r, use_container_width=True, config={"displaylogo": False})
+
+        _weak = _plot[_plot["sentinel"].fillna(0) < _MIN_SENTINEL]
+        st.markdown(reading_this_chart(
+            "Every bar is measured against the <b>same</b> benchmark — predict that the value "
+            "five working days ago repeats — computed by one shared function, so these numbers "
+            "are comparable across model families. The figure in brackets is the signal "
+            "self-test.<br><br>"
+            f"<b>Amber bars fail the signal test</b> (below x{_MIN_SENTINEL:.2f}). For those "
+            "runs the error really is smaller than the benchmark, but shuffling the historical "
+            "answers barely hurt the model — so it is tracking a typical level rather than "
+            "anticipating individual days. A large skill number next to a failing signal test "
+            "is not a forecast; it is regression to the mean against a spiky benchmark. The "
+            "two numbers only mean something together."), unsafe_allow_html=True)
+
+        # ── differing window or horizon unit invalidates a direct comparison ──
+        _notes = []
+        _hs = set(int(h) for h in _cmp["horizon"].dropna().unique())
+        if len(_hs) > 1:
+            _notes.append(f"Runs use **different horizons** ({sorted(_hs)}). Skill at "
+                          f"different horizons is not directly comparable — a shorter "
+                          f"horizon is an easier problem.")
+        _wins = {(r["win_from"], r["win_to"]) for _, r in _cmp.iterrows()
+                 if r.get("win_from") is not None}
+        if len(_wins) > 1:
+            _notes.append("Runs cover **different evaluation windows**. The benchmark is "
+                          "recomputed per window, so a run evaluated on a calmer period "
+                          "faces an easier benchmark and its skill is not comparable.")
+        _fams = set(str(f) for f in _cmp["family"].dropna().unique())
+        if len(_fams) > 1:
+            _notes.append(f"Families present: {', '.join(sorted(_fams))}. Skill is "
+                          f"comparable across families *because* the benchmark is shared — "
+                          f"that is the point of this view.")
+        for _n in _notes:
+            st.markdown(f"- {_n}")
+
+        st.dataframe(pd.DataFrame({
+            "Run": _cmp["run"],
+            "Family": _cmp["family"],
+            "Best model": _cmp["model"],
+            "Skill vs ruler": [pct_points(v) for v in _cmp["skill"]],
+            "Signal check": [ratio(v) for v in _cmp["sentinel"]],
+            f"Ruler ({UNIT_LABEL})": [gel_millions(v) for v in _cmp["ruler"]],
+            "Days scored": [f"{int(v):,}" if pd.notna(v) else NOT_REPORTED
+                            for v in _cmp["n"]],
+        }), hide_index=True, use_container_width=True)
 
 # -------------------- Tab 1: Overlay Chart --------------------
 with tab_overlay:

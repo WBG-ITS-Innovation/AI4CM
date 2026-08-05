@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -22,10 +23,14 @@ APPROOT = Path(__file__).resolve().parents[1]
 REPOROOT = APPROOT.parent
 sys.path.insert(0, str(REPOROOT / "backend"))
 
-from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
+from ui_styles import (COLORS, inject_global_css, page_header, section_header,  # noqa: E402
+                       inject_design_system, gate_badge_tri, reading_this_chart,
+                       empty_state, plotly_layout, HELP, HOVER_BAND)
+from format_gel import NOT_REPORTED, UNIT_LABEL, pct
 
 st.set_page_config(page_title="Forecast · Treasury Forecast", page_icon="🔭", layout="wide")
 inject_global_css()
+inject_design_system()
 
 GEN_CMD = "./backend/.venv/bin/python backend/run_forward_forecast.py"
 
@@ -94,6 +99,19 @@ with c4:
     st.metric("Data through", str(pd.to_datetime(
         prov.get("data", {}).get("latest_data_date", fc["origin_date"].max())).date()))
 
+# The distinction that keeps this page honest: these dates lie BEYOND the end of the data,
+# so there is no actual value to compare against yet. Calling them "upcoming" invites a
+# reader to look for an accuracy number that cannot exist.
+_de = str(prov.get("data", {}).get("latest_data_date", ""))[:10]
+_d0 = fc["target_date"].min().date()
+_d1 = fc["target_date"].max().date()
+st.warning(
+    f"**These dates are beyond the end of the data, not upcoming days in a backtest.** "
+    f"The data ends **{_de or NOT_REPORTED}**; the forecast covers **{_d0} to {_d1}**. "
+    f"No actual values exist for these dates yet, so nothing on this page is an accuracy "
+    f"measurement. Accuracy appears in the track record below once the actuals arrive."
+)
+
 st.info(data["narrative"]["narrative"]["scope"])
 st.markdown(data["narrative"]["narrative"]["signal_finding"])
 
@@ -132,23 +150,34 @@ for target in fc["target"].unique():
     with left:
         fig = go.Figure()
         d = rows["target_date"]
+        _lo, _mid, _hi = (rows["p10"] / 1e6, rows["p50"] / 1e6, rows["p90"] / 1e6)
+        # Shaded band, drawn first so the central line sits on top of it.
         fig.add_trace(go.Scatter(
             x=list(d) + list(d[::-1]),
-            y=list(rows["p90"] / 1e6) + list((rows["p10"] / 1e6)[::-1]),
-            fill="toself", fillcolor="rgba(99,110,250,0.18)",
+            y=list(_hi) + list(_lo[::-1]),
+            fill="toself", fillcolor="rgba(29,78,216,0.15)",
             line=dict(color="rgba(0,0,0,0)"), hoverinfo="skip",
             name="Likely range (8 days in 10)"))
+        # Edges, faint, so the band's boundaries are readable at a glance.
+        for _y, _nm in ((_hi, "Upper (P90)"), (_lo, "Lower (P10)")):
+            fig.add_trace(go.Scatter(
+                x=d, y=_y, mode="lines", line=dict(color=COLORS["info"], width=1,
+                                                   dash="dot"),
+                name=_nm, hoverinfo="skip", showlegend=False))
+        # Central line carries the full P10/P50/P90 triple in its hover.
         fig.add_trace(go.Scatter(
-            x=d, y=rows["p50"] / 1e6, mode="lines+markers",
-            line=dict(color=COLORS["info"], width=3),
-            marker=dict(size=9), name="Central estimate"))
-        fig.update_layout(
-            height=340, margin=dict(l=10, r=10, t=30, b=10),
-            yaxis_title="Million lari", xaxis_title=None,
-            legend=dict(orientation="h", y=-0.2),
-            hovermode="x unified",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            x=d, y=_mid, mode="lines+markers",
+            line=dict(color=COLORS["info"], width=3), marker=dict(size=9),
+            name="Central estimate (P50)",
+            customdata=np.stack([_lo, _mid, _hi], axis=-1),
+            hovertemplate=HOVER_BAND))
+        plotly_layout(fig, height=340, ytitle=f"{UNIT_LABEL.capitalize()}")
+        st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+        st.markdown(reading_this_chart(
+            "The line is the central estimate for each working day; the shaded band is the "
+            "range we expect the actual figure to fall inside on eight days out of ten. A "
+            "wider band means less certainty about that day, not a worse forecast. Hover a "
+            "point to see all three numbers together."), unsafe_allow_html=True)
 
     # Table in millions
     with right:
@@ -167,9 +196,12 @@ for target in fc["target"].unique():
     gcols = st.columns(len(gates))
     for col, (key, g) in zip(gcols, gates.items()):
         with col:
-            icon = "✅" if g.get("passed") else "❌"
-            st.markdown(f"{icon} **{g.get('name', key)}**")
-            st.caption(g.get("reason_plain", ""))
+            # Tri-state: a gate with no recorded outcome must read as never verified,
+            # never as a pass.
+            st.markdown(gate_badge_tri(g.get("passed", None),
+                                       label=g.get("name", key)),
+                        unsafe_allow_html=True)
+            st.caption(g.get("reason_plain", "") or "No reason recorded for this check.")
 
     if sec:
         with st.expander("In plain language", expanded=not publishable):
