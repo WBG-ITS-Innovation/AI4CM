@@ -50,6 +50,14 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 
+# X9: the canonical gate writer. Imported at module level so it is unambiguously in scope
+# wherever the integrity report is finalised, rather than relying on a nested try-block import.
+try:
+    from forecast_integrity import write_gate
+except Exception:  # pragma: no cover - resolved via the package path in some entry points
+    from backend.forecast_integrity import write_gate
+
+
 # Optional libraries
 try:
     from xgboost import XGBRegressor  # type: ignore
@@ -858,6 +866,11 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 val_mae_fold = float(np.mean(abs_residuals))
                 train_mae_fold = float(np.mean(np.abs(y_tr_fit - estimator.predict(X_tr_fit))))
                 conformal_radius = float(np.quantile(abs_residuals, cfg.nominal_pi))
+                # C8: the advertised level is a property of the published interval, so it is
+                # recorded as DATA. Without it a consumer has y_lo/y_hi with no idea what
+                # coverage they claim, and scoring them against a guessed level produces a
+                # confident verdict about nothing (the lab rendered "not reported" instead).
+                _nominal_pi_used = float(cfg.nominal_pi)
                 ratio = val_mae_fold / train_mae_fold if train_mae_fold > 0 else np.nan
                 print(f"[pipeline] {model_name} fold {fold_idx}: "
                       f"train_MAE={train_mae_fold:.2f}, val_MAE={val_mae_fold:.2f}, "
@@ -1372,17 +1385,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     print(f"[WARN] Run status: FAILED_QUALITY (outputs still written)")
                     # ✅ FIX 3: Store status but don't raise - outputs are still valid
                     integrity_report["run_status"] = "FAILED_QUALITY"
-                    integrity_report["quality_gate_failed"] = True
+                    write_gate(integrity_report, False)   # X9: canonical + legacy, kept in sync
                     # Save updated report (but don't abort)
                     with open(out_root / "artifacts" / "integrity_report.json", "w", encoding="utf-8") as f:
                         json.dump(integrity_report, f, indent=2, default=str)
                 else:
                     integrity_report["run_status"] = "SUCCESS"
-                    integrity_report["quality_gate_failed"] = False
+                    write_gate(integrity_report, True)    # X9: canonical + legacy, kept in sync
                     print(f"[OK] Quality gate passed: skill={skill_pct:.2f}% >= {_QUALITY_GATE_SKILL_PCT}%")
             else:
                 integrity_report["run_status"] = "SUCCESS" if not integrity_report.get("lag_warning", False) else "WARNING"
-                integrity_report["quality_gate_failed"] = False
+                write_gate(integrity_report, True)    # X9: canonical + legacy, kept in sync
             
             # Save final report with run_status
             with open(out_root / "artifacts" / "integrity_report.json", "w", encoding="utf-8") as f:

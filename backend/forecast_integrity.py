@@ -12,7 +12,7 @@ This module provides comprehensive integrity checks for forecast predictions:
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, Optional
+from typing import Sequence, Dict, Tuple, Optional
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
@@ -356,6 +356,100 @@ def compute_seasonal_naive_baseline(
     out["mae_seasonal_naive"] = float(np.mean(np.abs(y[season_steps:] - y[:-season_steps])))
     out["n_seasonal_naive"] = int(len(y) - season_steps)
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THE GATE CONTRACT  (X9, X10, F1)
+#
+# X9. Families disagreed on polarity: b_ml wrote `quality_gate_failed`, while e_quantile,
+# c_dl and a_stat wrote `quality_gate_passed`. Any consumer reading one key got nothing on
+# the families writing the other -- and `daily_summary.gate_reasons()` read only
+# `quality_gate_passed`, so a B_ML run that FAILED its gate was reported as passing. Two keys
+# with opposite polarity is not a naming inconsistency; it is a silent inversion.
+#
+# `GATE_KEY` is now canonical and positive. `read_gate()` is the ONE reader, and it accepts the
+# legacy key so historical artifacts stay readable while never letting absence read as a pass.
+#
+# X10. There must be exactly one PUBLISHER of a gate verdict -- the family's own
+# integrity_report.json -- and every other artifact DERIVES from it. SUMMARY.json contradicted
+# integrity_report.json on the 2026-08-04 C_DL run because both computed it independently.
+#
+# F1. `measured` and `threshold` must both be numeric so a reader can compare them. A string
+# in either makes the pair undisplayable and uncheckable.
+# ══════════════════════════════════════════════════════════════════════════════
+
+GATE_KEY = "quality_gate_passed"
+GATE_KEY_LEGACY = "quality_gate_failed"
+
+#: Tri-state gate verdicts. `None` means never verified and must never read as a pass.
+GATE_PASS = True
+GATE_FAIL = False
+GATE_UNVERIFIED = None
+
+
+def read_gate(report: Optional[Dict]) -> Optional[bool]:
+    """The single reader for a gate verdict. Returns True / False / None.
+
+    Resolution order, and the reason for it:
+      1. ``run_status == "FAILED_QUALITY"`` -- an explicit failure outranks any flag.
+      2. the canonical positive key.
+      3. the legacy inverted key, negated (historical artifacts).
+      4. ``run_status == "SUCCESS"`` -- a positive assertion, honoured only after both keys.
+      5. ``None`` -- never verified. Absence of all of the above is NOT a pass.
+    """
+    if not report:
+        return GATE_UNVERIFIED
+    if str(report.get("run_status", "")).strip().upper() == "FAILED_QUALITY":
+        return GATE_FAIL
+    if GATE_KEY in report and report[GATE_KEY] is not None:
+        return bool(report[GATE_KEY])
+    if GATE_KEY_LEGACY in report and report[GATE_KEY_LEGACY] is not None:
+        return not bool(report[GATE_KEY_LEGACY])
+    # 4. `run_status == "SUCCESS"` is a positive assertion by the publisher, so it is honoured
+    #    as a FALLBACK -- after both explicit keys, so an explicit false always wins. Without
+    #    this, tightening the reader would have flipped historical artifacts that record only a
+    #    status to "never verified", which is a different claim from what they assert.
+    if str(report.get("run_status", "")).strip().upper() == "SUCCESS":
+        return GATE_PASS
+    return GATE_UNVERIFIED
+
+
+def write_gate(report: Dict, passed: Optional[bool], *,
+               reasons: Optional[Sequence[str]] = None) -> Dict:
+    """Write the canonical gate verdict, keeping the legacy key in sync.
+
+    The legacy key is still emitted so consumers pinned to it do not silently flip meaning
+    during the transition; it is derived here rather than set independently, which is what
+    stopped the two from contradicting each other.
+    """
+    report[GATE_KEY] = passed
+    if passed is None:
+        report.pop(GATE_KEY_LEGACY, None)
+    else:
+        report[GATE_KEY_LEGACY] = (not passed)
+    if reasons is not None:
+        report["gate_reasons"] = list(reasons)
+    return report
+
+
+def gate_check(name: str, measured, threshold, passed: Optional[bool],
+               reason_plain: str = "") -> Dict:
+    """One gate check, with measured and threshold both NUMERIC (F1).
+
+    A string in either field makes the pair impossible to compare or plot, which is how a gate
+    ends up displayed without the number that justified it.
+    """
+    def _num(v):
+        if v is None:
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f == f else None      # NaN -> None
+
+    return {"name": name, "measured": _num(measured), "threshold": _num(threshold),
+            "passed": passed, "reason_plain": reason_plain}
 
 
 def compute_point_metrics(y_true, y_pred) -> Dict[str, float]:
