@@ -5,7 +5,7 @@ required. Share this one file.
 
 **Generated:** 2026-08-04, updated 2026-08-05 (phase 7) · **Branch:** `model/excellence` @ `6c22009`
 **`origin/main`** @ `6c22009` (**Phase 1 via PR #23, Phase 2a via PR #24 — both merged**)
-**Suite:** 417 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
+**Suite:** 441 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
 retrospective disclosure
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
@@ -93,12 +93,15 @@ window are worth more than care.
 | Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
 | Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
-### Commits on `model/excellence` (7 ahead of `main`)
+### Commits on `model/excellence` (11 ahead of `main`)
 
 Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Seven commits sit on top,
 carried by **PR #25** (open, ready for review, not merged). Recent history:
 
 ```
+9ba1144  WS2 infrastructure: quantile port, crossing-safe, h-gapped early stopping
+9cd7e9b  WS4 robustness: Revenues scaling gain is drift-dependent in magnitude, not sign
+98c93e1  docs: phase-10 session record
 4b4a515  Published-forecast retention + realized scoring
 250f501  WS4: target scaling. ratio-to-trailing-level wins Revenues by 25.7% on DEV
 90213a2  Decisions 1-4: install catboost, record dual-probe and model-agreement rulings
@@ -203,7 +206,20 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 the demo tranche and published-forecast scoring are complete.
 
 > **Standing rule adopted 2026-08-05:** never state a test count in a commit message that was
-> not produced by a `pytest` run from the repo root **in that same command**.
+> not produced by a `pytest` run from the repo root **in that same command** — and **check the
+> exit code, not the tail**. Piping `pytest` to `tail` makes the pipeline's status that of
+> `tail`, so an `&&` guard does not short-circuit on failure. This bit once: a commit claimed
+> 441 while the suite was 440 passed + 1 failed (`9ba1144`, amended).
+>
+> **WS4 robustness (`9cd7e9b`):** Revenues' ratio advantage tracks the evaluation window's
+> level drift at **corr +0.987** (+1.30% at 13.5% drift → +24.14% at 84.1%). A line fitted on
+> TRAIN windows alone predicts +21.83% at DEV's 81.7% drift against a measured +25.73%, so the
+> DEV gain is the relationship doing what it does, not an anomaly. **Quote the 55.92% DEV
+> skill as conditional on a high-drift period** — enforced by `scaling_caveat` in the registry
+> plus two tests. Adoption stands on the weaker claim that the advantage was positive in every
+> window tested. Expenditure and the stock target are *hurt* by ratio and hurt more as drift
+> rises, so drift alone does not determine whether it helps — an untested hypothesis
+> (fluctuations scaling with level) is recorded for WS7.
 >
 > **WS4 landed.** Revenues uses `ratio`-to-trailing-level (DEV error 52,417,152 → 38,931,956,
 > skill 40.65% → **55.92%**); Expenditure and the stock target stay raw. Implemented as an
