@@ -10,7 +10,8 @@ try:
     from utils_frontend import list_runs, zip_outputs, collect_output_files
 except Exception:
     def list_runs():
-        runs_dir = Path(__file__).resolve().parents[1] / "runs"
+        from paths import runs_dir as _rd
+        runs_dir = _rd()
         if not runs_dir.exists():
             return []
         return sorted([p for p in runs_dir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
@@ -33,9 +34,12 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 APPROOT = Path(__file__).resolve().parents[1]
-RUNS_DIR = APPROOT / "runs"
+from paths import runs_dir
+RUNS_DIR = runs_dir()
+from ui_styles import (inject_design_system, ds_metric, empty_state, callout_box,
+                       reading_this_chart)
+from format_gel import NOT_REPORTED
 
-from ui_styles import inject_design_system  # presentation only
 st.set_page_config(page_title="History · Treasury Forecast", page_icon="🕒", layout="wide")
 inject_global_css()
 inject_design_system()
@@ -133,13 +137,33 @@ with c4:
                              default=["Run ID","Finished","Family","Target","Cadence","Horizon(s)","Best model (MAE)","Outputs path","Duration (s)"])
 
 df = _scan_runs()
+
+# ── Empty state. With no runs the frame has no columns at all, and selecting the display
+# columns raised "None of [Index([...])] are in the [columns]" -- a traceback where a fresh
+# clone should simply be told there is nothing yet.
+if df.empty:
+    st.markdown(
+        empty_state(
+            "No runs found yet.",
+            filename="runs/<run_id>/outputs/predictions_long.csv",
+            looked_in=str(RUNS_DIR),
+            command="Open the Lab page and start a run, "
+                    "or set AI4CM_RUNS_DIR to an existing runs folder",
+        ),
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
 if fam.strip():
     f = fam.lower(); df = df[df.apply(lambda r: f in (" ".join(map(str, r.values))).lower(), axis=1)]
 if only_ok:
     df = df[df["Has preds"] == "✅"]
 
 st.subheader("Overview")
-st.dataframe(df[visible], use_container_width=True, hide_index=True)
+_visible = [c for c in visible if c in df.columns]
+if not _visible:
+    _visible = list(df.columns)
+st.dataframe(df[_visible], use_container_width=True, hide_index=True)
 st.download_button("⬇️ Download overview (CSV)", data=df.to_csv(index=False).encode("utf-8"), file_name="runs_overview.csv")
 
 # Drill-down

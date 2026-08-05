@@ -6,13 +6,12 @@ were untested, and an import error or a bad column reference is invisible until 
 the tab in front of an audience. This suite is what caught an import landing after its own use
 while the visual pass was being applied.
 
-**What this does and does not verify.** Every case renders against whatever run artifacts are
-actually on disk. The fixtures below build synthetic run folders and set ``AI4CM_RUNS_DIR``,
-but **the pages do not read that variable** — their runs directory is hard-coded — so the
-three "states" currently exercise the same real artifacts rather than three different ones.
-The fixtures are kept because making the pages honour an override is a content change, listed
-in ``reports/ui_content_backlog.md``; until then, do not read these cases as covering the
-empty-artifact path.
+**The three states are real.** The pages resolve their runs directory through
+``frontend/paths.py``, which honours ``AI4CM_RUNS_DIR``, so the fixtures below genuinely
+exercise an empty directory, one ordinary run and a withheld run. (An earlier version of this
+suite set that variable against pages that hard-coded the path, so all three "states" silently
+read the same real artifacts and the empty case was never tested — ``test_tier1_correctness``
+now pins the override itself.)
 """
 from __future__ import annotations
 
@@ -66,8 +65,7 @@ def _assert_clean(at: AppTest, page: Path, state: str) -> None:
 
 @pytest.mark.parametrize("page", PAGES, ids=lambda p: p.name)
 def test_page_renders_with_no_artifacts(page, tmp_path, monkeypatch):
-    """Intended as the fresh-clone case. See the module docstring: the override is not yet
-    honoured by the pages, so this currently duplicates the repository-artifacts case."""
+    """A fresh clone has no runs. Pages must say so, not crash."""
     monkeypatch.setenv("AI4CM_RUNS_DIR", str(tmp_path / "empty_runs"))
     (tmp_path / "empty_runs").mkdir(parents=True, exist_ok=True)
     at = _run(page)

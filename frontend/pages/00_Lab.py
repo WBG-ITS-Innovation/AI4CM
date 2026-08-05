@@ -28,7 +28,8 @@ inject_global_css()
 
 inject_design_system()
 APPROOT = Path(__file__).resolve().parent
-RUNS_DIR = APPROOT / "runs"
+from paths import runs_dir
+RUNS_DIR = runs_dir()
 RUNS_DIR.mkdir(exist_ok=True)
 
 # -------------------------------------------------------------------
