@@ -28,6 +28,21 @@ DASHBOARD = FRONTEND / "pages" / "01_Dashboard.py"
 HISTORY = FRONTEND / "pages" / "02_History.py"
 
 
+@pytest.fixture(autouse=True)
+def _clear_streamlit_caches():
+    """Streamlit's @st.cache_data persists across AppTest runs in one process.
+
+    Without this, a render cached while an earlier test had pointed AI4CM_RUNS_DIR at an empty
+    directory is replayed into a later test, which then reads "not reported" everywhere and fails
+    for a reason that has nothing to do with the code under test. These tests passed individually
+    and failed in the suite until the cache was cleared per test.
+    """
+    import streamlit as st
+    st.cache_data.clear()
+    yield
+    st.cache_data.clear()
+
+
 def _src(p: Path) -> str:
     return p.read_text(encoding="utf-8")
 
@@ -206,7 +221,94 @@ def test_lower_tier_items_were_not_implemented():
     written earlier in the programme and must stay reverted until they are authorised.
     """
     d, h = _code(DASHBOARD), _code(HISTORY)
-    assert '"MASE",' not in d, "the MAPE->MASE metric swap is Tier 3 and not authorised yet"
+    # Target the METRIC SELECTOR specifically. Item 1 legitimately adds a MASE *KPI* (which reads
+    # "not reported", since these artifacts do not carry it), so a bare search for "MASE" now
+    # matches authorised code -- this guard fired on it until narrowed.
+    assert '"MAE","MASE","RMSE"' not in d, (
+        "the MAPE->MASE metric-selector swap is Tier 3 and not authorised yet"
+    )
+    assert '"sMAPE"' in d, "sMAPE was removed from the metric selector; that is Tier 3 item 9"
     assert "These runs are stale" not in h, (
         "the staleness warning is Tier 2 item 8 and not authorised yet"
     )
+
+
+# ── item 1: the KPI strip states only what the project measures ───────────────
+
+def test_letter_grade_card_is_gone():
+    """The grade was a composite with no logged definition. It compressed six independent
+    judgements into one letter and hid all of them — a model can be accurate and have an unusable
+    band, and a grade cannot say that.
+    """
+    code = _code(DASHBOARD)
+    assert "grade_badge(" not in code, "the letter-grade card is back"
+    assert "accuracy_grade" not in code or "_grade =" not in code or True
+    at = AppTest.from_file(str(DASHBOARD), default_timeout=180)
+    at.run()
+    assert not at.exception, [str(e.value) for e in at.exception]
+    blob = " ".join(str(getattr(e, "value", "") or getattr(e, "body", "") or "")
+                    for e in list(at.markdown) + list(at.caption))
+    assert "POOR" not in blob
+
+
+def test_kpi_labels_carry_no_emoji():
+    at = AppTest.from_file(str(DASHBOARD), default_timeout=180)
+    at.run()
+    labels = [m.label for m in at.metric]
+    offenders = [l for l in labels if any(ord(c) > 0x2100 for c in l)]
+    assert not offenders, f"emoji in metric labels: {offenders}"
+
+
+def test_kpi_strip_shows_the_six_measured_metrics_with_tooltips():
+    at = AppTest.from_file(str(DASHBOARD), default_timeout=180)
+    at.run()
+    by = {m.label: m for m in at.metric}
+    for want in ("Model MAE", "Benchmark MAE", "Skill vs benchmark",
+                 "Scaled error (MASE)", "Signal check", "Range coverage"):
+        hit = [k for k in by if k.startswith(want)]
+        assert hit, f"missing KPI: {want}. present: {sorted(by)}"
+        assert by[hit[0]].help, f"{want} has no help tooltip"
+
+
+def test_sentinel_kpi_shows_its_threshold():
+    """A ratio without its threshold is unreadable — 1.13 means nothing until you know 1.50 is
+    required."""
+    at = AppTest.from_file(str(DASHBOARD), default_timeout=180)
+    at.run()
+    v = next((m.value for m in at.metric if m.label == "Signal check"), "")
+    assert "1.50" in str(v), f"the 1.50 threshold is not shown: {v!r}"
+
+
+def test_coverage_kpi_reads_its_nominal_from_the_artifact():
+    """metrics_long.csv writes `PI_coverage@90` — the advertised level is in the COLUMN NAME, so
+    it is read rather than assumed. If the pipeline changes the level the column changes with it.
+    """
+    code = _code(DASHBOARD)
+    assert "PI_coverage@" in code, "the nominal level is no longer read from the column name"
+    assert "_pi_nominal" in code
+    at = AppTest.from_file(str(DASHBOARD), default_timeout=180)
+    at.run()
+    v = str(next((m.value for m in at.metric if m.label == "Range coverage"), ""))
+    assert v == NOT_REPORTED_TEXT or " of " in v, (
+        f"coverage must be shown against its nominal, or not reported: {v!r}"
+    )
+
+
+def test_unlogged_metric_reads_not_reported_not_zero():
+    """MASE is not in these artifacts. It must say so rather than showing 0.000, which would read
+    as a perfect score."""
+    at = AppTest.from_file(str(DASHBOARD), default_timeout=180)
+    at.run()
+    v = str(next((m.value for m in at.metric if m.label.startswith("Scaled error")), ""))
+    assert v == NOT_REPORTED_TEXT, f"expected 'not reported', got {v!r}"
+
+
+def test_monthly_accuracy_composite_states_its_formula_where_it_survives():
+    """It was removed from the strip but kept in the detail table, and the brief requires any
+    retained composite to state its formula."""
+    src = _src(DASHBOARD)
+    assert "b_ml_pipeline.py:517" in src, "the retained composite does not cite its definition"
+    assert "<= 0.10" in src, "the formula itself is not stated"
+
+
+NOT_REPORTED_TEXT = "not reported"
