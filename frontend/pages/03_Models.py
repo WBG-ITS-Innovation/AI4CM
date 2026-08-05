@@ -12,9 +12,11 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system  # presentation only
+from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
 inject_design_system()
+render_app_header("Models", "Model families, promoted recipes and their evidence")
 st.markdown(
     page_header("🧩 Model Families & Parameters",
                 "Reference guide for all available forecasting models and their configurations"),

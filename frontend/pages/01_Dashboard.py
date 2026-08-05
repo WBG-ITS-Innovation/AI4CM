@@ -28,10 +28,12 @@ APPROOT = Path(__file__).resolve().parents[1]
 from paths import runs_dir
 RUNS_DIR = runs_dir()
 
+from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
 inject_global_css()
 inject_design_system()
 
+render_app_header("Dashboard", "Evaluate one run: accuracy, intervals and integrity checks")
 # ──────────────────────────────────────────────────────────────────────
 # Caching helpers
 # ──────────────────────────────────────────────────────────────────────
@@ -633,6 +635,7 @@ with tab_overlay:
         yaxis=dict(gridcolor="#f1f5f9", showgrid=True, tickformat=","),
         font=dict(family="Inter, -apple-system, sans-serif"),
     )
+    plotly_chrome(fig)
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
     # Small multiples
@@ -648,6 +651,7 @@ with tab_overlay:
                     title=f"{m0} — predictions by horizon",
                 )
                 grid.update_layout(font=dict(family="Inter, -apple-system, sans-serif"))
+                plotly_chrome(grid)
                 st.plotly_chart(grid, use_container_width=True, config={"displaylogo": False})
             else:
                 st.caption("Only one horizon available — nothing to compare.")
@@ -712,6 +716,7 @@ with tab_leader:
                                "<extra></extra>")))
             plotly_layout(fig_lb, ytitle=metric_choice, legend_bottom=False, height=400)
             fig_lb.update_layout(title=f"Average {metric_choice} across folds")
+            plotly_chrome(fig_lb)
             st.plotly_chart(fig_lb, use_container_width=True, config={"displaylogo": False})
             if _excluded:
                 st.markdown(reading_this_chart(
@@ -782,6 +787,7 @@ with tab_errors:
             fig_e = px.line(g, x="date", y="abs_err", title=f"Absolute error — {m0}", height=340)
             fig_e.update_layout(plot_bgcolor="white", yaxis_tickformat=",",
                                 font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_e)
             st.plotly_chart(fig_e, use_container_width=True, config={"displaylogo": False})
 
         with c2:
@@ -796,6 +802,7 @@ with tab_errors:
             )
             fig_h.update_yaxes(showticklabels=False)
             fig_h.update_layout(font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_h)
             st.plotly_chart(fig_h, use_container_width=True, config={"displaylogo": False})
 
         c3, c4 = st.columns(2)
@@ -804,6 +811,7 @@ with tab_errors:
             fig_hist = px.histogram(g, x="resid", nbins=bins, title=f"Residual distribution — {m0}", height=340)
             fig_hist.update_layout(plot_bgcolor="white",
                                    font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_hist)
             st.plotly_chart(fig_hist, use_container_width=True, config={"displaylogo": False})
 
         with c4:
@@ -813,6 +821,7 @@ with tab_errors:
                             title="Rolling MAE (20 periods)", height=340)
             fig_r.update_layout(plot_bgcolor="white", yaxis_tickformat=",",
                                 font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_r)
             st.plotly_chart(fig_r, use_container_width=True, config={"displaylogo": False})
 
 # ── Tab: Interval Diagnostics ────────────────────────────────────────
@@ -886,6 +895,7 @@ with tab_intervals:
             plotly_layout(fig_cov, ytitle="Share of actuals inside the range",
                           legend_bottom=False)
             fig_cov.update_layout(title="Coverage by model")
+            plotly_chrome(fig_cov)
             st.plotly_chart(fig_cov, use_container_width=True,
                             config={"displaylogo": False})
             st.markdown(reading_this_chart(
@@ -933,6 +943,7 @@ with tab_intervals:
                 fig_t.update_yaxes(range=[0, 1.05], tickformat=".0%")
                 plotly_layout(fig_t, ytitle="Coverage", legend_bottom=False)
                 fig_t.update_layout(title=f"Coverage by day size — {_mdl}")
+                plotly_chrome(fig_t)
                 st.plotly_chart(fig_t, use_container_width=True,
                                 config={"displaylogo": False})
                 st.markdown(reading_this_chart(
@@ -981,6 +992,7 @@ with tab_intervals:
                 plotly_layout(fig_r, ytitle="Share of predictions", legend_bottom=False)
                 fig_r.update_layout(
                     title=f"Position of the actual within its own range — {_mdl}")
+                plotly_chrome(fig_r)
                 st.plotly_chart(fig_r, use_container_width=True,
                                 config={"displaylogo": False})
                 st.markdown(reading_this_chart(
@@ -1000,6 +1012,7 @@ with tab_intervals:
             plotly_layout(fig_bw, ytitle=f"Average width ({UNIT_LABEL})",
                           legend_bottom=False)
             fig_bw.update_layout(title="Average range width")
+            plotly_chrome(fig_bw)
             st.plotly_chart(fig_bw, use_container_width=True,
                             config={"displaylogo": False})
             st.markdown(reading_this_chart(
@@ -1289,6 +1302,7 @@ with tab_feat_imp:
                 plot_bgcolor="white",
                 font=dict(family="Inter, -apple-system, sans-serif"),
             )
+            plotly_chrome(fig_fi)
             st.plotly_chart(fig_fi, use_container_width=True, config={"displaylogo": False})
 
             with st.expander("Full feature importance table"):
@@ -1382,6 +1396,7 @@ with tab_ensemble:
                         plot_bgcolor="white",
                         font=dict(family="Inter, -apple-system, sans-serif"),
                     )
+                    plotly_chrome(fig_ens)
                     st.plotly_chart(fig_ens, use_container_width=True, config={"displaylogo": False})
 
                     if not ens_lb.empty:

@@ -23,10 +23,14 @@ from ui_styles import inject_global_css, page_header, section_header, callout_bo
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
 from ui_styles import inject_design_system  # presentation only
+from ui_styles import render_app_header  # presentation only
+from ui_styles import plotly_chrome  # presentation only
 st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
 inject_global_css()
 
 inject_design_system()
+
+render_app_header("Lab", "Configure and launch a backtest run")
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
 RUNS_DIR = runs_dir()
@@ -757,6 +761,7 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
                         line=dict(dash="dot"),
                     )
 
+            plotly_chrome(fig)
             st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
         else:
             st.caption("No predictions_long.csv found in the outputs folder.")

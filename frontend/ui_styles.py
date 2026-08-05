@@ -610,7 +610,56 @@ button[data-testid="stBaseButton-secondary"] {
 # ══════════════════════════════════════════════════════════════════════════════
 
 #: Accent, matched to reports/treasury_report.html so app and report read as one product.
-ACCENT = "#1d4ed8"
+# ── Console design tokens (DESIGN_TOKENS.md), adopted as the lab's look ──────────
+#
+# The operator explicitly overrode that document's own "not a request to restyle" line.
+# Contrast independently re-measured (WCAG 2.x, sRGB); every pairing passes and none needed
+# adjusting — the figures are stated in .streamlit/config.toml and reports/phase14_visual.md.
+#
+# Streamlit 1.40.1 carries only six theme keys, so everything below is what config cannot
+# express and must be applied per element.
+ACCENT = "#155860"          # slate-teal, primaryColor
+ACCENT_INK = "#0E3E44"      # accent as ink on its own tint  (9.89:1)
+ACCENT_TINT = "#E2EEEF"
+
+TOK = {
+    "bg": "#FCFBF9",            # warm paper
+    "bg2": "#F5F3F0",
+    "ink": "#1A1C1E",
+    "muted": "#585E64",         # 5.93:1 on bg2
+    "faint": "#696F76",         # 4.58:1 on bg2 — the tightest pairing in the set
+    "hairline": "#E2DED8",      # decorative only; exempt under WCAG 1.4.11
+    "control": "#96918A",       # >=3:1 boundary token — form edges, chart axes (3.13:1)
+    "pass_ink": "#1B593B", "pass_tint": "#E2F0E7",     # 7.03:1
+    "warn_ink": "#7C4A08", "warn_tint": "#F9EEDB",     # 6.44:1
+    "stop_ink": "#8D2828", "stop_tint": "#F9E7E7",     # 7.14:1
+}
+
+#: Publication type scale — few deliberate steps, not a fluid ramp. (px, line-height px)
+TYPE = {
+    "micro":   (11, 16), "tiny": (12, 18), "small": (13, 20), "base": (15, 24),
+    "lede":    (17, 26.4), "title": (22, 28), "display": (32, 36), "figure": (44, 46),
+}
+
+#: Max measure for prose. A verdict sentence spanning a projector is unreadable from the back.
+MEASURE_CH = 72
+
+FONT_STACK = "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif"
+
+# ── Greyscale-survivable series encodings (DESIGN_TOKENS.md §3) ──────────────────
+#
+# These pages get printed and circulated, so a chart legible only in colour stops working the
+# moment it leaves the screen. Every series carries a NON-COLOUR encoding as well.
+SERIES_STYLE = {
+    "p50":      dict(dash="solid", width=2.6, marker_symbol="circle"),
+    "upper":    dict(dash="dash",  width=1.4, marker_symbol="triangle-up-open"),
+    "lower":    dict(dash="dot",   width=1.4, marker_symbol="triangle-down-open"),
+    "observed": dict(dash="dot",   width=1.6, marker_symbol="square-open"),
+    "model":    dict(dash="solid", width=2.0, marker_symbol="circle-open"),
+}
+#: Band fill: a diagonal hatch, not a flat tint — a light tint disappears in greyscale.
+BAND_PATTERN = dict(shape="/", size=6, solidity=0.12)
+
 
 TYPE_SCALE = {"display": 27, "title": 20, "section": 17, "body": 15, "caption": 12.5}
 SPACE = {"xs": 4, "sm": 8, "md": 14, "lg": 22, "xl": 34}
@@ -620,45 +669,87 @@ GATE_PASSED = "passed"
 GATE_FAILED = "failed"
 GATE_UNVERIFIED = "unverified"
 
+# Status inks on their own tint, per DESIGN_TOKENS §1.2 — ink on a soft tint of itself, never
+# a light-on-light fill, which is what keeps them >=4.5:1 inside a badge or a table cell.
+# The glyph is a second, non-colour encoding so the badge survives greyscale printing.
 _GATE_STYLE = {
-    GATE_PASSED: ("✅", "passed", COLORS["trust"], COLORS["trust_bg"], COLORS["trust_bdr"]),
-    GATE_FAILED: ("❌", "failed", COLORS["fail"], COLORS["fail_bg"], COLORS["fail_bdr"]),
-    GATE_UNVERIFIED: ("⬜", "never verified", COLORS["neutral"], "#f1f5f9", "#cbd5e1"),
+    GATE_PASSED: ("✓", "passed", TOK["pass_ink"], TOK["pass_tint"], TOK["pass_ink"]),
+    GATE_FAILED: ("✕", "failed", TOK["stop_ink"], TOK["stop_tint"], TOK["stop_ink"]),
+    GATE_UNVERIFIED: ("—", "never verified", TOK["faint"], TOK["bg2"], TOK["control"]),
 }
 
 DESIGN_CSS = f"""
 <style>
-:root {{ --accent: {ACCENT}; }}
-/* Tabular numerals everywhere numbers are compared down a column. Without this,
-   proportional digits make 1,111 and 8,888 different widths and columns will not line up. */
-[data-testid="stMetricValue"], [data-testid="stDataFrame"], .ds-num, table td, table th {{
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
+:root {{
+  --accent: {ACCENT}; --accent-ink: {ACCENT_INK}; --accent-tint: {ACCENT_TINT};
+  --ink: {TOK['ink']}; --muted: {TOK['muted']}; --faint: {TOK['faint']};
+  --hairline: {TOK['hairline']}; --control: {TOK['control']};
+  --bg: {TOK['bg']}; --bg2: {TOK['bg2']};
 }}
-.ds-card {{
-  background:#fff; border:1px solid {COLORS['line'] if 'line' in COLORS else '#e2e8f0'};
-  border-radius:10px; padding:{SPACE['md']}px {SPACE['md']}px; margin-bottom:{SPACE['sm']}px;
+/* Tabular figures everywhere. GEL columns must align on the decimal, and a figure that changes
+   width as it updates reads as unstable. Streamlit 1.40.1 cannot set this. */
+html, body, [class*="st-"], .stMarkdown, .stMetric, .stDataFrame,
+[data-testid="stMetricValue"], table td, table th {{
+  font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1;
 }}
-.ds-card .ds-label {{ font-size:{TYPE_SCALE['caption']}px; color:{COLORS['neutral']};
-  text-transform:uppercase; letter-spacing:.04em; margin:0 0 2px; }}
-.ds-card .ds-value {{ font-size:{TYPE_SCALE['title']}px; font-weight:650; margin:0;
+/* A readable measure for prose. Also cannot be set via config. */
+.stMarkdown p {{ max-width: {MEASURE_CH}ch; }}
+/* Metric labels as eyebrow text, matching the console. */
+[data-testid="stMetricLabel"] {{
+  font-size: {TYPE['micro'][0]}px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: {TOK['muted']};
+}}
+[data-testid="stMetricValue"] {{ font-size: {TYPE['title'][0]}px; letter-spacing: -0.011em; }}
+h1 {{ font-size: {TYPE['display'][0]}px; line-height: {TYPE['display'][1]}px;
+      letter-spacing: -0.02em; }}
+h2 {{ font-size: {TYPE['title'][0]}px; line-height: {TYPE['title'][1]}px;
+      letter-spacing: -0.011em; }}
+h3 {{ font-size: {TYPE['lede'][0]}px; line-height: {TYPE['lede'][1]}px; }}
+
+/* ── app header: logo + name + subtitle ─────────────────────────────────────── */
+.ds-appbar {{ display:flex; align-items:center; gap:14px; padding:2px 0 12px;
+  border-bottom:1px solid var(--hairline); margin-bottom:16px; }}
+.ds-appbar .ds-logo {{ flex:0 0 auto; width:44px; height:44px; display:block; }}
+.ds-appbar .ds-logo svg {{ width:100%; height:100%; display:block; }}
+.ds-appbar .ds-name {{ font-size:{TYPE['lede'][0]}px; font-weight:650; color:var(--ink);
+  line-height:1.2; }}
+.ds-appbar .ds-sub {{ font-size:{TYPE['tiny'][0]}px; color:var(--muted); line-height:1.35;
+  max-width:{MEASURE_CH}ch; }}
+
+.ds-card {{ background:#fff; border:1px solid var(--hairline); border-radius:10px;
+  padding:14px; margin-bottom:8px; }}
+.ds-card .ds-label {{ font-size:{TYPE['micro'][0]}px; color:var(--muted);
+  text-transform:uppercase; letter-spacing:.06em; margin:0 0 2px; }}
+.ds-card .ds-value {{ font-size:{TYPE['title'][0]}px; font-weight:650; margin:0;
   font-variant-numeric: tabular-nums; }}
-.ds-card .ds-sub {{ font-size:{TYPE_SCALE['caption']}px; color:{COLORS['neutral']}; margin:2px 0 0; }}
-.ds-card.ds-missing .ds-value {{ font-size:{TYPE_SCALE['body']}px; font-weight:500;
-  color:{COLORS['neutral']}; font-style:italic; }}
-.ds-gate {{ display:inline-flex; align-items:center; gap:6px; font-size:{TYPE_SCALE['caption']}px;
-  font-weight:650; padding:3px 10px; border-radius:999px; border:1px solid; }}
-.ds-reading {{ background:#f8fafc; border-left:3px solid var(--accent); padding:8px 12px;
-  margin:6px 0 {SPACE['md']}px; font-size:{TYPE_SCALE['caption']}px; color:#334155;
-  border-radius:0 6px 6px 0; }}
-.ds-reading b {{ color:#0f172a; }}
-.ds-empty {{ background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px;
-  padding:{SPACE['lg']}px; text-align:left; color:#475569; font-size:{TYPE_SCALE['body']}px; }}
-.ds-empty .ds-empty-t {{ font-weight:650; color:#0f172a; margin-bottom:6px; }}
-.ds-empty code {{ background:#e8eef7; padding:1px 5px; border-radius:4px; font-size:12.5px; }}
-.ds-sample {{ background:{COLORS['caution_bg']}; border:1px solid {COLORS['caution_bdr']};
-  color:{COLORS['caution']}; font-weight:700; letter-spacing:.06em; font-size:12px;
-  padding:3px 10px; border-radius:6px; display:inline-block; }}
+.ds-card .ds-sub {{ font-size:{TYPE['tiny'][0]}px; color:var(--muted); margin:2px 0 0; }}
+.ds-card.ds-missing .ds-value {{ font-size:{TYPE['base'][0]}px; font-weight:500;
+  color:var(--faint); font-style:italic; }}
+.ds-gate {{ display:inline-flex; align-items:center; gap:6px;
+  font-size:{TYPE['micro'][0]}px; font-weight:700; letter-spacing:.04em;
+  text-transform:uppercase; padding:3px 10px; border-radius:999px; border:1px solid; }}
+.ds-reading {{ background:var(--bg2); border-left:3px solid var(--accent);
+  padding:8px 12px; margin:6px 0 14px; font-size:{TYPE['tiny'][0]}px; color:var(--muted);
+  border-radius:0 6px 6px 0; max-width:{MEASURE_CH}ch; }}
+.ds-reading b {{ color:var(--ink); }}
+.ds-empty {{ background:var(--bg2); border:1px dashed var(--control); border-radius:10px;
+  padding:22px; color:var(--muted); font-size:{TYPE['base'][0]}px; }}
+.ds-empty .ds-empty-t {{ font-weight:650; color:var(--ink); margin-bottom:6px; }}
+.ds-empty code {{ background:#fff; border:1px solid var(--hairline); padding:1px 5px;
+  border-radius:4px; font-size:{TYPE['tiny'][0]}px; }}
+.ds-sample {{ background:{TOK['warn_tint']}; border:1px solid {TOK['warn_ink']};
+  color:{TOK['warn_ink']}; font-weight:700; letter-spacing:.06em;
+  font-size:{TYPE['tiny'][0]}px; padding:3px 10px; border-radius:6px;
+  display:inline-block; }}
+/* Tables: hairline rules and an eyebrow header row. */
+[data-testid="stDataFrame"] thead th {{ font-size:{TYPE['micro'][0]}px;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }}
+
+@media print {{
+  [data-testid="stToolbar"], [data-testid="stSidebar"] {{ display:none !important; }}
+  .stApp {{ background:#fff !important; }}
+  .ds-card, .ds-empty, [data-testid="stMetric"] {{ break-inside: avoid; }}
+}}
 </style>
 """
 
@@ -822,32 +913,142 @@ HOVER_BAR_PCT = "<b>%{x}</b><br>%{fullData.name}: %{y:.1%}<extra></extra>"
 
 
 def plotly_chrome(fig, *, showlegend: bool = True, yaxis_tickformat: str = "",
-                  height: int | None = None):
+                  height: int | None = None, kinds=None, greyscale: bool = True):
     """Apply the lab's chart chrome to an EXISTING figure.
 
-    Presentation only: it never touches traces, data or hover *content*. It sets gridlines,
-    axis lines, font, margins, legend placement and hover label styling so that charts across
-    pages stop looking like separate products.
+    Presentation only: it never touches traces' x/y data or hover *content*. It applies the token
+    template (surfaces, font, axis colours, colourway, hover label) and, unless switched off,
+    gives each line trace a dash pattern and marker symbol so the chart survives greyscale
+    printing — DESIGN_TOKENS §3.
 
-    Kept separate from ``plotly_layout`` so it can be dropped into pages that already build
-    their own figures, replacing per-page ``update_layout`` blocks that had drifted apart.
+    Same signature as before plus two optional arguments, so existing call sites upgrade with no
+    edit.
     """
     fig.update_layout(
-        plot_bgcolor="white",
-        paper_bgcolor="white",
+        template=plotly_template(),
         showlegend=showlegend,
         margin=dict(l=8, r=8, t=40, b=8),
-        font=dict(family="Inter, -apple-system, BlinkMacSystemFont, sans-serif",
-                  size=13, color="#0f172a"),
-        hoverlabel=dict(font_size=12.5, font_family="Inter, sans-serif",
-                        bgcolor="white", bordercolor="#cbd5e1"),
-        legend=dict(orientation="h", y=-0.18, x=0) if showlegend else None,
     )
+    if not showlegend:
+        fig.update_layout(legend=None)
     if height:
         fig.update_layout(height=height)
-    fig.update_xaxes(showgrid=False, linecolor="#e2e8f0", ticks="outside",
-                     tickcolor="#e2e8f0")
-    fig.update_yaxes(gridcolor="#eef2f7", zerolinecolor="#e2e8f0", linecolor="#e2e8f0")
     if yaxis_tickformat:
         fig.update_yaxes(tickformat=yaxis_tickformat)
+    if greyscale:
+        greyscale_safe(fig, kinds=kinds)
+    return fig
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# APP HEADER  (Part 2c)
+#
+# Renders frontend/assets/logo.svg AS PROVIDED — inlined verbatim, sized by CSS only. The file
+# is the client's official Treasury emblem: it is not redrawn, recoloured, cropped or
+# regenerated, and no fill/stroke is overridden. If the file is absent the header still renders
+# with name and subtitle, because a missing mark must not take the page down.
+# ══════════════════════════════════════════════════════════════════════════════
+
+APP_NAME = "Treasury Forecast Lab"
+APP_SUBTITLE = ("Daily cash-flow forecasting for the Georgian Treasury — research and "
+                "evaluation workbench")
+
+from pathlib import Path as _Path
+
+_LOGO_PATH = _Path(__file__).resolve().parent / "assets" / "logo.svg"
+
+
+def _logo_svg() -> str:
+    """Inline the logo verbatim. Returns "" when the file is absent."""
+    try:
+        raw = _LOGO_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    # Strip only an XML prolog/doctype, which cannot appear mid-document. The <svg> element and
+    # everything inside it — paths, fills, viewBox — is passed through untouched.
+    import re as _re
+    raw = _re.sub(r"<\?xml[^>]*\?>", "", raw)
+    raw = _re.sub(r"<!DOCTYPE[^>]*>", "", raw)
+    return raw.strip()
+
+
+def app_header(page_title: str = "", page_subtitle: str = "") -> str:
+    """The header for every page: logo, app name, one-line subtitle.
+
+    ``page_title``/``page_subtitle`` override the app-level strings for a specific page.
+    """
+    logo = _logo_svg()
+    logo_html = f'<span class="ds-logo">{logo}</span>' if logo else ""
+    name = page_title or APP_NAME
+    sub = page_subtitle or APP_SUBTITLE
+    return (f'<div class="ds-appbar">{logo_html}'
+            f'<span><span class="ds-name">{name}</span><br>'
+            f'<span class="ds-sub">{sub}</span></span></div>')
+
+
+def render_app_header(page_title: str = "", page_subtitle: str = "") -> None:
+    import streamlit as st
+    st.markdown(app_header(page_title, page_subtitle), unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PLOTLY TEMPLATE  (Part 2b)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def plotly_template():
+    """A Plotly template matching the tokens. Registered once, applied per figure.
+
+    Axes use the ``control`` border token (>=3:1) rather than the decorative hairline, because a
+    chart axis carries information — DESIGN_TOKENS §1.2 makes that distinction explicitly.
+    """
+    import plotly.graph_objects as go
+    return go.layout.Template(layout=go.Layout(
+        paper_bgcolor=TOK["bg"], plot_bgcolor="#FFFFFF",
+        font=dict(family=FONT_STACK, size=TYPE["small"][0], color=TOK["ink"]),
+        title=dict(font=dict(size=TYPE["lede"][0], color=TOK["ink"])),
+        xaxis=dict(showgrid=False, linecolor=TOK["control"], ticks="outside",
+                   tickcolor=TOK["control"], tickfont=dict(size=TYPE["tiny"][0],
+                                                           color=TOK["muted"])),
+        yaxis=dict(gridcolor=TOK["hairline"], zerolinecolor=TOK["control"],
+                   linecolor=TOK["control"],
+                   tickfont=dict(size=TYPE["tiny"][0], color=TOK["muted"])),
+        legend=dict(orientation="h", y=-0.18, x=0,
+                    font=dict(size=TYPE["tiny"][0], color=TOK["muted"])),
+        hoverlabel=dict(font_size=TYPE["tiny"][0], font_family=FONT_STACK,
+                        bgcolor="#FFFFFF", bordercolor=TOK["control"]),
+        colorway=[ACCENT, TOK["stop_ink"], TOK["warn_ink"], TOK["pass_ink"],
+                  TOK["muted"], ACCENT_INK],
+        margin=dict(l=8, r=8, t=40, b=8),
+    ))
+
+
+def greyscale_safe(fig, *, kinds=None):
+    """Give every line trace a non-colour encoding as well as colour.
+
+    DESIGN_TOKENS §3: these pages get printed, and a chart legible only in colour stops working
+    the moment it leaves the screen. Dash pattern and marker symbol are assigned by role where
+    the caller names one, otherwise cycled so no two traces share both.
+
+    Appearance only — no trace's x/y data is touched.
+    """
+    kinds = kinds or {}
+    cycle = ["p50", "upper", "lower", "observed", "model"]
+    i = 0
+    for tr in fig.data:
+        if getattr(tr, "mode", None) is None and tr.type != "scatter":
+            continue
+        role = kinds.get(getattr(tr, "name", "") or "", None)
+        if role is None:
+            role = cycle[i % len(cycle)]
+            i += 1
+        st_ = SERIES_STYLE.get(role, SERIES_STYLE["model"])
+        try:
+            tr.update(line=dict(dash=st_["dash"], width=st_["width"]))
+        except Exception:
+            pass
+        try:
+            if "markers" in (getattr(tr, "mode", "") or ""):
+                tr.update(marker=dict(symbol=st_["marker_symbol"]))
+        except Exception:
+            pass
     return fig
