@@ -298,6 +298,66 @@ def compute_persistence_baseline(
     }
 
 
+#: Season length for the seasonal-naive reference, in index steps.
+#: 5 business days = one week on this index.
+SEASONAL_NAIVE_SEASON_STEPS = 5
+
+
+def compute_seasonal_naive_baseline(
+    predictions_df: pd.DataFrame,
+    horizon: int,
+    season_steps: int = SEASONAL_NAIVE_SEASON_STEPS,
+) -> Dict:
+    """Seasonal-naive reference: y_hat(t) = y(t - season_steps).
+
+    ✅ A2.  This replaces the ``mae_seasonal_naive`` that the retired
+    ``preprocessing.integrity.compute_baselines`` produced, and fixes what was wrong
+    with it: ``season_steps`` was hardcoded to 5 while the production horizon is also
+    5, so the "seasonal naive" baseline returned **exactly the persistence baseline**
+    and was displayed beside it as if it were independent corroboration.  Verified on
+    the real artifact: ``mae_seasonal_naive == mae_persistence`` to the cent at h=5,
+    and not at h=3 or h=7 (review §1.2).
+
+    Rather than silently drop the field the Dashboard reads, the degeneracy is made
+    explicit.  When ``season_steps == horizon`` the two references coincide, so the
+    value is returned as NaN with ``seasonal_naive_degenerate=True``: a reader sees
+    "not available, and here is why" instead of a duplicate wearing another name.
+
+    Requires ``target_date`` and ``y_true``; the season origin is taken positionally
+    from the sorted target dates, so it is step-based rather than calendar-based.
+    """
+    out = {
+        "mae_seasonal_naive": np.nan,
+        "seasonal_naive_season_steps": int(season_steps),
+        "seasonal_naive_degenerate": bool(int(season_steps) == int(horizon)),
+    }
+    if out["seasonal_naive_degenerate"]:
+        out["seasonal_naive_note"] = (
+            f"season_steps ({season_steps}) equals the horizon ({horizon}), so a "
+            f"seasonal-naive reference is identical to h-step persistence. Reported "
+            f"as NaN rather than duplicating mae_persistence under another name."
+        )
+        return out
+
+    if not {"target_date", "y_true"}.issubset(predictions_df.columns):
+        out["seasonal_naive_note"] = "target_date or y_true missing"
+        return out
+
+    df = predictions_df.dropna(subset=["y_true"]).copy()
+    df["target_date"] = pd.to_datetime(df["target_date"])
+    df = df.sort_values("target_date").drop_duplicates(subset=["target_date"])
+    y = df["y_true"].to_numpy(dtype=float)
+    if len(y) <= season_steps:
+        out["seasonal_naive_note"] = (
+            f"only {len(y)} target dates; need more than season_steps={season_steps}"
+        )
+        return out
+
+    out["mae_seasonal_naive"] = float(np.mean(np.abs(y[season_steps:] - y[:-season_steps])))
+    out["n_seasonal_naive"] = int(len(y) - season_steps)
+    return out
+
+
 def compute_point_metrics(y_true, y_pred) -> Dict[str, float]:
     """MAE / RMSE / R2 for one point forecast, from one place.
 
