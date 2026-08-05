@@ -5,7 +5,7 @@ required. Share this one file.
 
 **Generated:** 2026-08-04, updated 2026-08-05 (phase 7) · **Branch:** `model/excellence` @ `6c22009`
 **`origin/main`** @ `6c22009` (**Phase 1 via PR #23, Phase 2a via PR #24 — both merged**)
-**Suite:** 377 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
+**Suite:** 417 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
 retrospective disclosure
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
@@ -93,12 +93,15 @@ window are worth more than care.
 | Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
 | Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
-### Commits on `model/excellence` (5 ahead of `main`)
+### Commits on `model/excellence` (7 ahead of `main`)
 
 Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Seven commits sit on top,
 carried by **PR #25** (open, ready for review, not merged). Recent history:
 
 ```
+4b4a515  Published-forecast retention + realized scoring
+250f501  WS4: target scaling. ratio-to-trailing-level wins Revenues by 25.7% on DEV
+90213a2  Decisions 1-4: install catboost, record dual-probe and model-agreement rulings
 33e1130  Demo item 7: CatBoost hooks behind an optional guard; docs/ROADMAP.md
 bb173ae  Demo: Treasury HTML report, Streamlit polish, demo runbook
 9228f58  Demo: forward forecast, model registry, plain-language insights, Forecast page
@@ -196,8 +199,22 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Workstream 4 — target scaling.** Workstreams 3 and 5, the sentinel-probe study, and the
-demo tranche (forward forecast, registry, insights, Treasury report) are complete.
+**Workstream 2 — hyperparameter tuning.** Workstreams 3, 4 and 5, the sentinel-probe study,
+the demo tranche and published-forecast scoring are complete.
+
+> **Standing rule adopted 2026-08-05:** never state a test count in a commit message that was
+> not produced by a `pytest` run from the repo root **in that same command**.
+>
+> **WS4 landed.** Revenues uses `ratio`-to-trailing-level (DEV error 52,417,152 → 38,931,956,
+> skill 40.65% → **55.92%**); Expenditure and the stock target stay raw. Implemented as an
+> **estimator wrapper**, so no line of the prediction path changed and the unified ruler is
+> bit-identical — asserted against the published 2025-definition constants.
+>
+> **CatBoost is installed** and in the pool for WS2, promoted nowhere.
+>
+> **Published forecasts are now retained and scored.** `forecasts/published/<issue_date>/` is
+> tracked; the scorer refuses any date whose truth is not yet in the canonical data. Currently
+> 15 pending / 0 scored, which is correct — every published date is still in the future.
 
 > **A forward forecast now exists** (`backend/forward_forecast.py`): the next five business
 > days beyond the data end, P10/P50/P90, no truth read, `test_window_touched: false`. It is
@@ -248,7 +265,9 @@ Remaining, in order:
 | ~~5~~ | ~~Workstream 5 — multivariate~~ | **DONE** `0c5d664`. **The debt-ops hypothesis failed** — the 0.971 correlation is contemporaneous, and lagged realised values cannot anticipate a future auction. Nothing adopted for the flows; `cross` adopted for the stock (+0.42% DEV) |
 | ~~5b~~ | ~~Sentinel probe study~~ | **DONE** `68f2cda`. Ridge's blind spot is real (pure interactions) but is **not** the one I hypothesised in WS3. Flows read 1.421 / 1.396 under a tree probe — still no signal. Default probe unchanged; dual-probe reporting **deferred to the user** |
 | ~~5c~~ | ~~(original WS5 row)~~ | **Next.** The last remaining lever on the flow sentinel. Debt-ops block tested on its own first — it is the hypothesised mechanism for the unpredictable days. Lags ≥ 1 step, transforms and any top-K fit per fold only |
-| **6** | **Workstream 4 — target scaling** | raw vs asinh vs ratio-to-trailing-level, statistics fit per fold; stock keeps its delta path. `log1p` remains inapplicable while T1 is open (negatives) |
+| ~~6~~ | ~~Workstream 4 — target scaling~~ | **DONE** `250f501`. Revenues → `ratio` (+25.73% DEV); others raw. Ruler bit-identical. **Signal unchanged** — Revenues still 1.2255 and still `withheld_as_forecast` |
+| ~~6b~~ | ~~Published-forecast retention + scoring~~ | **DONE** `4b4a515`. First scoreable date 2025-08-07, once the data moves past it |
+| ~~6c~~ | ~~(original WS4 row)~~ | raw vs asinh vs ratio-to-trailing-level, statistics fit per fold; stock keeps its delta path. `log1p` remains inapplicable while T1 is open (negatives) |
 | 7 | Workstream 2 — LightGBM quantile + Optuna ~100 trials | Now **after** WS5/WS4, on the final recipe |
 | 8 | Send **T2**; then the sentinel-probe question (shallow-tree probe vs Ridge on an identical feature set — a measurement study on its own merits, **not** a way to rescue a failing model) | The auction calendar is the top ask, and on present evidence more promising than anything left in the modelling backlog |
 | 9 | Workstreams 6, 7 | 7 owns the top-tercile coverage fix (CQR) |
