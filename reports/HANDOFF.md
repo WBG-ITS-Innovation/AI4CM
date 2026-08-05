@@ -3,9 +3,10 @@
 **Single self-contained document for resuming work.** Everything needed is inlined; no other file is
 required. Share this one file.
 
-**Generated:** 2026-08-04, updated 2026-08-05 · **Branch:** `model/excellence` @ `e7b3159`
-**`origin/main`** @ `4a925ac` (**Phase 1 merged via PR #23**)
-**Suite:** 272 passing · **TEST (2025) reads: 0**
+**Generated:** 2026-08-04, updated 2026-08-05 (phase 7) · **Branch:** `model/excellence` @ `6c22009`
+**`origin/main`** @ `6c22009` (**Phase 1 via PR #23, Phase 2a via PR #24 — both merged**)
+**Suite:** 318 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
+retrospective disclosure
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
 ---
@@ -27,17 +28,88 @@ should continue to:
 
 ---
 
+## 0a · TEST-window accounting — read this before quoting any 2025 number
+
+`experiments/test_access.log` records **0 gated reads**, and that is misleading on its own.
+**Item 1f's one-ruler verification did evaluate the incumbent models on the 2025 window** —
+all four families across three targets, n=156 each — and it did so *outside* the gate,
+because the pipelines never route their fold construction through `require_test_access()`.
+The gate was therefore never consulted and the ledger stayed at zero while a 2025
+evaluation had in fact happened.
+
+What is and is not true about it:
+
+- It was **necessary**: the new-vs-old tier table exists to show how much the Phase-1 data
+  fix moved every previously published figure, which cannot be shown without measuring the
+  same window.
+- **No selection was made from it.** No model was chosen, no hyperparameter set, no
+  threshold moved on the strength of those numbers. They were reported, not acted on.
+- It is **not** a clean-holdout result for the Phase-2 candidates, which do not exist yet.
+
+**Policy from this point: no evaluation of any model on 2025 until the single final TEST
+read**, which must go through `require_test_access()` so it lands in the ledger. All model
+search and confirmation happens on TRAIN-internal rolling-origin folds and DEV (2024).
+
+A retrospective entry recording this is appended to `experiments/test_access.log`. That file
+is gitignored, so **this section is the durable record**.
+
+### Second disclosure — the phase-3 "DEV" figures were DEV+TEST (found 2026-08-05)
+
+Writing the experiments logger surfaced a defect in item 1f's own fix. `eval_start` set a
+**floor** on the evaluation window and nothing set a ceiling, so pinned folds tiled forward
+from `eval_start` to the **end of the series**. That is harmless for the 2025 benchmark,
+whose window genuinely ends at the series end — and wrong for anything else.
+
+Pinning to `DEV_START` therefore evaluated 2024-01-01 … **2025-08-06**: 418 target dates
+where DEV has 262. So these previously reported "DEV" figures were computed over DEV *plus
+the whole available holdout*:
+
+| Figure, as reported | Reported | Actually measured over | Honest DEV-only |
+|---|---:|---|---:|
+| GBQuantile Revenues, DEV skill (phase 3) | 47.98% | 2024-01-01 … 2025-08-06, n=410 | **46.37%** |
+| GBQuantile State budget balance, DEV skill (phase 3) | 32.20% | same | **33.81%** |
+
+The correction is small in magnitude and that is not the point: the numbers were not
+DEV numbers. **`eval_end` now caps the window**, four regression tests pin it
+(`test_eval_end_caps_the_window` and neighbours), and both figures have been re-measured
+DEV-only and logged as reproductions in `experiments/log.csv`.
+
+Selection consequence: **none.** Those two figures were a fold-scheme sanity check, and no
+model, hyperparameter or threshold was chosen from them. Every subsequent number in the
+log is DEV-capped by construction.
+
+This was caught by an assertion written into the logging script *because* the sealed-holdout
+rule had just been tightened — `assert wins == {"dev"}` — not by review. Cheap guards on the
+window are worth more than care.
+
+---
+
 ## 1 · Where the work stands
 
 | Phase | Status |
 |---|---|
 | Audit (`docs/reviews/2026-08-04_review.md`) | Complete. Findings valid; **all its metrics superseded** by the Phase-1 data fix |
 | Phase 1 — data trust | **Merged to `origin/main`** via PR #23. Step 1 done; Steps 2–7 open |
-| Phase 2 — modelling | In progress on `model/excellence`. Ground rule 1 done; **item 1 is 5/6** (1a–1e done, **1f open**); workstreams 1–7 not started |
+| Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
+| Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
-### Commits on `model/excellence` (6 ahead of `main`)
+### Commits on `model/excellence` (7 ahead of `main`)
+
+Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Seven commits sit on top,
+carried by **PR #25** (open, ready for review, not merged). Recent history:
 
 ```
+2ab1c3e  WS3 step 2: wire the fiscal calendar into both families; ablate; it does NOT lift the flows
+7b8da25  WS3 step 1: shared Georgian fiscal calendar module + Treasury sign-off artifact
+efafa02  docs: HANDOFF phase-7 commits; resume -> WS3 (reordered ahead of WS2)
+fa6dec6  docs: phase-7 session record; HANDOFF resume point -> workstream 2
+db27cd4  Item 3 / workstream 1: absolute-error objectives for B_ML (L1 wins 17 of 18)
+5f2990c  Item 2: append-only experiments log; fix the unbounded evaluation window it exposed
+40d391b  docs: HANDOFF -- phase-6 commits, resume at item 2, and an honest TEST-window disclosure
+6c22009  Merge pull request #24 from WBG-ITS-Innovation/model/excellence  (Phase 2a)
+e9c775b  docs: one-ruler verification session record (item 1f complete)
+87fc971  fix: one persistence ruler per target across all four families (item 1f)
+e413cd1  docs: update HANDOFF with phase-5 commits; resume point -> item 1f
 e7b3159  docs: yardstick-completion session record (items 1b, 1e, DATA_SEMANTICS)
 94db732  docs: DATA_SEMANTICS.md -- negatives characterization + Treasury questions
 db06426  feat: input by name + SHA-256; provenance in all four families (1e)
@@ -60,6 +132,15 @@ c3c2fd8  docs: Phase-2 session record
 work went through `merge/phase1-trust` based on `origin/main`.
 
 ### Reference numbers
+
+UNIFIED RULERS (2025 window, h=5 business days) — one number per target, verified
+identical across all four families (spread 0.000000):
+
+```
+Revenues              83,534,152.85
+Expenditure           83,839,124.43
+State budget balance 189,930,653.98
+```
 
 ```
 h=5 persistence ruler, 2025 window, business-day index:
@@ -107,7 +188,17 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Item 1f — the backtest re-run and one-ruler verification.** 1a–1e are all done, so every prerequisite is in place. Remaining, in order:
+**Workstream 2 — LightGBM quantile + Optuna**, on the WS3-winning feature set per target.
+Workstream 3 is complete.
+
+> **Reorder, 2026-08-05: WS3 now precedes WS2.** Phase 7 established that the sentinel ratio is
+> measured by a fixed Ridge probe **on the feature set**, so only WS3 (fiscal calendar) and WS5
+> (multivariate) can move it — no objective, hyperparameter or ensemble work can. Optuna is
+> expensive and should therefore be spent **once, on the winning feature set**, not on the
+> current one and again afterwards. WS2 tunes on top of whatever WS3 leaves standing, still on
+> **L1** (pinball at τ=0.5 *is* absolute error, so the objectives are already consistent).
+
+Remaining, in order:
 
 | # | Task | Notes |
 |---|---|---|
@@ -115,10 +206,29 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 | ~~1d~~ | ~~Alias `mae_seasonal_naive` (A2)~~ | **DONE** `904a520`. 16/16 Dashboard fields; `NaN` + `seasonal_naive_degenerate` at season == horizon |
 | ~~1b~~ | ~~Pin C_DL to `TEST_START`~~ | **DONE** `b7bccd7`. 7 folds -> 1, test block 2025-01-01..2025-08-06 |
 | ~~1e~~ | ~~Input by explicit name + recorded SHA-256~~ | **DONE** `db06426`. `ls -t` gone; one shared provenance module for all four families; pinning fails closed |
-| **1f** | Backtest re-run + one-ruler verification + new-vs-old tier table | Item 1's verification. 3 targets x 4 families; Expenditure's first honest numbers; per-target skill / sentinel ratio / per-tercile coverage |
+| ~~1f~~ | ~~Backtest re-run + one-ruler verification~~ | **DONE** `87fc971`. Spread 0.000000 across families on all three targets |
+| ~~2~~ | ~~Ground rule 2 — experiments log~~ | **DONE** `5f2990c`. 38 rows, integrity OK, `runs/` now tracked. Exposed the unbounded `eval_start` (see §0a, second disclosure). **"Never report an unlogged number" is now in force** |
+| ~~3~~ | ~~Workstream 1 — L1 objectives for B_ML~~ | **DONE** `db27cd4`. L1 wins **17 of 18**; also added `eval_start`/`eval_end` to B_ML, whose yearly folds previously ran into the 2025 holdout on any default run |
+| ~~4~~ | ~~Workstream 3 — fiscal calendar~~ | **DONE** `7b8da25`+`2ab1c3e`. MAE +1.1–6.3% on DEV across all three targets; **the flow sentinel did NOT move into signal territory** (Revenues 1.138→1.226, Expenditure 1.088→1.088, threshold 1.50). `docs/FISCAL_CALENDAR_SOURCES.md` ready — **T2 can be sent**. Winning subsets: Revenues A+B+C+D+E, Expenditure A+B+C+D, stock A+B+C+D |
+| ~~4b~~ | ~~Workstream 3 — fiscal calendar (original row)~~ | Shared `backend/preprocessing/fiscal_calendar.py` consumed by B_ML *and* E_QUANTILE; `docs/FISCAL_CALENDAR_SOURCES.md` as the Treasury sign-off artifact so T2 can be sent; five feature groups ablated on TRAIN folds, one DEV confirmation per target | **Next.** The headline metric is the **sentinel ratio**, not MAE. Every entry cites rs.ge / matsne.gov.ge / mof.ge / nbg.gov.ge or is marked **UNVERIFIED** — never a fabricated citation. `calendar_version` (content hash) recorded on every experiment row |
+| **5** | **Workstream 2** — LightGBM quantile, crossing-safe, Optuna ~100 trials with h-gapped early stopping; Revenues + Expenditure, stock via delta | **Next.** Use the WS3-winning feature set per target; build on `LightGBM_L1` |
+| 6 | **Workstream 5 — multivariate** | **Now the highest-value modelling work: the last remaining lever on the flow sentinel.** WS1 and WS3 have both failed to move it. The 38 other Treasury lines include the debt-operation components the negative-`Revenues` analysis points at |
+| 7 | Send **T2**; then the sentinel-probe question (shallow-tree probe vs Ridge on an identical feature set — a measurement study on its own merits, **not** a way to rescue a failing model) | The auction calendar is the top ask, and on present evidence more promising than anything left in the modelling backlog |
+| 8 | Workstreams 4, 6, 7 | 7 owns the top-tercile coverage fix (CQR) |
+| 7 | Phase-1 Steps 4/5/7 — ops P0, Agent contract + validator, cleanup | Deferred since Phase 1 |
 
-**Then:** item 2 (ground rule 2 — `experiments/log.csv`), item 3 (workstream 1 — L1 objectives), items
-4–7 (workstreams 2–7).
+**The central finding to carry forward:** the two flow targets have **no detectable feature
+signal** (sentinel ratio 1.07–1.14 vs 1.50 required), and the sentinel probes the *feature set*
+with a fixed Ridge — so no objective, hyperparameter or ensemble work can move it. Only
+workstreams 3 and 5 can. Meanwhile `LightGBM_L1` reports 36.65% DEV skill on Revenues: real
+error reduction against a spiky ruler, but not a forecast. Never quote one number without the
+other.
+
+**And keep the L1 claim exact.** L1 wins 17 of 18 *paired* comparisons against its own twin.
+It does **not** supply the best model on every target: on Expenditure the DEV-best is the
+squared-error `HistGBDT` at **30.13%**, ahead of `LightGBM_L1`'s 28.64% — the same single cell
+where the paired comparison also went against L1 (−4.44%). Per-target selection (WS7) must
+therefore keep L2 candidates in the pool rather than assume L1 dominates.
 
 **The one-ruler check has not been performed.** E_QUANTILE is on the right index now, but C_DL is
 unpinned and B_ML's published baseline still comes from the duplicate implementation.

@@ -23,6 +23,10 @@ backend/forecast_runs/
 # OS cruft
 .DS_Store
 Thumbs.db
-# Phase 2 experiments: the append-only log is tracked, transient artifacts are not
+# Phase 2 experiments. The append-only log AND its per-run detail JSONs are tracked:
+# verify_log_integrity() requires a JSON for every row, so ignoring runs/ would make a
+# fresh clone fail its own integrity check and "reproducible from a logged run" a claim
+# with nothing behind it. They are small and text.
+# test_access.log is a local ledger of holdout reads -- it must not be rewritable by a
+# checkout, so it stays untracked and §0a of reports/HANDOFF.md is the durable record.
 experiments/test_access.log
-experiments/runs/
