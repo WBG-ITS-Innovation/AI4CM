@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "generated_note": "Every metric is linked by run_id to a row in experiments/log.csv and is verified by backend/registry.verify_against_log(). Nothing here is approved; no approval workflow exists yet.",
+  "windows": {
+    "train": "<= 2023",
+    "dev": "2024",
+    "test": "2025 -- SEALED, never evaluated"
+  },
+  "pending_workstreams": [
+    "WS4 target scaling (all recipes are raw)",
+    "WS2 hyperparameter tuning (all params are principled defaults)",
+    "WS7 per-target selection + conformal intervals"
+  ],
+  "recipes": [
+    {
+      "id": "revenues-lgbm-l1-ws3-v1",
+      "target": "Revenues",
+      "family": "B_ML",
+      "point_model": "LightGBM_L1",
+      "interval_model": "GBQuantile",
+      "params": {
+        "objective": "l1",
+        "n_estimators": 800,
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_samples": 20,
+        "reg_lambda": 1.0,
+        "random_state": 0,
+        "horizon": 5,
+        "min_train_years": 4
+      },
+      "feature_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags",
+        "E_rolling"
+      ],
+      "calendar_version": "4b480eae9c8f",
+      "exog_blocks": [],
+      "scaling": "raw (WS4 pending)",
+      "status": "candidate -- pre-tuning",
+      "approved_by": null,
+      "provenance_note": "Objective from WS1 (L1 beat its squared-error twin on 17 of 18 paired comparisons). Feature groups from the WS3 ablation. WS5 tested five exogenous blocks; none helped this target, so none are included.",
+      "dev_credentials": {
+        "run_id": "20260805T052912.614882_Revenues_LightGBM_L1",
+        "window": "DEV (2024)",
+        "n": 262,
+        "dev_mae": 52417152.335,
+        "mase": 1.0205,
+        "skill_vs_ruler_pct": 40.6491,
+        "sentinel_ratio": 1.2255,
+        "ruler_note": "h=5 business-day persistence, the single shared ruler across all four families",
+        "gates": {
+          "signal": {
+            "passed": false,
+            "name": "signal (shuffled-target control)",
+            "measured": 1.2255,
+            "threshold": 1.5,
+            "reason_plain": "Shuffling the historical answers barely worsened this model's error (x1.23, we require x1.50). That means the inputs carry little information about what happens next, so the model is tracking the typical level rather than anticipating events.",
+            "corroboration": "Confirmed with two further instruments (a decision tree and a random forest) in reports/sentinel_probe_study.md; all three agree."
+          },
+          "overfitting": {
+            "passed": true,
+            "name": "overfitting cap",
+            "measured": "< 3.0",
+            "threshold": 3.0,
+            "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+          },
+          "vs_ruler": {
+            "passed": true,
+            "name": "beats the simple benchmark",
+            "measured": "40.65%",
+            "threshold": "> 0%",
+            "reason_plain": "Errors are 40.6% smaller than simply repeating the value from five business days earlier."
+          }
+        }
+      },
+      "publication": {
+        "verdict": "withheld_as_forecast",
+        "reason_plain": "The numbers are shown and the error really is 41% below the simple benchmark, but the signal check fails: this is a central-tendency estimate, not an event forecast. It should not be relied on to anticipate an unusual day.",
+        "named_fix": "Treasury's forward auction and redemption calendar -- the only candidate input that is knowable in advance and targets the specific days that move this line."
+      }
+    },
+    {
+      "id": "expenditure-lgbm-l1-ws3-v1",
+      "target": "Expenditure",
+      "family": "B_ML",
+      "point_model": "LightGBM_L1",
+      "interval_model": "GBQuantile",
+      "params": {
+        "objective": "l1",
+        "n_estimators": 800,
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_samples": 20,
+        "reg_lambda": 1.0,
+        "random_state": 0,
+        "horizon": 5,
+        "min_train_years": 4
+      },
+      "feature_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags"
+      ],
+      "calendar_version": "4b480eae9c8f",
+      "exog_blocks": [],
+      "scaling": "raw (WS4 pending)",
+      "status": "candidate -- pre-tuning",
+      "approved_by": null,
+      "provenance_note": "Group E (rolling/EWMA) was excluded: it HURT this target by 1.61% in the WS3 ablation. WS5 exogenous blocks all hurt; none included.",
+      "dev_credentials": {
+        "run_id": "20260805T052923.182648_Expenditure_LightGBM_L1",
+        "window": "DEV (2024)",
+        "n": 262,
+        "dev_mae": 51602950.5389,
+        "mase": 1.103854,
+        "skill_vs_ruler_pct": 29.4248,
+        "sentinel_ratio": 1.0882,
+        "ruler_note": "h=5 business-day persistence, the single shared ruler across all four families",
+        "gates": {
+          "signal": {
+            "passed": false,
+            "name": "signal (shuffled-target control)",
+            "measured": 1.0882,
+            "threshold": 1.5,
+            "reason_plain": "Shuffling the historical answers barely worsened this model's error (x1.09, we require x1.50). That means the inputs carry little information about what happens next, so the model is tracking the typical level rather than anticipating events.",
+            "corroboration": "Confirmed with two further instruments (a decision tree and a random forest) in reports/sentinel_probe_study.md; all three agree."
+          },
+          "overfitting": {
+            "passed": true,
+            "name": "overfitting cap",
+            "measured": "< 3.0",
+            "threshold": 3.0,
+            "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+          },
+          "vs_ruler": {
+            "passed": true,
+            "name": "beats the simple benchmark",
+            "measured": "29.42%",
+            "threshold": "> 0%",
+            "reason_plain": "Errors are 29.4% smaller than simply repeating the value from five business days earlier."
+          }
+        },
+        "not_the_dev_best": {
+          "better_option": "HistGBDT (squared error) on the pre-WS3 feature set",
+          "its_run_id": "20260805T030826.896831_Expenditure_HistGBDT",
+          "its_dev_mae": 51088706.0,
+          "this_dev_mae": 51602951.0,
+          "gap_pct": 1.01,
+          "why_promoted_anyway": "Selection was made on five TRAIN-internal folds, where this recipe is clearly ahead (35,069,403 vs 37,093,156 MAE). DEV is a single confirmation fold and the 1.0% gap there is within its noise. Recorded rather than hidden: on this target the promoted recipe is not the single best DEV number, and per-target selection in WS7 must keep squared-error candidates in the pool."
+        }
+      },
+      "publication": {
+        "verdict": "withheld_as_forecast",
+        "reason_plain": "Same as Revenues: errors are 29% below the simple benchmark, but the signal check fails, so this is a central-tendency estimate rather than an event forecast.",
+        "named_fix": "Treasury's forward auction and redemption calendar; also the public-sector salary and pension payment dates, which we could not source publicly."
+      }
+    },
+    {
+      "id": "statebudgetbalance-histgbdt-l1-ws5-v1",
+      "target": "State budget balance",
+      "family": "B_ML",
+      "point_model": "HistGBDT_L1",
+      "interval_model": "GBQuantile",
+      "params": {
+        "loss": "absolute_error",
+        "min_samples_leaf": 20,
+        "l2_regularization": 1.0,
+        "random_state": 0,
+        "horizon": 5,
+        "min_train_years": 4,
+        "modelling": "delta y(t+h)-y(t), level reconstructed as origin + delta"
+      },
+      "feature_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags"
+      ],
+      "calendar_version": "4b480eae9c8f",
+      "exog_blocks": [
+        "cross"
+      ],
+      "scaling": "raw (WS4 pending); level target modelled as a change",
+      "status": "candidate -- pre-tuning",
+      "approved_by": null,
+      "provenance_note": "The only target where an exogenous block helped: `cross` (lagged Revenues and Expenditure) improved DEV by 0.42%. Mechanically sensible -- the balance is cumulative revenues minus expenditure.",
+      "dev_credentials": {
+        "run_id": "20260805T055813.925085_State_budget_balance_HistGBDT_L1",
+        "window": "DEV (2024)",
+        "n": 262,
+        "dev_mae": 194104921.8438,
+        "mase": 1.57832,
+        "skill_vs_ruler_pct": 20.0072,
+        "sentinel_ratio": 7.0058,
+        "ruler_note": "h=5 business-day persistence, the single shared ruler across all four families",
+        "gates": {
+          "signal": {
+            "passed": true,
+            "name": "signal (shuffled-target control)",
+            "measured": 7.0058,
+            "threshold": 1.5,
+            "reason_plain": "Shuffling the historical answers made the error 7.0 times worse, so the inputs genuinely inform this target."
+          },
+          "overfitting": {
+            "passed": true,
+            "name": "overfitting cap",
+            "measured": "< 3.0",
+            "threshold": 3.0,
+            "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+          },
+          "vs_ruler": {
+            "passed": true,
+            "name": "beats the simple benchmark",
+            "measured": "20.01%",
+            "threshold": "> 0%",
+            "reason_plain": "Errors are 20.0% smaller than simply repeating the value from five business days earlier."
+          }
+        }
+      },
+      "publication": {
+        "verdict": "publishable",
+        "reason_plain": "All checks pass. The signal check is strongly positive (shuffling the answers made the error 7 times worse), so this model is genuinely using its inputs, and errors are 20% below the simple benchmark.",
+        "named_fix": null
+      }
+    }
+  ]
+}
