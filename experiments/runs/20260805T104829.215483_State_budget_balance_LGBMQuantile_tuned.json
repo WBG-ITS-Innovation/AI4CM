@@ -1,0 +1,57 @@
+{
+  "run_id": "20260805T104829.215483_State_budget_balance_LGBMQuantile_tuned",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T10:48:29.215483+00:00",
+  "git_sha": "9cd7e9b91c92",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "State budget balance",
+  "feature_set_hash": "ed43bb328f44",
+  "params": "8d6e5eae9b43",
+  "seed": 0,
+  "fold_scheme": "Optuna on TRAIN-internal yearly folds 2019-2023; one DEV fold",
+  "dev_mae": "182294096.4074",
+  "mase": "1.482283",
+  "skill_vs_ruler": "26.7287",
+  "sentinel_ratio": "0.9835",
+  "coverage_low": "0.5714",
+  "coverage_mid": "0.6747",
+  "coverage_high": "0.5181",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS2 tuned LGBMQuantile, DEV n=250, crossings=6",
+  "model": "LGBMQuantile_tuned",
+  "git_sha_full": "9cd7e9b91c927b7ddc4ec94efaf9f2cf9156415b",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws2:statebudgetbalance-histgbdt-l1-ws5-v1"
+  ],
+  "params_full": {
+    "study": "ws2_tuning",
+    "model": "LGBMQuantile",
+    "best_params": {
+      "learning_rate": 0.12318865535761775,
+      "num_leaves": 23,
+      "min_child_samples": 69,
+      "subsample": 0.911157842435642,
+      "subsample_freq": 0,
+      "colsample_bytree": 0.6298587941762777,
+      "reg_lambda": 7.589870917266859,
+      "reg_alpha": 0.6908170437108905
+    },
+    "target_transform": "raw",
+    "n_trials_completed": 100,
+    "horizon": 5,
+    "early_stopping": "h-gapped",
+    "quantiles": [
+      0.1,
+      0.5,
+      0.9
+    ]
+  },
+  "ruler": 248793303.35788,
+  "coverage_terciles": {
+    "low": 0.5714285714285714,
+    "mid": 0.6746987951807228,
+    "high": 0.5180722891566265
+  },
+  "per_fold": []
+}
