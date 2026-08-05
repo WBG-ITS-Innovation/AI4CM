@@ -37,6 +37,7 @@ def champions_from_registry() -> list:
             exog_blocks=tuple(r.get("exog_blocks") or ()),
             recipe_id=r["id"],
             scaling=r["scaling"],
+            transform=r.get("params", {}).get("target_transform", "raw"),
         ))
     return out
 
