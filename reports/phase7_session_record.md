@@ -142,9 +142,18 @@ Hyperparameters are identical to the twins, enforced by a test that diffs `get_p
 The one loss is a sign flip at the noise floor of a single-fold confirmation, on the target
 where L1's TRAIN gain was smallest.
 
-Best per target on DEV: **`LightGBM_L1`** on Revenues (36.65% skill) and Expenditure (28.64%);
+Best per target on DEV: **`LightGBM_L1`** on Revenues (36.65% skill); **`HistGBDT`** — the
+squared-error incumbent — on Expenditure (**30.13%**, ahead of `LightGBM_L1`'s 28.64%);
 **`HistGBDT_L1`** on State budget balance (16.10%). On the stock target L1 turns three
 worse-than-persistence models into three that beat it.
+
+> **Corrected 2026-08-05.** An earlier version of this line named `LightGBM_L1` as DEV-best on
+> Expenditure at 28.64%. It was not: `HistGBDT` at 30.13% was. `reports/ws1_objectives.md` is
+> authoritative and had it right. The distinction matters — Expenditure is the one target where
+> the DEV-best model is an **L2** model, which is the same single cell where the paired
+> comparison also went against L1 (HistGBDT −4.44%). "L1 wins 17 of 18 **paired**
+> comparisons" and "L1 supplies the best model on every target" are different claims, and only
+> the first is true.
 
 **A prerequisite defect:** `build_yearly_folds` folded to the last year in the data, so a
 default B_ML run's final fold **was the 2025 holdout**, and nothing could scope the family to
