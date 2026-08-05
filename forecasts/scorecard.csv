@@ -1,0 +1,1 @@
+issue_date,target,recipe_id,horizon,target_date,p10,p50,p90,y_true,abs_error,persistence_pred,persistence_abs_error,skill_vs_ruler_pct,inside_interval,publication_verdict,point_model,target_transform,data_sha_at_issue,git_sha_at_issue,scored_at_data_sha
