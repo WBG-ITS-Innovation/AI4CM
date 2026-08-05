@@ -66,9 +66,29 @@ def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
         end of the series (folds=None means all possible blocks).
     """
     indices: List[Tuple[int, int]] = []
-    last_test_end = n
-    remaining = None if eval_start_idx is not None else folds  # None => no count limit
     min_train_rows = max(min_train * 252, horizon, 30)
+
+    # Pinned mode: tile FORWARD from eval_start so the first block begins exactly
+    # there. Tiling backward from the end (the original behaviour) left a remainder
+    # at the START of the window whenever its length was not a multiple of horizon:
+    # with 156 target dates and h=5 the family evaluated 150 of them, starting
+    # 2025-01-09 instead of 2025-01-01. That is a different window from every other
+    # family, so the one-ruler check reported different persistence numbers -- on
+    # Expenditure a 5.8M difference (78,036,083 vs 83,839,124). The final block may
+    # be shorter than `horizon`; a partial block is a smaller sample, not a wrong one.
+    if eval_start_idx is not None:
+        start = max(eval_start_idx, min_train_rows + 1)
+        while start < n:
+            test_end = min(start + horizon, n)
+            if start <= min_train_rows:
+                start = test_end
+                continue
+            indices.append((start, test_end))
+            start = test_end
+        return indices
+
+    last_test_end = n
+    remaining = folds  # None => no count limit
     while True:
         if remaining is not None and remaining <= 0:
             break
@@ -382,7 +402,15 @@ def run_pipeline(CONFIG: Config) -> None:
     eval_start_idx = None
     if CONFIG.eval_start:
         od_ts = pd.to_datetime(pd.Series(od_all.values))
-        eval_start_idx = int(np.searchsorted(od_ts.values, np.datetime64(pd.Timestamp(CONFIG.eval_start))))
+        # Pin on TARGET dates, not origin dates. The other three families define
+        # their window by target_date, so pinning origins >= eval_start put
+        # E_QUANTILE's first target h steps LATER (2025-01-08 instead of
+        # 2025-01-01) -- a different window, and therefore a different persistence
+        # number, which is exactly what the one-ruler check exists to catch.
+        # target[i] lies h positions after origin[i], so the origin index that
+        # yields the first in-window target is (index of eval_start) - h.
+        _k = int(np.searchsorted(od_ts.values, np.datetime64(pd.Timestamp(CONFIG.eval_start))))
+        eval_start_idx = max(0, _k - int(CONFIG.horizon))
         if eval_start_idx >= len(od_ts):
             raise ValueError(
                 f"eval_start {CONFIG.eval_start} is beyond the last origin date "

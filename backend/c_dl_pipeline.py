@@ -497,10 +497,18 @@ def build_sequences(F: pd.DataFrame, y: pd.Series, seq_len: int, horizon: int,
         origin_dates_list.append(pd.Timestamp(idx[end_i]))
         origin_values_list.append(float(y.iloc[end_i]))
     X = np.stack(Xs, axis=0) if Xs else np.zeros((0, seq_len, F.shape[1]), dtype=np.float32)
+    # float32 for the model (torch), float64 alongside for output/metadata. As
+    # float32 y_true rounded at 1e8 magnitudes, so C_DL's persistence baseline
+    # (mean|y_true - origin_value|) still differed from the other families' in the
+    # last units even after origin_value was widened (item 1f).
     yv = np.array(ys, dtype=np.float32)
     ld = np.array(label_dates, dtype="datetime64[ns]")
     od = np.array(origin_dates_list, dtype="datetime64[ns]")
-    ov = np.array(origin_values_list, dtype=np.float32)
+    # float64: origin_value is baseline METADATA, not a model input. As float32 it
+    # rounded to ~8 units at 1e8 magnitudes, so C_DL's persistence baseline differed
+    # from the other families' in the last cents (83,534,152.28 vs .85) and the
+    # one-ruler check could not report a single number (item 1f).
+    ov = np.array(origin_values_list, dtype=np.float64)
     return X, yv, ld, od, ov
 
 def fit_feature_scaler(X: np.ndarray) -> Tuple[np.ndarray,np.ndarray]:
@@ -787,6 +795,13 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                     ld_tr = pd.to_datetime(ld_all[tr_mask]); ld_te = pd.to_datetime(ld_all[te_mask])
                     od_te = pd.to_datetime(od_all[te_mask])   # origin dates for test set
                     ov_te = ov_all[te_mask]                   # origin values for test set
+                    # Published truth is read from the float64 source series at the
+                    # label dates, not from the float32 model tensor. Round-tripping
+                    # through float32 rounded y_true at 1e8 magnitudes, so C_DL's
+                    # persistence baseline (mean|y_true - origin_value|) differed from
+                    # the other families' in the last units and the one-ruler check
+                    # could not report a single number (item 1f).
+                    y_te64 = y.reindex(pd.DatetimeIndex(ld_te)).to_numpy(dtype=np.float64)
 
                     if X_tr_all.shape[0] < 1 or X_te.shape[0] < 1:
                         continue
@@ -882,7 +897,7 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                             "target": target,
                             "horizon": h,
                             "model": mname.upper(),
-                            "y_true": y_te_raw.astype(float),
+                            "y_true": y_te64.astype(np.float64),
                             "y_pred": yhat.astype(float),
                             "y_lo":  lo.astype(float),
                             "y_hi":  hi.astype(float),
