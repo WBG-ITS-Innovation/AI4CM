@@ -202,6 +202,13 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
+**Finish the WS2 search and report it.** The infrastructure is complete (`9ba1144`) and the
+driver is committed (`scripts/ws2_tune.py`, `20d4469`); the 100-trial-per-target Optuna study
+was still running when phase 11 closed and **nothing from it has been reported or promoted**.
+Resume with the command in `reports/phase11_session_record.md` §4 — it skips targets already
+finished, and per-target DEV confirmations land in `experiments/log.csv` under
+`study: ws2_tuning`.
+
 **Workstream 2 — hyperparameter tuning.** Workstreams 3, 4 and 5, the sentinel-probe study,
 the demo tranche and published-forecast scoring are complete.
 
