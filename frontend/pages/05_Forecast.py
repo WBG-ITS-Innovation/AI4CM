@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPOROOT / "backend"))
 
 from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
 
-st.set_page_config(page_title="Forecast — AI4CM", page_icon="🔭", layout="wide")
+st.set_page_config(page_title="Forecast · Treasury Forecast", page_icon="🔭", layout="wide")
 inject_global_css()
 
 GEN_CMD = "./backend/.venv/bin/python backend/run_forward_forecast.py"
@@ -53,9 +53,7 @@ def load_all() -> Optional[Dict]:
         return None
 
 
-def m(v: float, dp: int = 1) -> str:
-    """GEL millions — the unit the ministry speaks in."""
-    return f"{v / 1_000_000:,.{dp}f}"
+from format_gel import UNIT_LABEL, gel_millions as m  # noqa: E402
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -160,7 +158,7 @@ for target in fc["target"].unique():
             "Central": rows["p50"].map(lambda v: m(v)),
             "High": rows["p90"].map(lambda v: m(v)),
         })
-        st.caption("Million lari")
+        st.caption(UNIT_LABEL.capitalize())
         st.dataframe(tbl, hide_index=True, use_container_width=True)
 
     # Gate badges with plain-language reasons

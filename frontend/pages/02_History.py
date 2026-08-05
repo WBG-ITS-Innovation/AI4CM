@@ -35,7 +35,7 @@ except ImportError:
 APPROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = APPROOT / "runs"
 
-st.set_page_config(page_title="🕒 History", layout="wide")
+st.set_page_config(page_title="History · Treasury Forecast", page_icon="🕒", layout="wide")
 inject_global_css()
 st.markdown(page_header("🕒 Run History", "Browse and manage past experiments"), unsafe_allow_html=True)
 

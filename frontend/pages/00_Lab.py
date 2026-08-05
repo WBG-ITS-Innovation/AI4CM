@@ -22,7 +22,7 @@ from data_preflight import run_preflight
 from ui_styles import inject_global_css, page_header, section_header, callout_box, info_tip, COLORS
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
-st.set_page_config(page_title="🧪 Lab — Forecast Runner", layout="wide")
+st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
 inject_global_css()
 
 APPROOT = Path(__file__).resolve().parent
