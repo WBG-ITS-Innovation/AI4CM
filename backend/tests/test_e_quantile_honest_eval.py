@@ -134,8 +134,12 @@ def test_pipeline_reports_per_model_and_gates(tmp_path):
     report = json.loads(
         (tmp_path / "out" / "artifacts" / "integrity_report.json").read_text()
     )
-    # Per-model verdicts for both registry models.
-    assert set(report["models"]) == {"GBQuantile", "ResidualRF"}
+    # Per-model verdicts for EVERY registry model. LGBMQuantile joined the registry in
+    # workstream 2, so this asserts the registry's contents rather than a hard-coded pair --
+    # a new model must get a verdict, and this test should fail if one is ever added without
+    # being reported on.
+    from e_quantile_daily_pipeline import registry_models
+    assert set(report["models"]) == set(registry_models())
     for m in report["models"].values():
         assert {"mae_p50", "skill_pct", "coverage_p10_p90",
                 "gate_passed", "gate_reasons"} <= set(m)
