@@ -1,0 +1,57 @@
+{
+  "run_id": "20260805T121749.176361_Revenues_LGBMQuantile_tuned_recomputed",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T12:17:49.176361+00:00",
+  "git_sha": "c1b795cb2170",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "Revenues",
+  "feature_set_hash": "aa85d7ca2180",
+  "params": "62e8c716f3e8",
+  "seed": 0,
+  "fold_scheme": "DEV confirmation refitted from the stored best_params (search not re-run)",
+  "dev_mae": "40148658.8415",
+  "mase": "0.781647",
+  "skill_vs_ruler": "54.5405",
+  "sentinel_ratio": "1.1670",
+  "coverage_low": "0.7976",
+  "coverage_mid": "1.0000",
+  "coverage_high": "0.6988",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS2 RECOMPUTED: canonical ruler and units-consistent sentinel; supersedes 20260805T103151.878218_Revenues_LGBMQuantile_tuned",
+  "model": "LGBMQuantile_tuned_recomputed",
+  "git_sha_full": "c1b795cb2170ce3f1b0abe7d0c6b2485e83ebe32",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws2recompute:20260805T103151.878218_Revenues_LGBMQuantile_tuned"
+  ],
+  "params_full": {
+    "study": "ws2_tuning_recomputed",
+    "model": "LGBMQuantile",
+    "best_params": {
+      "learning_rate": 0.014231675736958105,
+      "num_leaves": 35,
+      "min_child_samples": 28,
+      "subsample": 0.9465557902746049,
+      "subsample_freq": 4,
+      "colsample_bytree": 0.9676920511290251,
+      "reg_lambda": 0.0022176292972619005,
+      "reg_alpha": 0.0056847353683637985
+    },
+    "target_transform": "ratio",
+    "horizon": 5,
+    "supersedes_run_id": "20260805T103151.878218_Revenues_LGBMQuantile_tuned",
+    "ruler_source": "canonical DEV h-step persistence",
+    "sentinel_probes": {
+      "ridge": 1.1669504437948994,
+      "tree": 1.4211521675014167,
+      "forest": 1.2602173259058458
+    }
+  },
+  "ruler": 88317355.17194657,
+  "coverage_terciles": {
+    "low": 0.7976190476190477,
+    "mid": 1.0,
+    "high": 0.6987951807228916
+  },
+  "per_fold": []
+}
