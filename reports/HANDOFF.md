@@ -3,8 +3,9 @@
 **Single self-contained document for resuming work.** Everything needed is inlined; no other file is
 required. Share this one file.
 
-**Generated:** 2026-08-04 · **Branch:** `model/excellence` @ `b1b7ae1` · **`main`** @ `a03b1bc`
-**Suite:** 237 passing · **TEST (2025) reads: 0**
+**Generated:** 2026-08-04, updated 2026-08-05 · **Branch:** `model/excellence` @ `98a1da4`
+**`origin/main`** @ `4a925ac` (**Phase 1 merged via PR #23**)
+**Suite:** 246 passing · **TEST (2025) reads: 0**
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
 ---
@@ -31,12 +32,16 @@ should continue to:
 | Phase | Status |
 |---|---|
 | Audit (`docs/reviews/2026-08-04_review.md`) | Complete. Findings valid; **all its metrics superseded** by the Phase-1 data fix |
-| Phase 1 — data trust | **Merged to `main`** (`a03b1bc`). Step 1 done; Steps 2–7 open |
-| Phase 2 — modelling | In progress on `model/excellence`. Ground rule 1 done; item 1 partly done; workstreams 1–7 not started |
+| Phase 1 — data trust | **Merged to `origin/main`** via PR #23. Step 1 done; Steps 2–7 open |
+| Phase 2 — modelling | In progress on `model/excellence`. Ground rule 1 done; item 1: 1a/1c/1d done, 1b/1e/1f open; workstreams 1–7 not started |
 
 ### Commits on `model/excellence` (6 ahead of `main`)
 
 ```
+98a1da4  docs: integrity-consolidation session record (items 1c, 1d, PR #23)
+904a520  fix: alias mae_seasonal_naive so it stops impersonating persistence (1d, A2)
+154efbe  refactor: retire the duplicate integrity module; one implementation (1c, D7)
+9f24b22  docs: single self-contained handoff
 b1b7ae1  docs: yardstick session record
 15fb6ee  fix: E_QUANTILE on business days + an honest stock path (yardstick, D12)
 b69c060  docs: trust-pack session record + complete open-issue register
@@ -44,6 +49,10 @@ cc60073  docs: trust pack -- CHANGELOG, VERIFICATION, and honest stubs
 c3c2fd8  docs: Phase-2 session record
 489c9e0  feat: enforce TRAIN/DEV/TEST in code with a gated, logged TEST holdout
 ```
+
+**Phase 1 is now on `origin/main`** via PR #23 (merged 2026-08-05). A direct push of the local
+`main` was rejected as non-fast-forward -- `origin/main` had received PRs #21 and #22 -- so the
+work went through `merge/phase1-trust` based on `origin/main`.
 
 ### Reference numbers
 
@@ -93,13 +102,13 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Item 1 of the Phase-2 plan, sub-task 1c.** Do them in this order:
+**Item 1 of the Phase-2 plan, sub-task 1b.** 1c and 1d are done. Remaining, in order:
 
 | # | Task | Notes |
 |---|---|---|
-| **1c** | Retire the duplicate integrity module (D7) and delete `integrity_report.update(legacy_report)` | Move `signal_sentinel` into `forecast_integrity.py`; delete `compute_persistence_baseline_from_origin`, `compute_baselines`, `shift_sanity_check`; leave `preprocessing/integrity.py` as a deprecated re-export so 3 test files and 16 Dashboard fields survive. Compute `rmse_model`, `r2_model`, `misaligned_examples`, `lag_warning`, `r2_persistence` from the shared helpers |
-| 1d | Alias `mae_seasonal_naive` (A2) | Add `seasonal_naive_season_steps`; set value `NaN` + `seasonal_naive_degenerate: true` when season == horizon |
-| 1b | Pin C_DL to `TEST_START` | Small. C_DL is parked, but the pin is needed for the one-ruler check |
+| ~~1c~~ | ~~Retire the duplicate integrity module (D7)~~ | **DONE** `154efbe`. 649 -> 59 lines; `.update(legacy_report)` gone; 10 tests migrated not deleted; mutation-validated |
+| ~~1d~~ | ~~Alias `mae_seasonal_naive` (A2)~~ | **DONE** `904a520`. 16/16 Dashboard fields; `NaN` + `seasonal_naive_degenerate` at season == horizon |
+| **1b** | Pin C_DL to `TEST_START` | Needs an `eval_start` concept added to `c_dl_pipeline`. C_DL is parked (Q6), but the pin is needed for the one-ruler check |
 | 1e | Input selection by explicit name + recorded SHA-256 | `run_daily_forecast.sh:60` still uses `ls -t \| head -1` |
 | 1f | Backtest re-run + one-ruler verification + new-vs-old tier table | The verification for item 1. Needs 1b–1e first |
 
@@ -165,9 +174,9 @@ All identified and evidenced in the audit. **None fixed unless marked.** Grouped
 |---|
 | ~~E_QUANTILE on a calendar-day index~~ — **fixed** `15fb6ee` |
 | ~~E_QUANTILE has no stock path~~ — **fixed** `15fb6ee` |
+| ~~`integrity_report.update(legacy_report)` lets a duplicate overwrite the shared one~~ — **fixed** `154efbe` |
+| ~~`mae_seasonal_naive` identical to `mae_persistence` at h=5~~ — **fixed** `904a520` |
 | C_DL unpinned: folds 2019–2025, reported +10.84% while being −5.19% on the 2025 window |
-| `integrity_report.update(legacy_report)` lets a duplicate implementation overwrite the shared one |
-| `mae_seasonal_naive` identical to `mae_persistence` at h=5 (`season_steps` hardcoded 5) |
 
 ### The four known-unfixed bugs (Phase-1 Step 3)
 
