@@ -6,7 +6,8 @@
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 **Calendar version:** `4b480eae9c8f`
 **TEST (2025) gated reads: 0** — two retrospective disclosures on record (phase-7 §3)
-**PR #25** open, ready for review, not merged · **PR #26** opened this session
+**PR #25** open, ready for review, not merged — **it now carries Phase 2b *and* 2c**; a separate
+Phase 2c PR could not be opened (see §6a)
 
 ---
 
@@ -176,6 +177,38 @@ Conditioned on context comfortably allowing. It does not.
 
 ---
 
+## 6a · The Phase 2c PR could not be opened
+
+The instruction asked for a ready-for-review PR titled *"Phase 2c — multivariate, target
+scaling, sentinel probe study"*. `gh pr create` refused:
+
+```
+a pull request for branch "model/excellence" into branch "main" already exists: .../pull/25
+```
+
+**GitHub permits one open pull request per head→base pair.** PR #25's head is
+`model/excellence`, and that branch has advanced, so **PR #25 has silently grown to contain
+Phase 2c as well** — 11 commits rather than the 4 its description covers. That is a real
+reviewability problem, not just a bookkeeping one: a reviewer reading #25's description would
+not know WS3, WS5 and the probe study are in the diff.
+
+What I did instead of inventing a PR number: added a **non-destructive scope-disclosure
+comment** to PR #25 listing the extra commits and pointing at the three workstream reports. I
+did not overwrite #25's description, since it may be mid-review, and I did not rewrite the
+pushed branch.
+
+Two ways to get separate tranches, both requiring a decision:
+
+1. **Merge PR #25**, after which the next push can open a clean Phase 2c PR.
+2. **Split**: reset `model/excellence` to `136ae76` (the Phase 2b tip) and move the Phase 2c
+   commits to a new branch. This rewrites an already-pushed branch, so it needs explicit
+   approval.
+
+Recorded here because the same thing will recur every session that pushes to
+`model/excellence` while an earlier PR is unmerged.
+
+---
+
 ## 7 · What remains
 
 | # | Task | Notes |
@@ -208,7 +241,7 @@ modelling task.
 - **Treasury T1 (negative `Revenues`) — answer OUTSTANDING.**
 - **Top-tercile interval coverage 49–54%** against nominal 80%. WS7's CQR.
 - **C_DL stock-target collapse** — parked (Q6).
-- **PR #25 and PR #26 both open, neither merged.**
+- **PR #25 open, not merged, and now carrying two tranches** (§6a). No PR #26 exists.
 
 ---
 
