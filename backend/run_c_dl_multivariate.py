@@ -105,6 +105,11 @@ def main() -> None:
 
     try:
         _log(f"[runner] START pipeline for target='{target}' cadence={cadence.capitalize()} horizon={horizon} (multivariate)")
+        from provenance import record_run, verify_expected_sha
+        verify_expected_sha(cfg.data_path)
+        record_run(out_root, "C_DL", cfg.data_path,
+                   config={k: v for k, v in vars(cfg).items() if k != "data_path"},
+                   date_col=cfg.date_col, seed=cfg.random_seed)
         pipe.run_pipeline(config=cfg, run_univariate=False, run_multivariate=True)
         _log(f"[OK] Master outputs in: {Path(out_root).resolve()}")
         _log("[runner] DONE")

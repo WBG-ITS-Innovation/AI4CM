@@ -360,6 +360,16 @@ def main():
     with open(outroot/"artifacts"/"integrity_report.json", "w") as _f:
         _json.dump(_stat_integrity, _f, indent=2, default=str)
 
+    # Item 1e: one provenance record per run, from the shared helper.
+    from provenance import record_run, verify_expected_sha
+    verify_expected_sha(data)
+    record_run(outroot, "A_STAT", data,
+               config={"model": model, "target": target, "cadence": cadence,
+                       "horizon": horizon, "folds": folds, "min_train_years": minyrs,
+                       "overrides": ov},
+               date_col=dcol, seed=None,
+               extra={"note": "A_STAT sets no random seed (audit m-1, still open)"})
+
     ops_series=None if _is_stock(target) else (ops_daily if cadence=="Daily" else ops_month)
     if not preds.empty:
         _plot_overlay(preds[preds["model"]==model], outroot/cadence.lower()/"plots"/f"{target.replace(' ','_')}_overlay.png", ops_series)

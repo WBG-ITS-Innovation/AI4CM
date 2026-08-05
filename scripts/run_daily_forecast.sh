@@ -53,17 +53,49 @@ STALE_DAYS="${STALE_DAYS:-3}"
 MODE="${MODE:-production}"
 RUN_DATE="$(date +%F)"
 
-# ── Choose the latest data file (newest by modification time) unless given ──
+# ── Select the input by EXPLICIT NAME, never by modification time ──
+#
+# This used to be `ls -t ... | head -1`, i.e. newest-by-mtime. Two runs on the same
+# RUN_DATE could therefore use different inputs if preprocessing ran in between, and
+# nothing afterwards recorded which one (review §7.2). Worse, `touch` on any file in
+# that directory silently changed what the pipeline forecast.
+#
+# The name is now fixed and overridable; the content is identified by SHA-256, which
+# is recorded in every family's provenance.json. Set AI4CM_EXPECTED_DATA_SHA256 to
+# pin a run to specific bytes -- each runner then refuses to start on a mismatch.
+DATA_FILE_NAME="${DATA_FILE_NAME:-master_daily_clean_treasury.csv}"
 if [ -z "${TG_DATA_PATH:-}" ]; then
   PROCESSED_DIR="$BACKEND_DIR/data/processed"
-  # -t sorts by mtime (newest first); head -1 takes the newest.
-  TG_DATA_PATH="$(ls -t "$PROCESSED_DIR"/master_daily_clean_*.csv 2>/dev/null | head -1 || true)"
-  if [ -z "$TG_DATA_PATH" ]; then
-    echo "[ERROR] No data file found in $PROCESSED_DIR (master_daily_clean_*.csv)." >&2
+  TG_DATA_PATH="$PROCESSED_DIR/$DATA_FILE_NAME"
+fi
+if [ ! -f "$TG_DATA_PATH" ]; then
+  echo "[ERROR] Data file not found: $TG_DATA_PATH" >&2
+  echo "        Set DATA_FILE_NAME or TG_DATA_PATH explicitly. This script does not" >&2
+  echo "        guess by modification time." >&2
+  exit 1
+fi
+
+# Record the hash up front so it appears in the log even if a family later fails.
+if command -v shasum >/dev/null 2>&1; then
+  DATA_SHA256="$(shasum -a 256 "$TG_DATA_PATH" | cut -d' ' -f1)"
+elif command -v sha256sum >/dev/null 2>&1; then
+  DATA_SHA256="$(sha256sum "$TG_DATA_PATH" | cut -d' ' -f1)"
+else
+  DATA_SHA256="unavailable(no shasum/sha256sum)"
+fi
+export AI4CM_DATA_SHA256="$DATA_SHA256"
+
+echo "[daily] Using data file: $TG_DATA_PATH"
+echo "[daily] Data SHA-256:    $DATA_SHA256"
+if [ -n "${AI4CM_EXPECTED_DATA_SHA256:-}" ]; then
+  if [ "$DATA_SHA256" != "$AI4CM_EXPECTED_DATA_SHA256" ]; then
+    echo "[ERROR] Data SHA-256 does not match AI4CM_EXPECTED_DATA_SHA256." >&2
+    echo "        expected $AI4CM_EXPECTED_DATA_SHA256" >&2
+    echo "        actual   $DATA_SHA256" >&2
     exit 1
   fi
+  echo "[daily] SHA-256 matches the pinned value."
 fi
-echo "[daily] Using data file: $TG_DATA_PATH"
 
 # ── Prepare the dated output folder (idempotent: wipe and recreate) ──
 RUNS_ROOT="$BACKEND_DIR/forecast_runs"
