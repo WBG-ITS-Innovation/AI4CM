@@ -211,3 +211,73 @@ cd frontend && ./.venv/bin/streamlit run Overview.py
 
 The frontend suite needs `frontend/.venv` (it has streamlit); the root suite skips the page
 smoke tests via `pytest.importorskip("streamlit")` so one bare `pytest` still works.
+
+---
+
+## 5 · Master prompt received mid-session — premise check and status
+
+A large priority-ordered prompt (Parts A–D, "two to three sessions expected") arrived after the
+visual pass was complete. Premises verified by measurement before anything else:
+
+| Premise | Measured |
+|---|---|
+| Branch tip | `e8ca2f9`, 22 ahead of `origin/main` (`863f967`) |
+| Root suite | **453 passed, 1 skipped**, `EXIT=0` |
+| Log integrity | `{'n_rows': 138, 'ok': True, 'problems': []}` |
+| Registry vs log | `{'recipes': 3, 'metrics_checked': 12, 'ok': True}` |
+| TEST gated reads | **0** |
+| PR state | **#26 open, not merged** → reuse, do not open a second |
+
+### "Check what is already complete" — nothing is
+
+The prompt cautions against redoing finished phase-12 work. **None of it exists.** Measured
+by file check:
+
+```
+absent  reports/ws2_tuning.md              absent  reports/accuracy_levers.md
+absent  docs/SIGNAL_FINDING.md             absent  reports/PROGRESS_SINCE_LAST_REVIEW.md
+absent  reports/ws7_selection_and_cqr.md   absent  reports/model_pool_expansion.md
+absent  frontend/i18n.py                   absent  docs/I18N_REVIEW.md
+absent  reports/phase12_session_record.md  absent  frontend/assets/logo.svg
+```
+
+So there is no completed work to preserve and no duplication risk. Every item in Parts A–D is
+unstarted except as noted below.
+
+### A blocker on A2 that cannot be worked around
+
+**`frontend/assets/logo.svg` does not exist.** A2 requires rendering "the client's official
+Treasury logo — use as provided, do not redraw or recolour". There is nothing to render, and
+redrawing it is explicitly forbidden and would be wrong regardless: an approximated official
+emblem is worse than none. **A2 needs the file supplied.** The rest of the header (app name,
+one-line subtitle) is implementable without it and should be built so the logo drops in.
+
+`~/Projects/ai4cm-ui/handoff/` contains `DESIGN_TOKENS.md`, `hover-copy.md` and `README.md`,
+so A1 and A4 have their sources.
+
+### Status of every item, for the next session
+
+| Item | Status |
+|---|---|
+| **A1** token adoption | **Not started.** Note the reversal: this session followed DESIGN_TOKENS.md's own "not a request to restyle" and kept the lab palette; A1 now **overrides** that and asks for the tokens to become the lab's look. Contrast ratios must be re-measured and stated |
+| **A2** logo header | **Blocked** — `frontend/assets/logo.svg` absent (above) |
+| **A3** chart aesthetics | **Partly done.** `plotly_chrome()` exists and is applied to 3 of 9 Dashboard figures, both Compare figures and the Forecast band chart. Remaining: the other 6 Dashboard figures, a Plotly template matching the tokens, GEL-millions via `format_gel.py` on displayed values, hovertemplates, and non-colour encodings for greyscale |
+| **A4** tooltips | **Partly done.** 10 tooltips on metrics already on screen (6 Dashboard, 4 Forecast), written by hand. Not yet sourced from `handoff/hover-copy.md`, and the specific metrics A4 names (skill, sentinel/1.50, MASE, coverage, WITHHELD, never-verified) are mostly not on screen as metrics yet |
+| **A5** Georgian i18n | **Not started.** Non-trivial: needs the strings table, toggle, `session_state`, `translation_status: "unverified"` on every Georgian string, `docs/I18N_REVIEW.md`, and the test that toggling leaves every displayed number byte-identical |
+| **A6** bilingual smoke test | **Not started.** Monolingual version exists (`frontend/tests/test_pages_smoke.py`, 34 cases) and its docstring already states what it does not verify |
+| **B1** upstream artifact fixes | **Not started.** Six items (run_id, X9, X10, F1, C8, X11). C8 overlaps the interval-nominal gap I hit and documented as A1/A2 in the backlog |
+| **B2** WS2 defects + `ws2_tuning.md` | **Not started.** Both defects are diagnosed with causes in `reports/phase11_session_record.md` §4; the prompt's instruction not to re-run the search matches what that record says |
+| **B3** `SIGNAL_FINDING.md` | **Not started** |
+| **B4** WS7 (CQR, conditional-coverage gate, selection rule) | **Not started.** This is the biggest product defect and Tier 2 items 5–6 of the UI backlog exist only because it is unfixed |
+| **C1–C8** accuracy levers | **Not started** |
+| **D1–D2** progress record | **Not started** |
+
+### One correction the next session should carry
+
+The master prompt's sourcing rule — *"read from artifacts and `experiments/log.csv`, never from
+a session record's summary table — those have drifted"* — is well founded. Phase 11 §4 documents
+that the WS2 harness wrote **non-canonical rulers** (Revenues 90,800,654 vs canonical
+88,317,355; Expenditure 76,722,514 vs 73,117,667), so **every `skill_vs_ruler` value on the
+three `study: ws2_tuning` rows in `experiments/log.csv` is unusable** and must be recomputed
+before publication. The `dev_mae` values on those rows are sound.
+
