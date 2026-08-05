@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 import datetime as dt
+import re
 import streamlit as st
 import pandas as pd
 
@@ -221,3 +222,29 @@ with col_b:
 
 st.markdown("---")
 st.caption("Need a refresher on models and parameters? Open **Models** for defaults and tuning tips.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PROGRESS SINCE THE LAST REVIEW  (Part 8)
+#
+# A SECTION on this page, not a new page and not a nav item. Reads
+# reports/PROGRESS_SINCE_LAST_REVIEW.md so the lab and the written record cannot drift: there
+# is one source and this renders it.
+# ══════════════════════════════════════════════════════════════════════════════
+_progress = REPOROOT_PROGRESS = (Path(__file__).resolve().parent.parent
+                                 / "reports" / "PROGRESS_SINCE_LAST_REVIEW.md")
+st.divider()
+st.markdown("## Progress since the last review")
+if _progress.exists():
+    _txt = _progress.read_text(encoding="utf-8")
+    # Drop the H1 so it does not compete with the section heading above.
+    _body = re.sub(r"^#\s+.*?$", "", _txt, count=1, flags=re.M).lstrip()
+    _head, _sep, _rest = _body.partition("## 2 ·")
+    st.markdown(_head)
+    with st.expander("The rest of the record — levers, model pool, correctness work, "
+                     "and what we still cannot claim", expanded=False):
+        st.markdown(_sep + _rest if _sep else _rest)
+    st.caption(f"Rendered from `reports/PROGRESS_SINCE_LAST_REVIEW.md` "
+               f"(updated {pd.Timestamp(_progress.stat().st_mtime, unit='s').date()}). "
+               f"Every figure in it traces to a row in `experiments/log.csv`.")
+else:
+    st.info("No progress record found. Expected `reports/PROGRESS_SINCE_LAST_REVIEW.md`.")
