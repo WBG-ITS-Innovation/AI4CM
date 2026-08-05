@@ -1,0 +1,66 @@
+<title>Cash Forecast — Report Not Yet Available</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem; }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .25rem; }
+  .sub { opacity: .7; margin: 0 0 2rem; }
+  .verdict { border: 2px solid currentColor; border-radius: .5rem;
+             padding: 1rem 1.25rem; margin: 0 0 2rem; }
+  .verdict strong { display: block; font-size: 1.15rem; margin-bottom: .4rem; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
+  ul { padding-left: 1.25rem; }
+  li { margin: .4rem 0; }
+  .scope { font-size: .9rem; opacity: .75; border-top: 1px solid; padding-top: 1rem;
+           margin-top: 2.5rem; }
+</style>
+
+<h1>Cash Forecast Report</h1>
+<p class="sub">Prepared for the Treasury &middot; 4 August 2026</p>
+
+<div class="verdict">
+  <strong>No forecast is being published today.</strong>
+  The forecasting work is part-way through a rebuild, and we are not willing to put numbers
+  in front of you that we cannot yet stand behind.
+</div>
+
+<h2>What happened</h2>
+<p>
+  A detailed review found that the way we were cleaning the daily data was using
+  information from 2025 to tidy up records from earlier years. That is not allowed:
+  it makes the forecasts look better than they really are, because the model has
+  effectively seen part of the answer.
+</p>
+<p>
+  We have fixed the cleaning. The immediate effect is that the yardstick we measure
+  forecasts against turns out to be considerably harder than we previously reported
+  &mdash; about 37% harder. Every accuracy figure quoted before this fix was too
+  flattering, and all of them are being recalculated.
+</p>
+
+<h2>What is still to do before we can report</h2>
+<ul>
+  <li>Put all four modelling approaches on the same measuring stick. At present one of
+      them forecasts five calendar days ahead while the others forecast five working
+      days ahead, so their results are not comparable.</li>
+  <li>Rebuild the forecasting models against the corrected data.</li>
+  <li>Check the honesty of the prediction ranges. On the current models, a range
+      advertised as covering 8 days in 10 was measured covering only about 5 days in 10
+      on the busiest days &mdash; which is exactly when a cash buffer matters most.</li>
+  <li>Test the result once, on a year of data the models have never seen, and report
+      that number without adjustment.</li>
+</ul>
+
+<h2>What we are not doing</h2>
+<p>
+  We are not lowering any of the quality thresholds to let a model through. Where a
+  model fails a check, it will be reported as withheld, with the reason in plain
+  language, alongside the models that pass.
+</p>
+
+<p class="scope">
+  <strong>Scope of this work.</strong> Three series are in scope: Revenues, Expenditure,
+  and the State budget balance. Earlier reports covered Revenues only &mdash; one of the
+  41 series in the source workbook &mdash; and should not be read as covering the budget
+  as a whole. All amounts, when reported, will be in Georgian lari.
+</p>

@@ -39,11 +39,47 @@ def test_time_folds_eval_start_tiles_window():
 
 
 def test_time_folds_eval_start_respects_min_train():
-    # Window would start at 20, but min_train floor (30 rows) forbids the
-    # earliest blocks: only blocks whose train side exceeds 30 rows survive.
+    """The min_train floor still wins over eval_start, but the grid changed.
+
+    Item 1f made pinned folds tile FORWARD from eval_start, so that the evaluation
+    window begins exactly there. Previously they tiled backward from the end of the
+    series, which left a remainder at the START of the window whenever its length was
+    not a multiple of the horizon -- with 156 target dates and h=5 the family
+    evaluated 150 of them, beginning 2025-01-09 rather than 2025-01-01, i.e. a
+    different window from every other family.
+
+    Here eval_start=20 is below the 30-row training floor, so the window cannot start
+    where asked. Forward tiling begins at the earliest LEGAL index (31) instead of the
+    first end-anchored grid point above the floor (35), covering 19 rows of the window
+    rather than 15. Same floor, strictly more evaluation data.
+    """
     folds = _time_folds(n=50, horizon=5, folds=None, min_train=0,
                         eval_start_idx=20)
-    assert folds == [(35, 40), (40, 45), (45, 50)]
+    assert folds == [(31, 36), (36, 41), (41, 46), (46, 50)]
+    assert folds[0][0] > 30, "the min_train floor must still be respected"
+
+
+def test_pinned_folds_cover_the_whole_window_even_when_not_a_multiple_of_horizon():
+    """The defect item 1f's one-ruler check caught.
+
+    A 156-row window at h=5 is 31 whole blocks plus a remainder. Backward tiling
+    dropped the remainder from the front; forward tiling keeps it as a shorter final
+    block. A partial block is a smaller sample, not a wrong one -- and it is what makes
+    E_QUANTILE's window identical to the other three families'.
+    """
+    n, h, window = 2763, 5, 156
+    folds = _time_folds(n=n, horizon=h, folds=None, min_train=4,
+                        eval_start_idx=n - window)
+    assert folds[0][0] == n - window, (
+        f"first block starts at {folds[0][0]}, not at eval_start {n - window}"
+    )
+    assert folds[-1][1] == n, "the window is not covered to its end"
+    assert folds[-1][1] - folds[0][0] == window, (
+        f"covered {folds[-1][1] - folds[0][0]} rows, expected {window}"
+    )
+    # Blocks are contiguous and non-overlapping.
+    for a, b in zip(folds, folds[1:]):
+        assert a[1] == b[0], f"gap or overlap between {a} and {b}"
 
 
 def test_time_folds_without_eval_start_unchanged():

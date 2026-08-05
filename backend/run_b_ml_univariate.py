@@ -34,34 +34,19 @@ if __name__ == "__main__":
 
     Path(cfg.out_root).mkdir(parents=True, exist_ok=True)
     
-    # ✅ Provenance tracking
-    provenance = {
-        "pipeline_module_path": str(b_ml_pipeline.__file__),
-        "python_executable": sys.executable,
-        "working_directory": str(Path.cwd()),
-        "env_vars": {
-            "TG_FAMILY": os.environ.get("TG_FAMILY"),
-            "TG_MODEL_FILTER": os.environ.get("TG_MODEL_FILTER"),
-            "TG_TARGET": os.environ.get("TG_TARGET"),
-            "TG_CADENCE": os.environ.get("TG_CADENCE"),
-            "TG_HORIZON": os.environ.get("TG_HORIZON"),
-            "TG_DATA_PATH": os.environ.get("TG_DATA_PATH"),
-            "TG_DATE_COL": os.environ.get("TG_DATE_COL"),
-            "TG_PARAM_OVERRIDES": os.environ.get("TG_PARAM_OVERRIDES"),
-            "TG_OUT_ROOT": os.environ.get("TG_OUT_ROOT"),
-        },
-        "config": {
-            "folds": cfg.folds,
-            "min_train_years": cfg.min_train_years,
-            "demo_clip_months": cfg.demo_clip_months,
-        }
-    }
-    
-    provenance_path = Path(cfg.out_root) / "artifacts" / "provenance.json"
-    provenance_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(provenance_path, "w", encoding="utf-8") as f:
-        json.dump(provenance, f, indent=2, default=str)
-    
+    # Item 1e: replaced a hand-rolled provenance dict with the shared helper, so
+    # all four families record the same fields (incl. data SHA-256 and git SHA).
+    from provenance import record_run, verify_expected_sha
+    verify_expected_sha(cfg.data_path)
+    record_run(cfg.out_root, "B_ML", cfg.data_path,
+               config={"target": cfg.target, "cadence": cfg.cadence,
+                       "horizon": cfg.horizon, "variant": cfg.variant,
+                       "model_filter": cfg.model_filter, "folds": cfg.folds,
+                       "min_train_years": cfg.min_train_years,
+                       "demo_clip_months": cfg.demo_clip_months,
+                       "overrides": ov},
+               date_col=cfg.date_col, seed=cfg.random_seed)
+
     print("[runner] ===== Georgia B·ML (univariate) runner =====")
     print(f"[runner] Pipeline module: {b_ml_pipeline.__file__}")
     print(f"[runner] Python: {sys.executable}")
