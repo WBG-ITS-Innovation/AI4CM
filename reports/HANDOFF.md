@@ -5,7 +5,7 @@ required. Share this one file.
 
 **Generated:** 2026-08-04, updated 2026-08-05 (phase 7) · **Branch:** `model/excellence` @ `6c22009`
 **`origin/main`** @ `6c22009` (**Phase 1 via PR #23, Phase 2a via PR #24 — both merged**)
-**Suite:** 294 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
+**Suite:** 318 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
 retrospective disclosure
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
@@ -93,12 +93,15 @@ window are worth more than care.
 | Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
 | Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
-### Commits on `model/excellence` (4 ahead of `main`)
+### Commits on `model/excellence` (7 ahead of `main`)
 
-Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Four phase-7 commits sit on
-top, carried by **PR #25**. Recent history:
+Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Seven commits sit on top,
+carried by **PR #25** (open, ready for review, not merged). Recent history:
 
 ```
+2ab1c3e  WS3 step 2: wire the fiscal calendar into both families; ablate; it does NOT lift the flows
+7b8da25  WS3 step 1: shared Georgian fiscal calendar module + Treasury sign-off artifact
+efafa02  docs: HANDOFF phase-7 commits; resume -> WS3 (reordered ahead of WS2)
 fa6dec6  docs: phase-7 session record; HANDOFF resume point -> workstream 2
 db27cd4  Item 3 / workstream 1: absolute-error objectives for B_ML (L1 wins 17 of 18)
 5f2990c  Item 2: append-only experiments log; fix the unbounded evaluation window it exposed
@@ -185,7 +188,8 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Workstream 3 — the fiscal calendar.** Items 1–3 are complete.
+**Workstream 2 — LightGBM quantile + Optuna**, on the WS3-winning feature set per target.
+Workstream 3 is complete.
 
 > **Reorder, 2026-08-05: WS3 now precedes WS2.** Phase 7 established that the sentinel ratio is
 > measured by a fixed Ridge probe **on the feature set**, so only WS3 (fiscal calendar) and WS5
@@ -205,9 +209,12 @@ Remaining, in order:
 | ~~1f~~ | ~~Backtest re-run + one-ruler verification~~ | **DONE** `87fc971`. Spread 0.000000 across families on all three targets |
 | ~~2~~ | ~~Ground rule 2 — experiments log~~ | **DONE** `5f2990c`. 38 rows, integrity OK, `runs/` now tracked. Exposed the unbounded `eval_start` (see §0a, second disclosure). **"Never report an unlogged number" is now in force** |
 | ~~3~~ | ~~Workstream 1 — L1 objectives for B_ML~~ | **DONE** `db27cd4`. L1 wins **17 of 18**; also added `eval_start`/`eval_end` to B_ML, whose yearly folds previously ran into the 2025 holdout on any default run |
-| **4** | **Workstream 3 — fiscal calendar.** Shared `backend/preprocessing/fiscal_calendar.py` consumed by B_ML *and* E_QUANTILE; `docs/FISCAL_CALENDAR_SOURCES.md` as the Treasury sign-off artifact so T2 can be sent; five feature groups ablated on TRAIN folds, one DEV confirmation per target | **Next.** The headline metric is the **sentinel ratio**, not MAE. Every entry cites rs.ge / matsne.gov.ge / mof.ge / nbg.gov.ge or is marked **UNVERIFIED** — never a fabricated citation. `calendar_version` (content hash) recorded on every experiment row |
-| 5 | Workstream 2 — LightGBM quantile, crossing-safe, Optuna ~100 trials with h-gapped early stopping; Revenues + Expenditure, stock via delta | Now **after** WS3, on the winning feature set. Build on `LightGBM_L1` |
-| 6 | Workstreams 4–7 | 5 (multivariate) is the **other** lever on the sentinel ratio; 7 owns the top-tercile coverage fix (CQR) |
+| ~~4~~ | ~~Workstream 3 — fiscal calendar~~ | **DONE** `7b8da25`+`2ab1c3e`. MAE +1.1–6.3% on DEV across all three targets; **the flow sentinel did NOT move into signal territory** (Revenues 1.138→1.226, Expenditure 1.088→1.088, threshold 1.50). `docs/FISCAL_CALENDAR_SOURCES.md` ready — **T2 can be sent**. Winning subsets: Revenues A+B+C+D+E, Expenditure A+B+C+D, stock A+B+C+D |
+| ~~4b~~ | ~~Workstream 3 — fiscal calendar (original row)~~ | Shared `backend/preprocessing/fiscal_calendar.py` consumed by B_ML *and* E_QUANTILE; `docs/FISCAL_CALENDAR_SOURCES.md` as the Treasury sign-off artifact so T2 can be sent; five feature groups ablated on TRAIN folds, one DEV confirmation per target | **Next.** The headline metric is the **sentinel ratio**, not MAE. Every entry cites rs.ge / matsne.gov.ge / mof.ge / nbg.gov.ge or is marked **UNVERIFIED** — never a fabricated citation. `calendar_version` (content hash) recorded on every experiment row |
+| **5** | **Workstream 2** — LightGBM quantile, crossing-safe, Optuna ~100 trials with h-gapped early stopping; Revenues + Expenditure, stock via delta | **Next.** Use the WS3-winning feature set per target; build on `LightGBM_L1` |
+| 6 | **Workstream 5 — multivariate** | **Now the highest-value modelling work: the last remaining lever on the flow sentinel.** WS1 and WS3 have both failed to move it. The 38 other Treasury lines include the debt-operation components the negative-`Revenues` analysis points at |
+| 7 | Send **T2**; then the sentinel-probe question (shallow-tree probe vs Ridge on an identical feature set — a measurement study on its own merits, **not** a way to rescue a failing model) | The auction calendar is the top ask, and on present evidence more promising than anything left in the modelling backlog |
+| 8 | Workstreams 4, 6, 7 | 7 owns the top-tercile coverage fix (CQR) |
 | 7 | Phase-1 Steps 4/5/7 — ops P0, Agent contract + validator, cleanup | Deferred since Phase 1 |
 
 **The central finding to carry forward:** the two flow targets have **no detectable feature
