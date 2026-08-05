@@ -5,9 +5,31 @@ from pathlib import Path
 import zipfile
 
 APPROOT      = Path(__file__).resolve().parent      # frontend/
-RUNS_ROOT    = APPROOT / "runs"
+from paths import runs_dir
+# Resolved LAZILY. A module-level constant is imported once and cached, so the first caller's
+# AI4CM_RUNS_DIR value would leak into every later one -- which made the page tests
+# order-dependent -- and in a deployment would pin the lab to whatever path was set when this
+# module first loaded. Default resolves to APPROOT/"runs" exactly as before.
+class _LazyRunsRoot:
+    def _p(self):
+        return runs_dir()
+
+    def __truediv__(self, other):
+        return self._p() / other
+
+    def __getattr__(self, name):
+        return getattr(self._p(), name)
+
+    def __fspath__(self):
+        return str(self._p())
+
+    def __str__(self):
+        return str(self._p())
+
+
+RUNS_ROOT    = _LazyRunsRoot()
 UPLOADS_ROOT = APPROOT / "runs_uploads"
-RUNS_ROOT.mkdir(parents=True, exist_ok=True)
+runs_dir().mkdir(parents=True, exist_ok=True)
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
 
 PATHS_FILE = APPROOT / ".tg_paths.json"
