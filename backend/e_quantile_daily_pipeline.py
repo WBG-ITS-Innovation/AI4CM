@@ -22,8 +22,14 @@ class Config:
     date_col: str = "date"
     folds: Optional[int] = 3   # None = use ALL possible folds (thorough mode)
     min_train_years: int = 4
-    eval_start: Optional[str] = None  # e.g. "2025-01-01": tile folds over [eval_start..end]
-                                      # (shared benchmark window; overrides `folds` count)
+    eval_start: Optional[str] = None  # e.g. "2025-01-01": tile folds over
+                                      # [eval_start .. eval_end] (shared benchmark
+                                      # window; overrides `folds` count)
+    # Upper bound on the evaluation window, INCLUSIVE, by target date.
+    # Without this eval_start only set a floor, so pinning to DEV_START tiled folds
+    # straight through DEV and on into the 2025 holdout: 418 target dates where DEV
+    # has 262. Any "DEV" figure produced that way silently included TEST.
+    eval_end: Optional[str] = None
     model_filter: Optional[str] = None   # "GBQuantile", "ResidualRF" | None => all
     quantiles: Tuple[float, ...] = (0.10, 0.50, 0.90)
     lags_daily: Tuple[int, ...] = (1, 5, 20)
@@ -44,7 +50,8 @@ def _pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, q: float) -> float:
     return float(np.maximum(q * diff, (q - 1) * diff).mean())
 
 def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
-                eval_start_idx: Optional[int] = None) -> List[Tuple[int, int]]:
+                eval_start_idx: Optional[int] = None,
+                eval_end_idx: Optional[int] = None) -> List[Tuple[int, int]]:
     """
     Expanding-window time-series cross-validation.
 
@@ -77,9 +84,12 @@ def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
     # Expenditure a 5.8M difference (78,036,083 vs 83,839,124). The final block may
     # be shorter than `horizon`; a partial block is a smaller sample, not a wrong one.
     if eval_start_idx is not None:
+        # Exclusive upper bound on the tiling. Capping the window is what keeps a
+        # DEV run out of the TEST holdout.
+        stop = n if eval_end_idx is None else min(n, eval_end_idx + 1)
         start = max(eval_start_idx, min_train_rows + 1)
-        while start < n:
-            test_end = min(start + horizon, n)
+        while start < stop:
+            test_end = min(start + horizon, stop)
             if start <= min_train_rows:
                 start = test_end
                 continue
@@ -418,7 +428,18 @@ def run_pipeline(CONFIG: Config) -> None:
             )
         print(f"[runner] Evaluation window pinned: origins >= {CONFIG.eval_start} "
               f"({len(od_ts) - eval_start_idx} rows)")
-    folds = _time_folds(n, CONFIG.horizon, CONFIG.folds, CONFIG.min_train_years, eval_start_idx)
+    eval_end_idx = None
+    if CONFIG.eval_end:
+        od_ts2 = pd.to_datetime(pd.Series(od_all.values))
+        # Same target-date convention as eval_start: the last origin whose target
+        # still falls on or before eval_end.
+        _j = int(np.searchsorted(od_ts2.values,
+                                 np.datetime64(pd.Timestamp(CONFIG.eval_end)), side="right"))
+        eval_end_idx = max(0, _j - int(CONFIG.horizon) - 1)
+        print(f"[runner] Evaluation window capped at {CONFIG.eval_end} "
+              f"(origin index <= {eval_end_idx})")
+    folds = _time_folds(n, CONFIG.horizon, CONFIG.folds, CONFIG.min_train_years,
+                        eval_start_idx, eval_end_idx)
     if not folds:
         raise ValueError("Unable to create CV folds — series too short for requested horizon/folds.")
 
