@@ -1,0 +1,22 @@
+# Streamlit theme and chrome for the Treasury demo.
+# Deliberately minimal: a theme file, not a refactor. Colours match the HTML report so the
+# report and the app read as one product.
+
+[theme]
+primaryColor = "#1d4ed8"          # blue-700, same accent as treasury_report.html
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"   # slate-100
+textColor = "#0f172a"             # slate-900
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Hide the "Deploy" button and the hamburger's developer entries: on a projector in front
+# of a ministry audience they are noise, and one of them can restart the app mid-demo.
+toolbarMode = "minimal"
+showErrorDetails = true           # keep visible; a hidden traceback in a demo is worse
+
+[server]
+headless = true

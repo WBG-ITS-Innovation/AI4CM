@@ -21,7 +21,7 @@ from ui_styles import (
 APPROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = APPROOT / "runs"
 
-st.set_page_config(page_title="Dashboard — AI4CM", layout="wide")
+st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
 inject_global_css()
 
 # ──────────────────────────────────────────────────────────────────────
