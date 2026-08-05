@@ -5,7 +5,7 @@ required. Share this one file.
 
 **Generated:** 2026-08-04, updated 2026-08-05 (phase 7) · **Branch:** `model/excellence` @ `6c22009`
 **`origin/main`** @ `6c22009` (**Phase 1 via PR #23, Phase 2a via PR #24 — both merged**)
-**Suite:** 342 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
+**Suite:** 377 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
 retrospective disclosure
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
@@ -93,12 +93,16 @@ window are worth more than care.
 | Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
 | Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
-### Commits on `model/excellence` (11 ahead of `main`)
+### Commits on `model/excellence` (5 ahead of `main`)
 
 Phase-1 and Phase-2a are **merged to `origin/main`** via PR #24. Seven commits sit on top,
 carried by **PR #25** (open, ready for review, not merged). Recent history:
 
 ```
+33e1130  Demo item 7: CatBoost hooks behind an optional guard; docs/ROADMAP.md
+bb173ae  Demo: Treasury HTML report, Streamlit polish, demo runbook
+9228f58  Demo: forward forecast, model registry, plain-language insights, Forecast page
+863f967  Merge Phase 2c (WS5 + probe study) into main   <-- PR #25 MERGED
 68f2cda  Sentinel probe study: the negative result survives a nonlinear instrument
 0c5d664  WS5: multivariate, leak-safe. The debt-ops hypothesis fails, for an instructive reason
 246f9be  docs: HANDOFF phase-8 commits; resume -> WS5 (second reorder)
@@ -192,8 +196,18 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Workstream 4 — target scaling.** Workstreams 3 and 5 and the sentinel-probe study are
-complete.
+**Workstream 4 — target scaling.** Workstreams 3 and 5, the sentinel-probe study, and the
+demo tranche (forward forecast, registry, insights, Treasury report) are complete.
+
+> **A forward forecast now exists** (`backend/forward_forecast.py`): the next five business
+> days beyond the data end, P10/P50/P90, no truth read, `test_window_touched: false`. It is
+> the first non-backtesting code in the project. Gate verdicts are carried from DEV by
+> `recipe_id` and never recomputed on forward dates.
+>
+> **Three recipes are registered as candidates** (`registry/recipes.json`), reconciled to
+> `experiments/log.csv` by `run_id`. Both flow targets ship as **WITHHELD as a forecast**
+> because the signal gate fails; the stock target is publishable. Nothing is approved and
+> `validate_registry()` refuses to let anything claim otherwise.
 
 > **WS4 touches the PREDICTION PATH** — it must invert the transform before
 > `predictions_long.csv` is written, and that file's `origin_value`/`y_true` columns are what
