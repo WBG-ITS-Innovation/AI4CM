@@ -3,9 +3,10 @@
 **Single self-contained document for resuming work.** Everything needed is inlined; no other file is
 required. Share this one file.
 
-**Generated:** 2026-08-04, updated 2026-08-05 · **Branch:** `model/excellence` @ `e7b3159`
-**`origin/main`** @ `4a925ac` (**Phase 1 merged via PR #23**)
-**Suite:** 272 passing · **TEST (2025) reads: 0**
+**Generated:** 2026-08-04, updated 2026-08-05 (phase 7) · **Branch:** `model/excellence` @ `6c22009`
+**`origin/main`** @ `6c22009` (**Phase 1 via PR #23, Phase 2a via PR #24 — both merged**)
+**Suite:** 273 passing · **TEST (2025) gated reads: 0** — but see §0a, there is one
+retrospective disclosure
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
 ---
@@ -27,17 +28,52 @@ should continue to:
 
 ---
 
+## 0a · TEST-window accounting — read this before quoting any 2025 number
+
+`experiments/test_access.log` records **0 gated reads**, and that is misleading on its own.
+**Item 1f's one-ruler verification did evaluate the incumbent models on the 2025 window** —
+all four families across three targets, n=156 each — and it did so *outside* the gate,
+because the pipelines never route their fold construction through `require_test_access()`.
+The gate was therefore never consulted and the ledger stayed at zero while a 2025
+evaluation had in fact happened.
+
+What is and is not true about it:
+
+- It was **necessary**: the new-vs-old tier table exists to show how much the Phase-1 data
+  fix moved every previously published figure, which cannot be shown without measuring the
+  same window.
+- **No selection was made from it.** No model was chosen, no hyperparameter set, no
+  threshold moved on the strength of those numbers. They were reported, not acted on.
+- It is **not** a clean-holdout result for the Phase-2 candidates, which do not exist yet.
+
+**Policy from this point: no evaluation of any model on 2025 until the single final TEST
+read**, which must go through `require_test_access()` so it lands in the ledger. All model
+search and confirmation happens on TRAIN-internal rolling-origin folds and DEV (2024).
+
+A retrospective entry recording this is appended to `experiments/test_access.log`. That file
+is gitignored, so **this section is the durable record**.
+
+---
+
 ## 1 · Where the work stands
 
 | Phase | Status |
 |---|---|
 | Audit (`docs/reviews/2026-08-04_review.md`) | Complete. Findings valid; **all its metrics superseded** by the Phase-1 data fix |
 | Phase 1 — data trust | **Merged to `origin/main`** via PR #23. Step 1 done; Steps 2–7 open |
-| Phase 2 — modelling | In progress on `model/excellence`. Ground rule 1 done; **item 1 is 5/6** (1a–1e done, **1f open**); workstreams 1–7 not started |
+| Phase 2a — yardstick + provenance | **Merged via PR #24.** Ground rule 1 and **all of item 1** complete: one persistence ruler per target across all four families |
+| Phase 2b — modelling | Not started. **Item 2** (experiments log) is next, then workstreams 1–7 |
 
 ### Commits on `model/excellence` (6 ahead of `main`)
 
+All Phase-1 and Phase-2a work is now **merged to `origin/main`**; `model/excellence` sits at
+the same commit (0 ahead). Recent history:
+
 ```
+6c22009  Merge pull request #24 from WBG-ITS-Innovation/model/excellence  (Phase 2a)
+e9c775b  docs: one-ruler verification session record (item 1f complete)
+87fc971  fix: one persistence ruler per target across all four families (item 1f)
+e413cd1  docs: update HANDOFF with phase-5 commits; resume point -> item 1f
 e7b3159  docs: yardstick-completion session record (items 1b, 1e, DATA_SEMANTICS)
 94db732  docs: DATA_SEMANTICS.md -- negatives characterization + Treasury questions
 db06426  feat: input by name + SHA-256; provenance in all four families (1e)
@@ -60,6 +96,15 @@ c3c2fd8  docs: Phase-2 session record
 work went through `merge/phase1-trust` based on `origin/main`.
 
 ### Reference numbers
+
+UNIFIED RULERS (2025 window, h=5 business days) — one number per target, verified
+identical across all four families (spread 0.000000):
+
+```
+Revenues              83,534,152.85
+Expenditure           83,839,124.43
+State budget balance 189,930,653.98
+```
 
 ```
 h=5 persistence ruler, 2025 window, business-day index:
@@ -107,7 +152,7 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 
 ## 3 · Resume point
 
-**Item 1f — the backtest re-run and one-ruler verification.** 1a–1e are all done, so every prerequisite is in place. Remaining, in order:
+**Item 2 — ground rule 2, the experiments log.** Item 1 is complete. Remaining, in order:
 
 | # | Task | Notes |
 |---|---|---|
@@ -115,7 +160,10 @@ grep -ci 'is_stock' backend/e_quantile_daily_pipeline.py               # expect 
 | ~~1d~~ | ~~Alias `mae_seasonal_naive` (A2)~~ | **DONE** `904a520`. 16/16 Dashboard fields; `NaN` + `seasonal_naive_degenerate` at season == horizon |
 | ~~1b~~ | ~~Pin C_DL to `TEST_START`~~ | **DONE** `b7bccd7`. 7 folds -> 1, test block 2025-01-01..2025-08-06 |
 | ~~1e~~ | ~~Input by explicit name + recorded SHA-256~~ | **DONE** `db06426`. `ls -t` gone; one shared provenance module for all four families; pinning fails closed |
-| **1f** | Backtest re-run + one-ruler verification + new-vs-old tier table | Item 1's verification. 3 targets x 4 families; Expenditure's first honest numbers; per-target skill / sentinel ratio / per-tercile coverage |
+| ~~1f~~ | ~~Backtest re-run + one-ruler verification~~ | **DONE** `87fc971`. Spread 0.000000 across families on all three targets |
+| **2** | Ground rule 2 — `experiments/log.csv` + per-run JSON with the Phase-2 brief columns; re-run the two `15fb6ee` DEV configs as marked reproductions | **Next.** "Never report an unlogged number" takes effect after this. Every figure in the phase-6 record is currently unlogged |
+| 3 | Workstream 1 — L1 objectives for B_ML; `reports/ws1_objectives.md`. On the flow targets the number to lift is the **sentinel ratio**, not just MAE | |
+| 4 | Workstreams 2–7 | |
 
 **Then:** item 2 (ground rule 2 — `experiments/log.csv`), item 3 (workstream 1 — L1 objectives), items
 4–7 (workstreams 2–7).
