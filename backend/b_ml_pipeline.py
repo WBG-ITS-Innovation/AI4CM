@@ -29,7 +29,13 @@ from typing import Sequence, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+# pyplot is deferred: importing this module must not require a plotting stack. The Streamlit
+# frontend imports it to run a forecast and its venv has no matplotlib (it renders with Plotly),
+# so a module-level import crashed the forecast path. See backend/lazy_plot.py.
+try:
+    from lazy_plot import plt
+except ImportError:  # pragma: no cover - package-relative entry points
+    from backend.lazy_plot import plt
 
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, HistGradientBoostingRegressor
