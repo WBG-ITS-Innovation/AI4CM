@@ -153,3 +153,26 @@ Added during this session before the scope correction, left in place (nothing wa
 
 They are inert. Wiring any of them in is a content change and belongs to whichever item above
 is approved.
+
+---
+
+## Open design question — monthly forecasting (recorded, not implemented)
+
+The forecast page deliberately offers **business-day horizons only**, and the master brief said not
+to offer "monthly". Recording why it is a design question rather than a missing feature:
+
+* Everything that makes a forecast trustworthy here is measured at **h=5 business days** — the
+  shared persistence ruler, recipe selection, and every gate. A monthly horizon has no ruler, no
+  selected recipe and no measured gate, so a monthly number would carry no credentials at all.
+* A monthly figure is not simply a longer horizon. It is a different question — a *sum* over a
+  variable number of business days, not a *value* on one day — so it needs its own target
+  definition, its own benchmark ("last month repeats"? "same month last year"?), and its own gate.
+  The pipelines already carry weekly and monthly cadence options, but nothing in the current
+  evidence base was measured on them.
+* The flow targets' central finding makes this sharper, not looser: they show no event signal at
+  daily resolution. A monthly aggregate might well be *more* predictable — sums cancel daily noise
+  — which makes it worth investigating on its own terms rather than bolting onto the daily harness.
+
+**Decision needed:** whether monthly is a separate deliverable with its own ruler and gates, or out
+of scope. Until then the page states that non-h=5 horizons are exploratory rather than offering a
+monthly option that would look official.
