@@ -26,7 +26,8 @@ st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layo
 inject_global_css()
 
 APPROOT = Path(__file__).resolve().parent
-RUNS_DIR = APPROOT / "runs"
+from paths import runs_dir
+RUNS_DIR = runs_dir()
 RUNS_DIR.mkdir(exist_ok=True)
 
 # -------------------------------------------------------------------
