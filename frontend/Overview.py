@@ -14,10 +14,13 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system  # presentation only
+from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Overview · Treasury Forecast", page_icon="📊", layout="wide")
 inject_global_css()
 
 inject_design_system()
+
+render_app_header("Overview", "What this lab does, and what it does not claim")
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
 RUNS_DIR = runs_dir()
