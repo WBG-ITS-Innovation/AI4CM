@@ -10,8 +10,7 @@ try:
     from utils_frontend import list_runs, zip_outputs, collect_output_files
 except Exception:
     def list_runs():
-        from paths import runs_dir as _rd
-        runs_dir = _rd()
+        runs_dir = Path(__file__).resolve().parents[1] / "runs"
         if not runs_dir.exists():
             return []
         return sorted([p for p in runs_dir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
@@ -34,12 +33,9 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 APPROOT = Path(__file__).resolve().parents[1]
-from paths import runs_dir
-RUNS_DIR = runs_dir()
-from ui_styles import (inject_design_system, ds_metric, empty_state, callout_box,
-                       reading_this_chart)
-from format_gel import NOT_REPORTED
+RUNS_DIR = APPROOT / "runs"
 
+from ui_styles import inject_design_system  # presentation only
 st.set_page_config(page_title="History · Treasury Forecast", page_icon="🕒", layout="wide")
 inject_global_css()
 inject_design_system()
@@ -137,81 +133,13 @@ with c4:
                              default=["Run ID","Finished","Family","Target","Cadence","Horizon(s)","Best model (MAE)","Outputs path","Duration (s)"])
 
 df = _scan_runs()
-
-# ── Empty state. With no runs the frame has no columns at all, and selecting the display
-# columns raised "None of [Index([...])] are in the [columns]" -- a traceback where a fresh
-# clone should simply be told there is nothing yet.
-if df.empty:
-    st.markdown(
-        empty_state(
-            "No runs found yet.",
-            filename="runs/<run_id>/outputs/predictions_long.csv",
-            looked_in=str(RUNS_DIR),
-            command="Open the Lab page and start a run, "
-                    "or set AI4CM_RUNS_DIR to an existing runs folder",
-        ),
-        unsafe_allow_html=True,
-    )
-    st.stop()
-
 if fam.strip():
     f = fam.lower(); df = df[df.apply(lambda r: f in (" ".join(map(str, r.values))).lower(), axis=1)]
 if only_ok:
     df = df[df["Has preds"] == "✅"]
 
-# ── Freshness, and a staleness warning when the data file lags the newest run ──────────
-# A run is only as current as the data it was fitted on. If the canonical file has moved on
-# since the newest run, every number on these pages is describing an older world -- and
-# nothing else in the lab says so.
-_fresh_cols = st.columns(3)
-_newest = None
-if "Finished" in df.columns and len(df):
-    try:
-        _newest = pd.to_datetime(df["Finished"], errors="coerce").max()
-    except Exception:
-        _newest = None
-_data_csv = Path(__file__).resolve().parents[2] / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
-_data_mtime = _data_latest = None
-if _data_csv.exists():
-    _data_mtime = pd.Timestamp(_data_csv.stat().st_mtime, unit="s")
-    try:
-        _d = pd.read_csv(_data_csv, usecols=["date"])
-        _data_latest = pd.to_datetime(_d["date"], errors="coerce").max()
-    except Exception:
-        _data_latest = None
-
-with _fresh_cols[0]:
-    st.metric("Runs on disk", f"{len(df):,}")
-with _fresh_cols[1]:
-    st.markdown(ds_metric("Newest run finished",
-                          _newest.strftime("%Y-%m-%d %H:%M") if _newest is not None
-                          and not pd.isna(_newest) else NOT_REPORTED,
-                          missing=_newest is None or pd.isna(_newest)),
-                unsafe_allow_html=True)
-with _fresh_cols[2]:
-    st.markdown(ds_metric("Data covers through",
-                          _data_latest.strftime("%Y-%m-%d") if _data_latest is not None
-                          and not pd.isna(_data_latest) else NOT_REPORTED,
-                          missing=_data_latest is None or pd.isna(_data_latest)),
-                unsafe_allow_html=True)
-
-if (_newest is not None and not pd.isna(_newest) and _data_mtime is not None
-        and _data_mtime > _newest):
-    _lag = (_data_mtime - _newest)
-    st.markdown(
-        callout_box(
-            f"<b>These runs are stale.</b> The canonical data file was updated "
-            f"{_lag.days} day(s) and {_lag.seconds // 3600} hour(s) after the newest run "
-            f"finished. Every figure in this lab therefore describes an earlier version of "
-            f"the data. Re-run before drawing conclusions.",
-            "caution", icon="⚠️"),
-        unsafe_allow_html=True)
-
 st.subheader("Overview")
-_visible = [c for c in visible if c in df.columns]
-if not _visible:
-    _visible = list(df.columns)
-st.dataframe(df[_visible], use_container_width=True, hide_index=True)
+st.dataframe(df[visible], use_container_width=True, hide_index=True)
 st.download_button("⬇️ Download overview (CSV)", data=df.to_csv(index=False).encode("utf-8"), file_name="runs_overview.csv")
 
 # Drill-down

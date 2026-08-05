@@ -22,12 +22,13 @@ from data_preflight import run_preflight
 from ui_styles import inject_global_css, page_header, section_header, callout_box, info_tip, COLORS
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
+from ui_styles import inject_design_system  # presentation only
 st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
 inject_global_css()
 
+inject_design_system()
 APPROOT = Path(__file__).resolve().parent
-from paths import runs_dir
-RUNS_DIR = runs_dir()
+RUNS_DIR = APPROOT / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
 
 # -------------------------------------------------------------------
