@@ -216,3 +216,55 @@ def test_the_real_published_run_is_tracked_by_git():
     out = subprocess.run(["git", "check-ignore", str(d)],
                          capture_output=True, text=True, cwd=str(BACKEND.parent))
     assert out.returncode != 0, f"{d} is gitignored; the published record would not survive"
+
+
+# ── registry / published / forward must agree on the recipe ───────────────────
+
+def test_registry_published_and_forward_agree_on_recipe_id_and_transform():
+    """One recipe per target, and all three surfaces must name the same one.
+
+    The failure this blocks is quiet and serious: a published forecast produced by one
+    recipe while the registry advertises another means the DEV accuracy shown next to those
+    numbers belongs to a different model. Checked across all three surfaces because they are
+    written at different times by different code paths.
+    """
+    import sys as _s
+    _s.path.insert(0, str(BACKEND))
+    from registry import load_registry
+    from run_forward_forecast import champions_from_registry
+
+    reg = {r["target"]: r for r in load_registry()["recipes"]}
+    champs = {c.target: c for c in champions_from_registry()}
+
+    issues = list_published()
+    if not issues:
+        pytest.skip("nothing published yet")
+    latest = issues[-1]
+    man = json.loads((latest / "manifest.json").read_text())
+    pub = {r["target"]: r for r in man["recipes"]}
+    fc = pd.read_csv(latest / "forecast.csv")
+
+    assert set(reg) == set(champs) == set(pub), (
+        f"target sets differ: registry={sorted(reg)} forward={sorted(champs)} "
+        f"published={sorted(pub)}"
+    )
+    for target, r in reg.items():
+        want_id = r["id"]
+        want_tf = r["params"].get("target_transform", "raw")
+        assert champs[target].recipe_id == want_id
+        assert champs[target].transform == want_tf
+        assert pub[target]["recipe_id"] == want_id, (
+            f"{target}: published under {pub[target]['recipe_id']} but the registry "
+            f"advertises {want_id}"
+        )
+        assert pub[target].get("target_transform", "raw") == want_tf
+        rows = fc[fc["target"] == target]
+        assert (rows["target_transform"] == want_tf).all(), (
+            f"{target}: published rows carry a transform other than {want_tf}"
+        )
+
+
+def test_no_duplicate_issue_dates():
+    """Two issues on one date would double-count that forecast in the scorecard."""
+    names = [p.name for p in list_published()]
+    assert len(names) == len(set(names))

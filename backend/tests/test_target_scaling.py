@@ -326,3 +326,34 @@ def test_ratio_level_for_a_stock_target_uses_the_delta_scale():
     assert lvl_of_level.median() > 50 * lvl_of_delta.median(), (
         "fixture no longer demonstrates the scale mismatch"
     )
+
+
+def test_revenues_records_that_its_scaling_gain_is_drift_dependent():
+    """Anyone quoting Revenues' 55.92% DEV skill must meet the caveat with it.
+
+    The WS4 robustness study measured a +0.987 correlation between the evaluation window's
+    level drift and the ratio transform's advantage. The DEV figure therefore describes a
+    high-drift period, not a general property, and the registry has to say so -- otherwise
+    the number travels without its condition.
+    """
+    from registry import recipe_for
+
+    r = recipe_for("Revenues")
+    assert r["params"].get("target_transform") == "ratio"
+    cav = r.get("scaling_caveat")
+    assert cav, "Revenues must carry the drift-dependence caveat"
+    assert "DRIFT-DEPENDENT" in cav["finding"].upper()
+    assert "0.987" in cav["evidence"]
+    assert "conditional" in cav["how_to_quote"]
+    # and it must state why adoption is still safe, not merely that there is a caveat
+    assert "POSITIVE in every window" in cav["why_still_adopted"]
+
+
+def test_targets_that_kept_raw_carry_no_scaling_caveat():
+    """A caveat on a recipe that does not use the transform would be noise."""
+    from registry import recipe_for
+
+    for target in ("Expenditure", "State budget balance"):
+        r = recipe_for(target)
+        assert r["params"].get("target_transform", "raw") == "raw"
+        assert "scaling_caveat" not in r
