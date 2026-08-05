@@ -920,7 +920,7 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
     
     # ✅ Forecast integrity checks with HARD GATE - run ALWAYS when predictions exist
     try:
-        from preprocessing.integrity import compute_integrity_report, signal_sentinel
+        from forecast_integrity import signal_sentinel
         
         # Compute integrity report — pick best *trained* model (skip baseline row)
         if glb is not None and len(glb) > 0:
@@ -947,6 +947,8 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                         validate_alignment_step_based,
                         shift_diagnostic_horizon_aware,
                         compute_persistence_baseline,
+                        compute_point_metrics,
+                        compute_seasonal_naive_baseline,
                         compute_skill_score,
                     )
                 except ImportError:
@@ -954,6 +956,8 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                         validate_alignment_step_based,
                         shift_diagnostic_horizon_aware,
                         compute_persistence_baseline,
+                        compute_point_metrics,
+                        compute_seasonal_naive_baseline,
                         compute_skill_score,
                     )
                 
@@ -1009,14 +1013,57 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     m for m, r in overfit_ratios.items() if r > OVERFIT_GATE_RATIO
                 )
                 integrity_report["best_model"] = best_model
-                
-                # Also compute legacy integrity report for backward compatibility
-                legacy_report = compute_integrity_report(pred_long, s, cfg.horizon, best_model, cfg.cadence, date_index=s.index)
-                integrity_report.update(legacy_report)  # Merge legacy fields
-            except ImportError:
-                # Fallback to legacy integrity checks if new module not available
-                print("[WARN] forecast_integrity module not found, using legacy checks")
-                integrity_report = compute_integrity_report(pred_long, s, cfg.horizon, best_model, cfg.cadence, date_index=s.index)
+
+                # ── Fields the Dashboard reads, built from the SHARED helpers ──
+                #
+                # These used to come from preprocessing.integrity.compute_integrity_report,
+                # whose output was merged over this dict with
+                # `integrity_report.update(legacy_report)`. That merge meant the
+                # mae_persistence, skill_pct, best_shift and alignment values a
+                # consumer actually read came from a duplicate implementation rather
+                # than the shared one guarded by the tests -- and the two disagreed
+                # on is_lag0_issue, so the report could assert both
+                # is_lag0_issue and is_persistence_like at once (review §1.2, §1.4).
+                # The duplicate module is retired; there is one definition now.
+                _m = compute_point_metrics(pred_model["y_true"], pred_model["y_pred"])
+                _p = compute_point_metrics(pred_model["y_true"], pred_model["origin_value"])
+                integrity_report.update({
+                    "horizon": int(cfg.horizon),
+                    "model": str(best_model),
+                    "n_predictions": int(len(pred_model)),
+                    "prediction_indexing": "target_date",
+                    "rmse_model": _m["rmse"],
+                    "r2_model": _m["r2"],
+                    "rmse_persistence": _p["rmse"],
+                    "r2_persistence": _p["r2"],
+                    "misaligned_examples": alignment_check.get("misaligned_examples", []),
+                    # lag_warning kept for the Dashboard: a non-zero best shift that
+                    # materially beats shift 0. Derived from the shared diagnostic
+                    # rather than recomputed by a second shift implementation.
+                    "lag_warning": bool(
+                        shift_check.get("best_shift", 0) != 0
+                        and shift_check.get("improvement_pct", 0.0) > 10.0
+                    ),
+                    "improvement_pct_vs_shift0": shift_check.get("improvement_pct", 0.0),
+                    "improvement_ratio": shift_check.get("improvement_ratio", np.nan),
+                    "mae_best": shift_check.get("best_mae", np.nan),
+                    "is_critical_timestamping_bug": False,
+                })
+                # A2: keep the field the Dashboard reads, but never let a
+                # season == horizon coincidence masquerade as an independent
+                # second baseline.
+                integrity_report.update(
+                    compute_seasonal_naive_baseline(pred_model, cfg.horizon))
+            except ImportError as _exc:
+                # forecast_integrity is now the ONLY integrity module. There is no
+                # legacy fallback to degrade to, so a failure here is fatal rather
+                # than something to paper over: the previous fallback silently
+                # substituted a duplicate implementation's numbers.
+                raise RuntimeError(
+                    "forecast_integrity could not be imported, so no integrity "
+                    "report can be produced. Refusing to publish predictions "
+                    "without one."
+                ) from _exc
             
             # Perform leakage check on a sample fold (use last fold for efficiency)
             if len(folds) > 0:

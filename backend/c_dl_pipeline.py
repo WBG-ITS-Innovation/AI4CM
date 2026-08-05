@@ -47,6 +47,12 @@ class ConfigDL:
     horizons_weekly: Optional[List[int]] = None           # [1,4,12]
     horizons_monthly: Optional[List[int]] = None          # [1,3,6]
     min_train_years: int = 4
+    # Reporting window (item 1b). None = every available year, the pre-fix
+    # behaviour that let C_DL report a 2019-2025 average as if it were the
+    # holdout. Runners default it to evaluation_windows.TEST_START so the
+    # family lands on the same window -- and the same persistence number --
+    # as A_STAT, B_ML and E_QUANTILE.
+    eval_start: Optional[str] = None
 
     # Sequence lengths (history window)
     seq_len_daily: int = 64
@@ -343,11 +349,28 @@ def plot_monthly_bars(df_slice, target, h, cadence, ops_series, out_png):
     ax.set_title(f"{target} | {cadence} | h=+{h} | Monthly aggregates"); ax.legend(loc="best"); ax.grid(True, axis="y", linestyle=":")
     fig.tight_layout(); fig.savefig(out_png); plt.close(fig)
 
-def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int):
+def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int,
+                       eval_start: Optional[str] = None):
+    """Annual rolling-origin folds on label times.
+
+    ``eval_start`` pins the reporting window (item 1b).  Without it C_DL folded over
+    EVERY available year, so its published skill was an average across 2019-2025 while
+    every other family reported on the 2025 holdout alone.  Measured (review §4.3):
+    C_DL reported +10.84% skill and was **-5.19%** on the shared 2025 window, because
+    the persistence baseline over 2019-2025 (52,957,744) is far easier than the 2025
+    one.  Folds whose test block starts before ``eval_start`` are dropped, so the
+    family reports on the same window -- and therefore against the same persistence
+    number -- as everyone else.
+
+    C_DL stays parked for Phase 2 (decision Q6); this pin exists so the one-ruler
+    check can include it rather than exempt it.
+    """
     years = sorted(set(idx.year))
     if not years: return []
     first_year, last_year = min(years), max(years)
+    cutoff = pd.Timestamp(eval_start) if eval_start else None
     folds = []
+    dropped = 0
     for Y in range(first_year+min_train_years, last_year+1):
         train_end = pd.Timestamp(f"{Y-1}-12-31")
         if not (idx<=train_end).any(): continue
@@ -360,7 +383,20 @@ def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int):
             c = idx[idx>=test_start]
             if c.empty: continue
         test_end = c[-1]
+        # Pin: only report on the shared window.
+        if cutoff is not None and test_end < cutoff:
+            dropped += 1
+            continue
+        if cutoff is not None and test_start < cutoff:
+            trimmed = idx[(idx >= cutoff) & (idx <= test_end)]
+            if trimmed.empty:
+                dropped += 1
+                continue
+            test_start = trimmed[0]
         folds.append((train_end, test_start, test_end))
+    if cutoff is not None:
+        print(f"[DL] eval_start={cutoff.date()} pinned: {len(folds)} fold(s) kept, "
+              f"{dropped} dropped for starting before it")
     return folds
 
 def _last_window_fallback_masks(label_idx: np.ndarray, horizon: int) -> List[Tuple[np.ndarray, np.ndarray]]:
@@ -461,10 +497,18 @@ def build_sequences(F: pd.DataFrame, y: pd.Series, seq_len: int, horizon: int,
         origin_dates_list.append(pd.Timestamp(idx[end_i]))
         origin_values_list.append(float(y.iloc[end_i]))
     X = np.stack(Xs, axis=0) if Xs else np.zeros((0, seq_len, F.shape[1]), dtype=np.float32)
+    # float32 for the model (torch), float64 alongside for output/metadata. As
+    # float32 y_true rounded at 1e8 magnitudes, so C_DL's persistence baseline
+    # (mean|y_true - origin_value|) still differed from the other families' in the
+    # last units even after origin_value was widened (item 1f).
     yv = np.array(ys, dtype=np.float32)
     ld = np.array(label_dates, dtype="datetime64[ns]")
     od = np.array(origin_dates_list, dtype="datetime64[ns]")
-    ov = np.array(origin_values_list, dtype=np.float32)
+    # float64: origin_value is baseline METADATA, not a model input. As float32 it
+    # rounded to ~8 units at 1e8 magnitudes, so C_DL's persistence baseline differed
+    # from the other families' in the last cents (83,534,152.28 vs .85) and the
+    # one-ruler check could not report a single number (item 1f).
+    ov = np.array(origin_values_list, dtype=np.float64)
     return X, yv, ld, od, ov
 
 def fit_feature_scaler(X: np.ndarray) -> Tuple[np.ndarray,np.ndarray]:
@@ -724,7 +768,9 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                     continue
 
                 # Primary: yearly folds on label times
-                fld = build_yearly_folds(pd.DatetimeIndex(ld_all), config.min_train_years)
+                fld = build_yearly_folds(pd.DatetimeIndex(ld_all),
+                                         config.min_train_years,
+                                         eval_start=config.eval_start)
                 masks: List[Tuple[np.ndarray,np.ndarray]] = []
                 for (tr_end, ts_start, ts_end) in fld:
                     ld = pd.to_datetime(ld_all)
@@ -749,6 +795,13 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                     ld_tr = pd.to_datetime(ld_all[tr_mask]); ld_te = pd.to_datetime(ld_all[te_mask])
                     od_te = pd.to_datetime(od_all[te_mask])   # origin dates for test set
                     ov_te = ov_all[te_mask]                   # origin values for test set
+                    # Published truth is read from the float64 source series at the
+                    # label dates, not from the float32 model tensor. Round-tripping
+                    # through float32 rounded y_true at 1e8 magnitudes, so C_DL's
+                    # persistence baseline (mean|y_true - origin_value|) differed from
+                    # the other families' in the last units and the one-ruler check
+                    # could not report a single number (item 1f).
+                    y_te64 = y.reindex(pd.DatetimeIndex(ld_te)).to_numpy(dtype=np.float64)
 
                     if X_tr_all.shape[0] < 1 or X_te.shape[0] < 1:
                         continue
@@ -844,7 +897,7 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                             "target": target,
                             "horizon": h,
                             "model": mname.upper(),
-                            "y_true": y_te_raw.astype(float),
+                            "y_true": y_te64.astype(np.float64),
                             "y_pred": yhat.astype(float),
                             "y_lo":  lo.astype(float),
                             "y_hi":  hi.astype(float),
