@@ -28,7 +28,9 @@ from target_scaling import trailing_level
 from tuning import FoldData, fit_point, fit_quantiles, objective_mae, run_study, QUANTILES
 from registry import load_registry
 
-SC=os.environ["SC"]; DATA="backend/data/processed/master_daily_clean_treasury.csv"
+# Default rather than require, so this module can be imported as a library (e.g. by
+# scripts/ws2_recompute.py) without the caller having to fabricate a scratch path.
+SC=os.environ.get("SC", "/tmp/ws2"); DATA="backend/data/processed/master_daily_clean_treasury.csv"
 di=describe_input(DATA); code=describe_code(); CALV=calendar_version()
 raw=pd.read_csv(DATA); H=5
 rawi=pd.read_csv(DATA,parse_dates=["date"]).set_index("date")
