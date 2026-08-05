@@ -82,6 +82,12 @@ class ConfigBML:
     # overrides
     folds: Optional[int] = None
     min_train_years: int = 4
+    # Evaluation-window bounds (workstream 1). Both INCLUSIVE, by target date.
+    # Left None the builder folds up to the last year present, which for this dataset
+    # means the final fold is the 2025 holdout -- fine for the single sealed read,
+    # never for model search.
+    eval_start: Optional[str] = None
+    eval_end: Optional[str] = None
     demo_clip_months: Optional[int] = None
 
     # feature recipe
@@ -173,13 +179,27 @@ def calendar_exog(idx: pd.DatetimeIndex) -> pd.DataFrame:
     return pd.concat([df.drop(columns="dow"), dow], axis=1)
 
 
-def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int, folds_override: Optional[int]) -> List[Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]]:
+def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int, folds_override: Optional[int],
+                       eval_start: Optional[str] = None,
+                       eval_end: Optional[str] = None) -> List[Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]]:
     """
     Annual rolling-origin folds on business-day index. If folds_override is set,
     only the last N folds are kept to control runtime.
+
+    ``eval_start`` / ``eval_end`` bound the evaluation window (workstream 1). Without
+    them this builder folded over every year up to the last in the data, so a default
+    run's final fold WAS the 2025 holdout -- there was no way to ask B_ML for a
+    TRAIN-internal or DEV-only search, which the Phase-2 ground rules require. Folds
+    ending before ``eval_start`` or starting after ``eval_end`` are dropped; a fold that
+    straddles either edge is trimmed to it, because a partial block is a smaller sample
+    rather than a wrong one.
     """
     years = sorted(set(idx.year))
+    if not years:
+        return []
     first_year, last_year = min(years), max(years)
+    lo = pd.Timestamp(eval_start) if eval_start else None
+    hi = pd.Timestamp(eval_end) if eval_end else None
     folds = []
     for Y in range(first_year + min_train_years, last_year + 1):
         train_end = (pd.Period(f"{Y-1}-12-31", freq="D").to_timestamp()).normalize()
@@ -190,6 +210,19 @@ def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int, folds_overri
         if test_idx.empty:
             continue
         test_end = test_idx[-1]
+        # Window bounds: drop what falls entirely outside, trim what straddles.
+        if lo is not None and test_end < lo:
+            continue
+        if hi is not None and test_start > hi:
+            continue
+        clipped = test_idx
+        if lo is not None:
+            clipped = clipped[clipped >= lo]
+        if hi is not None:
+            clipped = clipped[clipped <= hi]
+        if clipped.empty:
+            continue
+        test_start, test_end = clipped[0], clipped[-1]
         folds.append((train_end, test_start, test_end))
     if folds_override and len(folds) > folds_override:
         folds = folds[-folds_override:]
@@ -316,19 +349,46 @@ def available_models() -> Dict[str, object]:
         "HistGBDT": HistGradientBoostingRegressor(
             random_state=0, min_samples_leaf=20, l2_regularization=1.0,
         ),
+        # ── Workstream 1: absolute-error objectives ────────────────────────────
+        # We are judged on MAE, so train on MAE. Squared error fits the
+        # conditional MEAN, and on a spiky flow series the mean is dragged by
+        # month-end and tax-deadline outliers; absolute error fits the
+        # conditional MEDIAN, which those days barely move. On this data the
+        # mismatch is not academic -- Revenues has single days 10x the local
+        # level, and every one of them is pulling an L2 fit away from the 250-odd
+        # ordinary days it will be scored on.
+        #
+        # Every hyperparameter below is IDENTICAL to the squared-error twin above,
+        # so any difference in DEV MAE is attributable to the objective and
+        # nothing else. That is the whole point of the comparison; tuning comes
+        # later (workstream 2) and on top of whichever objective wins.
+        "HistGBDT_L1": HistGradientBoostingRegressor(
+            loss="absolute_error",
+            random_state=0, min_samples_leaf=20, l2_regularization=1.0,
+        ),
     }
     if HAVE_XGB:
-        models["XGBoost"] = XGBRegressor(
-            n_estimators=600, learning_rate=0.05, max_depth=4, subsample=0.8, colsample_bytree=0.8,
-            min_child_weight=5.0, reg_lambda=1.0,
-            random_state=0, tree_method="hist", n_jobs=-1
+        _xgb = dict(
+            n_estimators=600, learning_rate=0.05, max_depth=4, subsample=0.8,
+            colsample_bytree=0.8, min_child_weight=5.0, reg_lambda=1.0,
+            random_state=0, tree_method="hist", n_jobs=-1,
         )
+        models["XGBoost"] = XGBRegressor(**_xgb)
+        # reg:absoluteerror needs XGBoost >= 1.7. Absent it, the variant is
+        # omitted rather than silently falling back to squared error, which would
+        # put an L2 fit in the table under an L1 name.
+        try:
+            models["XGBoost_L1"] = XGBRegressor(objective="reg:absoluteerror", **_xgb)
+        except Exception as exc:  # pragma: no cover - depends on installed xgboost
+            print(f"[b_ml] XGBoost_L1 unavailable ({exc}); omitted")
     if HAVE_LGBM:
-        models["LightGBM"] = LGBMRegressor(
-            n_estimators=800, learning_rate=0.05, num_leaves=31, subsample=0.8, colsample_bytree=0.8,
-            min_child_samples=20, reg_lambda=1.0,
-            random_state=0, n_jobs=-1, verbose=-1
+        _lgbm = dict(
+            n_estimators=800, learning_rate=0.05, num_leaves=31, subsample=0.8,
+            colsample_bytree=0.8, min_child_samples=20, reg_lambda=1.0,
+            random_state=0, n_jobs=-1, verbose=-1,
         )
+        models["LightGBM"] = LGBMRegressor(**_lgbm)
+        models["LightGBM_L1"] = LGBMRegressor(objective="l1", **_lgbm)
     return models
 
 
@@ -598,7 +658,11 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         cfg.folds = min(5, max_folds) if max_folds > 0 else 1
         print(f"[pipeline] folds was None, set to {cfg.folds} based on data availability")
     
-    folds = build_yearly_folds(s.index, cfg.min_train_years, cfg.folds)
+    folds = build_yearly_folds(s.index, cfg.min_train_years, cfg.folds,
+                               eval_start=cfg.eval_start, eval_end=cfg.eval_end)
+    if cfg.eval_start or cfg.eval_end:
+        print(f"[pipeline] Evaluation window bounded: "
+              f"[{cfg.eval_start or 'start'} .. {cfg.eval_end or 'end'}] -> {len(folds)} fold(s)")
     lags, wins = choose_recipe(cfg)
     print(f"[pipeline] Recipe: lags={lags}, windows={wins}, "
           f"delta_modeling={cfg.use_delta_modeling}, is_stock={is_stock(cfg.target)}")
