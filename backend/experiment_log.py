@@ -76,9 +76,23 @@ def params_hash(params: Mapping[str, Any]) -> str:
 
 
 def make_run_id(target: str, model: str, timestamp: Optional[str] = None) -> str:
+    """Unique id for one run: UTC timestamp to the microsecond, then target_model.
+
+    Second resolution is not enough. A sweep logs tens of rows inside one second, and
+    ``target_model`` repeats across windows, so a whole-second stamp produced colliding
+    ids -- caught by ``verify_log_integrity`` reporting ``duplicate run_id values`` after
+    a 36-row batch. Microseconds separate them, and the suffix loop below guarantees
+    uniqueness even if two ids still coincide: a duplicate id means two runs share one
+    detail JSON, so one of them is unrecoverable.
+    """
     ts = (timestamp or datetime.now(timezone.utc).isoformat()).replace(":", "").replace("-", "")
     slug = "".join(c if c.isalnum() else "_" for c in f"{target}_{model}").strip("_")
-    return f"{ts[:15]}_{slug}"[:96]
+    base = f"{ts[:22]}_{slug}"[:96]
+    run_id, n = base, 1
+    while (RUNS_DIR / f"{run_id}.json").exists():
+        run_id = f"{base}_{n}"[:96]
+        n += 1
+    return run_id
 
 
 def log_run(
