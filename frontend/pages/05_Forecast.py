@@ -219,15 +219,57 @@ st.markdown(section_header("Generate a forecast",
             unsafe_allow_html=True)
 
 _DATA = REPOROOT / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
-try:
-    from forecast_modes import (EXPLORATORY_LABEL, VALIDATED_HORIZON, NoRecipe, NotOfficial,
-                                exploratory_run, horizon_status, next_issue_date,
-                                official_run, publish_official, recipe_status,
-                                targets_available)
-    _modes_ok = True
-except Exception as _exc:                                    # pragma: no cover
-    _modes_ok = False
-    st.info(f"Forecast generation unavailable ({_exc}).")
+# The modelling stack (sklearn, lightgbm, xgboost, catboost, matplotlib) lives in the BACKEND
+# interpreter. Importing the pipeline from here crashed on matplotlib and would then have crashed
+# on sklearn in turn -- so this page dispatches to that interpreter and reads JSON, the same
+# pattern the Lab page and the model-pool lookup use. One interpreter owns the models.
+import json as _json
+import subprocess as _sp
+
+_BACKEND_PY = next((p for p in (REPOROOT / "backend" / ".venv" / "bin" / "python",
+                                REPOROOT / "backend" / ".venv" / "Scripts" / "python.exe")
+                    if p.exists()), None)
+_modes_ok = _BACKEND_PY is not None
+if not _modes_ok:
+    st.warning(
+        "**Forecast generation needs the backend interpreter** (`backend/.venv`), which was not "
+        "found. The models and their libraries live there, not in the interpreter running this "
+        "page. Published forecasts above are unaffected — they are read from artifacts.")
+
+VALIDATED_HORIZON = 5
+EXPLORATORY_LABEL = "exploratory — not gated, not published"
+
+
+def _dispatch(args: list, timeout: int = 600) -> dict:
+    """Run backend/forecast_modes.py and return its JSON, or an explained failure."""
+    try:
+        out = _sp.run([str(_BACKEND_PY), "backend/forecast_modes.py", *args],
+                      cwd=str(REPOROOT), capture_output=True, text=True, timeout=timeout)
+    except Exception as exc:
+        return {"ok": False, "refused": False, "reason": f"could not start the backend: {exc}"}
+    line = next((l for l in reversed(out.stdout.splitlines()) if l.strip().startswith("{")), "")
+    if not line:
+        return {"ok": False, "refused": False,
+                "reason": (out.stderr.strip().splitlines() or ["no output from the backend"])[-1]}
+    try:
+        return _json.loads(line)
+    except Exception as exc:
+        return {"ok": False, "refused": False, "reason": f"unreadable backend output: {exc}"}
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _targets_and_recipes() -> dict:
+    # Targets come from the data file's header and recipes from the registry JSON. Neither needs
+    # the modelling stack, so neither needs a dispatch.
+    cols = [c for c in pd.read_csv(_DATA, nrows=1).columns
+            if c not in {"date", "is_weekend", "is_holiday"}] if _DATA.exists() else []
+    reg = {}
+    _rp = REPOROOT / "registry" / "recipes.json"
+    if _rp.exists():
+        for rec in _json.loads(_rp.read_text())["recipes"]:
+            reg[rec["target"]] = {"recipe_id": rec["id"], "model": rec["point_model"],
+                                  "approved_by": rec["approved_by"]}
+    return {"targets": cols, "recipes": reg}
 
 if _modes_ok:
     _mode = st.radio(
@@ -237,105 +279,94 @@ if _modes_ok:
               "evidence.  Exploratory: any model, any target, any horizon; shown but never "
               "published, never scored."))
 
-    _all_targets = targets_available(_DATA) if _DATA.exists() else []
+    _tr = _targets_and_recipes()
+    _all_targets, _reg = _tr["targets"], _tr["recipes"]
 
     if _mode == "Official":
         _sel = st.multiselect("Target(s)", _all_targets,
-                              default=[t for t in _all_targets if t in recipes][:1])
+                              default=[t for t in _all_targets if t in _reg][:1])
         st.caption(f"Horizon is fixed at {VALIDATED_HORIZON} business days — the only horizon at "
                    f"which the benchmark, recipe selection and gates were measured.")
-        _refusals = [t for t in _sel if not recipe_status(t)["has_recipe"]]
-        for _t in _refusals:
-            st.error(recipe_status(_t)["explanation"])
-        _runnable = [t for t in _sel if t not in _refusals]
+        _runnable = [t for t in _sel if t in _reg]
+        for _t in [t for t in _sel if t not in _reg]:
+            st.error(f"**{_t} has no champion recipe, so no official forecast can be issued for "
+                     f"it.** Substituting another target's recipe would attach five folds of "
+                     f"evidence to a model it was never measured on. Use exploratory mode, where "
+                     f"nothing is published and no gate is claimed.")
         if _runnable:
             st.caption("Will run: " + ", ".join(
-                f"**{t}** → `{recipe_status(t)['recipe_id']}` ({recipe_status(t)['model']})"
-                for t in _runnable))
-        if st.button("Run and publish", disabled=not _runnable, type="primary"):
-            _issue = next_issue_date()
-            _ok, _fail = [], []
+                f"**{t}** → `{_reg[t]['recipe_id']}` ({_reg[t]['model']})" for t in _runnable))
+        _pub = st.checkbox("Publish to forecasts/published/ under a new issue date", value=False)
+        if st.button("Run", disabled=not _runnable, type="primary"):
             for _t in _runnable:
-                try:
-                    _res = official_run(_t, _DATA)
-                    _ok.append((_t, _res))
-                except (NoRecipe, NotOfficial) as _e:
-                    _fail.append((_t, str(_e)))
-            for _t, _why in _fail:
-                st.error(f"**{_t}** refused. {_why}")
-            if _ok:
-                st.success(
-                    f"Ran {len(_ok)} official forecast(s). Issue date **{_issue}** — a new date, "
-                    f"because published issues are immutable and are never overwritten.")
-                for _t, _res in _ok:
-                    _appr = list(_res.gates.values())[0].get("approved_by")
-                    st.markdown(
-                        f"- **{_t}** · recipe `{_res.recipe_id}` · model `{_res.model}` · "
-                        f"approved by **{_appr if _appr else 'none'}**")
+                with st.spinner(f"Running {_t} …"):
+                    _args = ["--mode", "official", "--target", _t, "--data", str(_DATA)]
+                    if _pub:
+                        _args.append("--publish")
+                    _r = _dispatch(_args)
+                if not _r.get("ok"):
+                    st.error(f"**{_t}**: {_r.get('reason', 'unknown failure')}")
+                    continue
+                _appr = _r.get("approved_by")
+                st.success(f"**{_t}** · recipe `{_r['recipe_id']}` · model `{_r['model']}` · "
+                           f"approved by **{_appr if _appr else 'none'}**"
+                           + (f" · published to `{_r['published_to']}`"
+                              if _r.get("published_to") else ""))
+                _f = pd.DataFrame(_r["forecasts"])
+                _f["target_date"] = pd.to_datetime(_f["target_date"])
+                st.dataframe(pd.DataFrame({
+                    "Date": _f["target_date"].dt.strftime("%a %d %b"),
+                    "Low": _f["p10"].map(m), "Central": _f["p50"].map(m),
+                    "High": _f["p90"].map(m)}), hide_index=True, use_container_width=True)
                 st.caption(
-                    "Publishing writes to `forecasts/published/<issue_date>/` with full "
-                    "provenance. Gate verdicts are inherited by recipe_id from the DEV "
-                    "credentials run — they are not recomputed on forward dates, which have no "
-                    "truth. Nothing here is approved: every recipe's status is *candidate*.")
-                st.info("Artifacts are written by `backend/run_forward_forecast.py`; this button "
-                        "runs the same code path. Re-run that script to regenerate outside the "
-                        "lab.")
+                    f"{UNIT_LABEL.capitalize()}. Gate verdicts are inherited by recipe_id from the "
+                    f"2024 credentials run — never recomputed on forward dates, which have no "
+                    f"truth. Nothing here is approved: every recipe's status is *candidate*.")
     else:
         _t = st.selectbox("Target", _all_targets, index=0 if _all_targets else None)
-        # The model pool lives behind the ML libraries, which are installed in the BACKEND
-        # interpreter, not this one. Ask that interpreter rather than hard-coding a list here --
-        # a hard-coded list silently goes stale the moment a model is added or a library removed.
-        @st.cache_data(show_spinner=False, ttl=120)
+
+        @st.cache_data(show_spinner=False, ttl=300)
         def _model_pool() -> list:
-            import subprocess
-            for _py in (REPOROOT / "backend" / ".venv" / "bin" / "python",
-                        REPOROOT / "backend" / ".venv" / "Scripts" / "python.exe"):
-                if not _py.exists():
-                    continue
-                try:
-                    out = subprocess.run(
-                        [str(_py), "-c",
-                         "import sys;sys.path.insert(0,'backend');"
-                         "from b_ml_pipeline import available_models;"
-                         "print('\\n'.join(sorted(available_models())))"],
-                        cwd=str(REPOROOT), capture_output=True, text=True, timeout=90)
-                    if out.returncode == 0:
-                        return [l for l in out.stdout.split("\n") if l.strip()]
-                except Exception:
-                    pass
-            return []
+            out = _sp.run([str(_BACKEND_PY), "-c",
+                           "import sys;sys.path.insert(0,'backend');"
+                           "from b_ml_pipeline import available_models;"
+                           "print('\\n'.join(sorted(available_models())))"],
+                          cwd=str(REPOROOT), capture_output=True, text=True, timeout=120)
+            return [l for l in out.stdout.split("\n") if l.strip()] if out.returncode == 0 else []
 
         _pool = _model_pool()
         if not _pool:
-            st.warning(
-                "**The model pool could not be read.** It lives behind the modelling libraries, "
-                "which are installed in the backend interpreter "
-                "(`backend/.venv`), not the one running this page. Exploratory runs need that "
-                "interpreter available. Nothing is wrong with the published forecasts above — "
-                "they were produced by the backend and read from artifacts.")
-        _m = st.selectbox("Model", _pool,
-                          help="Any model in the pool, including ones never ablated on this "
-                               "target. Read live from the backend interpreter, so it cannot "
-                               "go stale.")
+            st.warning("**The model pool could not be read** from the backend interpreter. "
+                       "Published forecasts above are unaffected — they come from artifacts.")
+        _mdl = st.selectbox("Model", _pool,
+                            help="Any model in the pool, including ones never ablated on this "
+                                 "target. Read live from the backend, so it cannot go stale.")
         _h = st.slider("Horizon (business days)", 1, 10, VALIDATED_HORIZON)
-        _hs = horizon_status(_h)
-        if not _hs["validated"]:
-            st.warning(_hs["explanation"])
-        st.error(f"**{EXPLORATORY_LABEL}.** Results below are not published, do not enter the "
-                 f"track record, and carry no gate verdict.")
-        if st.button("Run (exploratory)", disabled=not (_t and _m)):
-            _r = exploratory_run(_t, _m, _DATA, horizon=_h)
-            st.markdown(_r.banner)
-            _f = _r.forecasts.copy()
-            _f["target_date"] = pd.to_datetime(_f["target_date"])
-            st.dataframe(pd.DataFrame({
-                "Date": _f["target_date"].dt.strftime("%a %d %b"),
-                "Low": _f["p10"].map(m), "Central": _f["p50"].map(m),
-                "High": _f["p90"].map(m)}), hide_index=True, use_container_width=True)
-            st.caption(f"{UNIT_LABEL.capitalize()}. Exploratory output — not written to "
-                       f"`forecasts/published/`, not exportable as official.")
+        if _h != VALIDATED_HORIZON:
+            st.warning(f"**Horizon {_h} is exploratory.** The benchmark, recipe selection and "
+                       f"every gate were measured at {VALIDATED_HORIZON} business days. At "
+                       f"horizon {_h} no recipe was selected and no gate was measured.")
+        st.error(f"**{EXPLORATORY_LABEL}.** Nothing below is published, enters the track record, "
+                 f"or carries a gate verdict.")
+        if st.button("Run (exploratory)", disabled=not (_t and _mdl)):
+            with st.spinner("Running …"):
+                _r = _dispatch(["--mode", "exploratory", "--target", _t, "--model", _mdl,
+                                "--horizon", str(_h), "--data", str(_DATA)])
+            if not _r.get("ok"):
+                st.error(_r.get("reason", "unknown failure"))
+            else:
+                st.markdown(_r["banner"])
+                _f = pd.DataFrame(_r["forecasts"])
+                _f["target_date"] = pd.to_datetime(_f["target_date"])
+                st.dataframe(pd.DataFrame({
+                    "Date": _f["target_date"].dt.strftime("%a %d %b"),
+                    "Low": _f["p10"].map(m), "Central": _f["p50"].map(m),
+                    "High": _f["p90"].map(m)}), hide_index=True, use_container_width=True)
+                st.caption(f"{UNIT_LABEL.capitalize()}. Exploratory — not written to "
+                           f"`forecasts/published/`, not exportable as official.")
 
 st.divider()
+
 # ── Track record: how have PAST published forecasts actually done? ────────────
 #
 # This is the section that makes the accuracy claim auditable over time. It reads the
