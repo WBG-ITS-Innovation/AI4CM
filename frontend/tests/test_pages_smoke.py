@@ -1,18 +1,18 @@
-"""Every page must import and render in three states, without artifacts and with them.
-
-The three states are the ones that actually break dashboards:
-
-1. **No artifacts at all.** The page must render an empty state, not a traceback and not a
-   blank panel. This is what a fresh clone looks like.
-2. **One ordinary run.** The happy path.
-3. **A withheld run** — a model that failed its signal gate. This must render *and* the page
-   must not present it as a clean pass, because the whole point of the withheld verdict is
-   that it survives to the screen.
+"""Every page must import and render without raising.
 
 Streamlit's ``AppTest`` executes the page script in-process, so an exception anywhere in the
-page body fails the test. That is the coverage we want: these pages are long and mostly
-untested, and an import error or a bad column reference is invisible until someone opens the
-tab in front of an audience.
+page body fails the test — which is the coverage that matters here: these pages are long and
+were untested, and an import error or a bad column reference is invisible until someone opens
+the tab in front of an audience. This suite is what caught an import landing after its own use
+while the visual pass was being applied.
+
+**What this does and does not verify.** Every case renders against whatever run artifacts are
+actually on disk. The fixtures below build synthetic run folders and set ``AI4CM_RUNS_DIR``,
+but **the pages do not read that variable** — their runs directory is hard-coded — so the
+three "states" currently exercise the same real artifacts rather than three different ones.
+The fixtures are kept because making the pages honour an override is a content change, listed
+in ``reports/ui_content_backlog.md``; until then, do not read these cases as covering the
+empty-artifact path.
 """
 from __future__ import annotations
 
@@ -66,7 +66,8 @@ def _assert_clean(at: AppTest, page: Path, state: str) -> None:
 
 @pytest.mark.parametrize("page", PAGES, ids=lambda p: p.name)
 def test_page_renders_with_no_artifacts(page, tmp_path, monkeypatch):
-    """A fresh clone has no runs. Pages must say so, not crash."""
+    """Intended as the fresh-clone case. See the module docstring: the override is not yet
+    honoured by the pages, so this currently duplicates the repository-artifacts case."""
     monkeypatch.setenv("AI4CM_RUNS_DIR", str(tmp_path / "empty_runs"))
     (tmp_path / "empty_runs").mkdir(parents=True, exist_ok=True)
     at = _run(page)
@@ -149,7 +150,7 @@ def test_withheld_verdict_is_visible_on_the_forecast_page():
     """Revenues and Expenditure are `withheld_as_forecast` in the registry.
 
     If the page can render them without the word appearing, the honesty guarantee is only
-    in the data and not in the product.
+    in the data and not in the product. This asserts existing behaviour; it does not add it.
     """
     at = _run(FRONTEND / "pages" / "05_Forecast.py")
     _assert_clean(at, FRONTEND / "pages" / "05_Forecast.py", "repository artifacts")

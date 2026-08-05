@@ -1,5 +1,21 @@
 # Phase 13 — Frontend Quality Pass Session Record
 
+> ## ⚠️ SUPERSEDED MID-SESSION — read this first
+>
+> The scope was corrected to a **visual pass only** after the work below had been committed.
+> **Every change described in §2 that alters what is computed or displayed was reverted**
+> (`frontend/Overview.py`, `frontend/pages/*`, `frontend/utils_frontend.py` were restored to
+> their session-start state and are byte-identical to `706ada9`).
+>
+> What was kept: the theme, typography, spacing, tabular numerals, `format_gel.py` formatting,
+> chart chrome on charts that already existed, `help=` tooltips on metrics already on screen,
+> and the page smoke tests.
+>
+> What shipped visually is described in `reports/phase13_visual_pass.md`. Every reverted
+> proposal is written up as a backlog item with rationale in `reports/ui_content_backlog.md`.
+> §2 below is retained as the record of what was attempted and measured, **not** as a
+> description of the current app.
+
 **Date:** 2026-08-05
 **Branch:** `model/excellence` @ `6c763a0` (21 ahead of `origin/main` @ `863f967`)
 **Root suite:** 441 → **453 passed, 1 skipped**, `EXIT=0` · **Frontend suite:** 59 passed

@@ -4,11 +4,6 @@ from typing import Dict
 
 import pandas as pd
 import streamlit as st
-from pathlib import Path as _Path
-from ui_styles import (inject_design_system, ds_metric, gate_badge_tri, empty_state,
-                       reading_this_chart, section_header, HELP)
-from format_gel import (NOT_REPORTED, UNIT_LABEL, gel_millions, number, pct_points,
-                        ratio)
 
 try:
     from ui_styles import inject_global_css, page_header
@@ -16,6 +11,7 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
+from ui_styles import inject_design_system  # presentation only
 st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
 inject_design_system()
@@ -73,7 +69,7 @@ def _render_registry() -> None:
             "Verdict": ("✅ forecast" if pub["verdict"] == "publishable"
                         else "❌ withheld as forecast"),
             "Status": r["status"],
-            "Approved by": r["approved_by"] or "none",
+            "Approved by": r["approved_by"] or "— nobody —",
         })
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
@@ -96,8 +92,6 @@ def _render_registry() -> None:
                         f"**Family** {r['family']} · **Intervals** "
                         f"{r.get('interval_model', '—')}  \n"
                         f"**Target scaling** {r['scaling']}  \n"
-                        f"**Approved by** {r['approved_by'] or 'none — no approval '
-                                          'workflow exists yet'}  \n"
                         f"**Fiscal calendar version** `{r['calendar_version']}`")
             st.markdown("**Feature groups**: " + ", ".join(r["feature_groups"]) +
                         (("  \n**Exogenous blocks**: " + ", ".join(r["exog_blocks"]))
@@ -596,147 +590,3 @@ with tabs[4]:
 - **Quantiles (P10/P50/P90)**: distributional forecasts for uncertainty-aware planning  
 """
     )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# EXPERIMENTS LOG EXPLORER
-#
-# experiments/log.csv is the project's audit trail: every reported number is a row, with the
-# data and code fingerprints that produced it. It was only reachable from a terminal, which
-# meant the audit trail existed but nobody using the lab could follow it. This makes each row
-# clickable through to its run JSON.
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _render_log_explorer() -> None:
-    import json as _json
-
-    st.markdown(section_header("Experiments log",
-                               "Every reported number, with the run that produced it"),
-                unsafe_allow_html=True)
-    _repo = _Path(__file__).resolve().parents[2]
-    _log = _repo / "experiments" / "log.csv"
-    _runs = _repo / "experiments" / "runs"
-    if not _log.exists():
-        st.markdown(
-            empty_state("No experiments log yet.",
-                        filename="experiments/log.csv",
-                        looked_in=str(_log.parent),
-                        command="Runs append to it automatically; see backend/experiment_log.py"),
-            unsafe_allow_html=True)
-        return
-
-    df = pd.read_csv(_log)
-    if df.empty:
-        st.markdown(
-            empty_state("The experiments log exists but has no rows yet.",
-                        filename="experiments/log.csv",
-                        looked_in=str(_log.parent),
-                        command="Runs append to it automatically"),
-            unsafe_allow_html=True)
-        return
-
-    # ── filters: target / window / study ──────────────────────────────────────
-    def _study_of(note: str) -> str:
-        n = str(note or "").lower()
-        for key, label in (("ws2", "WS2 tuning"), ("ws3", "WS3 fiscal calendar"),
-                           ("ws4 robust", "WS4 robustness"), ("ws4", "WS4 target scaling"),
-                           ("ws5", "WS5 multivariate"),
-                           ("workstream 1", "WS1 objectives"),
-                           ("reproduction", "reproduction")):
-            if key in n:
-                return label
-        return "other"
-
-    def _window_of(scheme: str) -> str:
-        sc = str(scheme or "").lower()
-        if "dev" in sc:
-            return "DEV (2024)"
-        if "train" in sc:
-            return "TRAIN (<=2023)"
-        return "not reported"
-
-    df["_study"] = df["note"].map(_study_of) if "note" in df.columns else "other"
-    df["_window"] = df["fold_scheme"].map(_window_of) if "fold_scheme" in df.columns else "not reported"
-
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        _tsel = st.multiselect("Target", sorted(df["target"].dropna().unique().tolist()),
-                               default=[])
-    with f2:
-        _wsel = st.multiselect("Window", sorted(df["_window"].unique().tolist()), default=[])
-    with f3:
-        _ssel = st.multiselect("Study", sorted(df["_study"].unique().tolist()), default=[])
-
-    view = df
-    if _tsel:
-        view = view[view["target"].isin(_tsel)]
-    if _wsel:
-        view = view[view["_window"].isin(_wsel)]
-    if _ssel:
-        view = view[view["_study"].isin(_ssel)]
-
-    st.caption(f"{len(view):,} of {len(df):,} logged runs "
-               f"({df['target'].nunique()} targets)")
-
-    _show = pd.DataFrame({
-        "Run id": view["run_id"],
-        "Target": view["target"],
-        "Model": view.get("model", pd.Series(dtype=str)) if "model" in view.columns
-                 else [""] * len(view),
-        "Window": view["_window"],
-        "Study": view["_study"],
-        "DEV MAE (M GEL)": [gel_millions(v) for v in view.get("dev_mae", [])],
-        "MASE": [number(v) for v in view.get("mase", [])],
-        "Skill vs ruler": [pct_points(v) for v in view.get("skill_vs_ruler", [])],
-        "Signal": [ratio(v) for v in view.get("sentinel_ratio", [])],
-        "Calendar": view.get("calendar_version", pd.Series([""] * len(view))),
-    })
-    st.dataframe(_show, hide_index=True, use_container_width=True,
-                 column_config={
-                     "Skill vs ruler": st.column_config.TextColumn(help=HELP["skill"]),
-                     "Signal": st.column_config.TextColumn(help=HELP["sentinel"]),
-                     "MASE": st.column_config.TextColumn(help=HELP["mase"]),
-                 })
-
-    # ── click through to the run JSON ─────────────────────────────────────────
-    _ids = view["run_id"].tolist()
-    if _ids:
-        _pick = st.selectbox("Inspect a run's full record", _ids,
-                             help="Reads experiments/runs/<run_id>.json — the complete "
-                                  "provenance for that row, including full data and code "
-                                  "fingerprints and the exact parameters.")
-        _jp = _runs / f"{_pick}.json"
-        if _jp.exists():
-            _detail = _json.loads(_jp.read_text(encoding="utf-8"))
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.markdown(ds_metric("Data fingerprint",
-                                      str(_detail.get("data_sha_full", ""))[:16] + "…"
-                                      if _detail.get("data_sha_full") else NOT_REPORTED,
-                                      missing=not _detail.get("data_sha_full")),
-                            unsafe_allow_html=True)
-            with m2:
-                st.markdown(ds_metric("Code version",
-                                      str(_detail.get("git_sha_full", ""))[:12]
-                                      if _detail.get("git_sha_full") else NOT_REPORTED,
-                                      missing=not _detail.get("git_sha_full")),
-                            unsafe_allow_html=True)
-            with m3:
-                st.markdown(ds_metric("Benchmark used",
-                                      gel_millions(_detail.get("ruler")),
-                                      sub="million lari",
-                                      missing=_detail.get("ruler") is None),
-                            unsafe_allow_html=True)
-            st.caption(f"Fold scheme: {_detail.get('fold_scheme', NOT_REPORTED)}")
-            with st.expander("Full run record (JSON)"):
-                st.json(_detail)
-        else:
-            st.markdown(
-                empty_state("This row has no detail file.",
-                            filename=f"experiments/runs/{_pick}.json",
-                            looked_in=str(_runs),
-                            command="Check backend/experiment_log.verify_log_integrity()"),
-                unsafe_allow_html=True)
-
-
-_render_log_explorer()

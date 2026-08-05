@@ -819,3 +819,35 @@ HOVER_BAND = ("<b>%{x|%a %d %b %Y}</b><br>"
               "P50 (central): %{customdata[1]:,.1f} M GEL<br>"
               "P10 (lower): %{customdata[0]:,.1f} M GEL<extra></extra>")
 HOVER_BAR_PCT = "<b>%{x}</b><br>%{fullData.name}: %{y:.1%}<extra></extra>"
+
+
+def plotly_chrome(fig, *, showlegend: bool = True, yaxis_tickformat: str = "",
+                  height: int | None = None):
+    """Apply the lab's chart chrome to an EXISTING figure.
+
+    Presentation only: it never touches traces, data or hover *content*. It sets gridlines,
+    axis lines, font, margins, legend placement and hover label styling so that charts across
+    pages stop looking like separate products.
+
+    Kept separate from ``plotly_layout`` so it can be dropped into pages that already build
+    their own figures, replacing per-page ``update_layout`` blocks that had drifted apart.
+    """
+    fig.update_layout(
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        showlegend=showlegend,
+        margin=dict(l=8, r=8, t=40, b=8),
+        font=dict(family="Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+                  size=13, color="#0f172a"),
+        hoverlabel=dict(font_size=12.5, font_family="Inter, sans-serif",
+                        bgcolor="white", bordercolor="#cbd5e1"),
+        legend=dict(orientation="h", y=-0.18, x=0) if showlegend else None,
+    )
+    if height:
+        fig.update_layout(height=height)
+    fig.update_xaxes(showgrid=False, linecolor="#e2e8f0", ticks="outside",
+                     tickcolor="#e2e8f0")
+    fig.update_yaxes(gridcolor="#eef2f7", zerolinecolor="#e2e8f0", linecolor="#e2e8f0")
+    if yaxis_tickformat:
+        fig.update_yaxes(tickformat=yaxis_tickformat)
+    return fig
