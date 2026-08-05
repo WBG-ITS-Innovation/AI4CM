@@ -191,3 +191,56 @@ def test_best_model_prefers_calibrated_intervals(monkeypatch, tmp_path):
         # even if a miscalibrated model has a lower median MAE.
         assert report["best_model"] == "GBQuantile"
         assert report["run_status"] == "SUCCESS"
+
+
+# ── 4. the evaluation window needs an UPPER bound, not just a lower one ─────
+
+def test_eval_end_caps_the_window():
+    """Regression: `eval_start` alone only set a floor, so folds ran to the series end.
+
+    Item 1f made pinned folds tile forward from `eval_start`. Correct for the 2025
+    benchmark, where the window happens to end at the series end -- but it left the
+    upper edge unbounded. Pinning to DEV_START then tiled straight through DEV and on
+    into the 2025 holdout: 418 target dates where DEV has 262. Any "DEV" figure produced
+    that way silently included TEST, which is exactly what the sealed-holdout rule
+    forbids.
+
+    `eval_end` is the cap. With it, a DEV-scoped run stops at DEV's last row.
+    """
+    unbounded = _time_folds(n=100, horizon=5, folds=None, min_train=0,
+                            eval_start_idx=60)
+    assert unbounded[-1][1] == 100, "without a cap, tiling runs to the series end"
+
+    capped = _time_folds(n=100, horizon=5, folds=None, min_train=0,
+                         eval_start_idx=60, eval_end_idx=79)
+    assert capped == [(60, 65), (65, 70), (70, 75), (75, 80)]
+    assert capped[-1][1] <= 80, "rows beyond eval_end must not be evaluated"
+
+
+def test_eval_end_keeps_a_partial_final_block():
+    """A cap that is not a whole number of horizons must truncate, not overshoot.
+
+    Overshooting by even one block is a holdout read; dropping the remainder would
+    quietly shrink the window. Truncate.
+    """
+    folds = _time_folds(n=200, horizon=5, folds=None, min_train=0,
+                        eval_start_idx=100, eval_end_idx=112)
+    assert folds[0][0] == 100
+    assert folds[-1][1] == 113, f"expected the window to end at 113, got {folds[-1][1]}"
+    assert folds[-1][1] - folds[-1][0] == 3, "the final block is the 3-row remainder"
+
+
+def test_eval_end_below_eval_start_yields_no_folds():
+    """A contradictory window must evaluate nothing rather than fall back to the end.
+
+    Silently ignoring an impossible cap is how an unbounded run gets re-introduced.
+    """
+    folds = _time_folds(n=100, horizon=5, folds=None, min_train=0,
+                        eval_start_idx=80, eval_end_idx=60)
+    assert folds == []
+
+
+def test_config_carries_eval_end():
+    cfg = Config(target="y", cadence="Daily", horizon=5, data_path="unused.csv",
+                 eval_start="2024-01-01", eval_end="2024-12-31")
+    assert cfg.eval_end == "2024-12-31"
