@@ -117,13 +117,42 @@ p10 ≤ p50 ≤ p90 on real pipeline output. Adding it broke a test that hard-co
 `registry_models()` as a single source of truth so a model cannot be added to the run loop
 without appearing in the reports and tests that enumerate the family.
 
-### Search: IN FLIGHT, results not yet incorporated
+### Search: Revenues COMPLETE (and it did not help); other two targets in flight
+
+**Revenues, 100/100 trials, 0 failed, 1,592s.** Best model `LGBMQuantile`.
+
+| | TRAIN objective | DEV MAE | DEV skill |
+|---|---:|---:|---:|
+| Untuned incumbent (WS4 `ratio`) | 35,456,541 | **38,931,956** | **55.92%** |
+| Tuned (100 Optuna trials) | **35,114,562** | 40,148,659 | 55.78% |
+| Change | **+0.96%** | **−3.13%** | −0.14pp |
+
+**Tuning gained ~1% on TRAIN and lost ~3% on DEV.** That is the signature of the
+hyperparameter search mildly overfitting the TRAIN folds it was optimised against — 100
+trials is enough to find configurations that suit five specific fold splits. **On this
+evidence the tuned Revenues configuration must not be promoted.** The untuned incumbent
+stays.
+
+Interval coverage came out at 83.2% against a nominal 80%, and **0 quantile crossings** were
+repaired — so the crossing-safe port is behaving, on this target at least.
+
+> ### ⚠️ The sentinel figure from this harness is INVALID — do not quote it
+>
+> The run reported `sentinel=1.0000`, exactly. That is an artefact, not a measurement. My
+> harness passed the **ratio-transformed** training target and the **original-scale** test
+> truth into `signal_sentinel()`, so both the real-target and shuffled-target errors are
+> dominated by the same units mismatch and their ratio collapses to 1. It measures nothing.
+>
+> Whether tuning moved the sentinel is therefore **still unmeasured**. Fixing it means
+> passing consistently-scaled targets (or inverting the training target before the probe) and
+> re-running the probe only — the search itself does not need repeating. The trustworthy
+> sentinel readings remain the WS3/WS5 ones: Revenues 1.2255, Expenditure 1.0882.
+
+### Remaining targets: in flight, results not yet incorporated
 
 The Optuna study is running in the background: 100 trials per target across
 `{LGBMQuantile, CatBoostQuantile}` on TRAIN-internal folds, then one DEV confirmation each.
-At the point this record was written it had reached **trial 60 of 100 on the first of three
-targets** (Revenues, best objective so far 35,507,755 against the untuned incumbent's TRAIN
-35,456,541 — i.e. **not yet beating it**).
+Expenditure and the stock target had not completed when this record closed.
 
 **Nothing from the search has been reported, promoted, or written into the registry.** No
 `reports/ws2_tuning.md` exists, because writing one now would mean either waiting past the
@@ -167,7 +196,7 @@ grepping for the import, `full_study` and the main guard rather than trusting th
 
 | # | Task | Notes |
 |---|---|---|
-| **1** | **Finish the WS2 search and report it** | **Resume point.** Driver is committed; per-target results land in `experiments/log.csv`. Report per-target gain over the untuned incumbent **and** whether the sentinel moved (expect not) → `reports/ws2_tuning.md`. Fold winners into the registry only if they beat the incumbent |
+| **1** | **Finish the WS2 search and report it** | **Resume point.** Driver committed; results land in `experiments/log.csv`. **Revenues is done and LOST on DEV (−3.13%) — do not promote it.** Two targets remain. **Fix the sentinel harness bug first** (§4) or the "did the sentinel move" question stays unanswerable |
 | 2 | WS6 ensembling; WS7 selection + conformal intervals | WS7 now owns **four** null-distribution / diagnostic studies: tree probe, model agreement, the ratio-transform "fluctuations scale with level" hypothesis, and CQR |
 | 3 | Send **T2** — forward auction/redemption calendar is the top ask | Ready |
 | 4 | Ops P0, artifact validator, Phase-1 cleanup (untrack `.venv`/`.env` **without printing contents**) | Deferred since Phase 1 |

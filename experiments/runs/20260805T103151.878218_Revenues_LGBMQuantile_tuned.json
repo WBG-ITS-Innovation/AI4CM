@@ -1,0 +1,57 @@
+{
+  "run_id": "20260805T103151.878218_Revenues_LGBMQuantile_tuned",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T10:31:51.878218+00:00",
+  "git_sha": "9cd7e9b91c92",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "Revenues",
+  "feature_set_hash": "0ccb9ee6e892",
+  "params": "1eb95f73dd3d",
+  "seed": 0,
+  "fold_scheme": "Optuna on TRAIN-internal yearly folds 2019-2023; one DEV fold",
+  "dev_mae": "40148658.8415",
+  "mase": "0.781647",
+  "skill_vs_ruler": "55.7837",
+  "sentinel_ratio": "1.0000",
+  "coverage_low": "0.7976",
+  "coverage_mid": "1.0000",
+  "coverage_high": "0.6988",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS2 tuned LGBMQuantile, DEV n=250, crossings=0",
+  "model": "LGBMQuantile_tuned",
+  "git_sha_full": "9cd7e9b91c927b7ddc4ec94efaf9f2cf9156415b",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws2:revenues-lgbm-l1-ws3-v1"
+  ],
+  "params_full": {
+    "study": "ws2_tuning",
+    "model": "LGBMQuantile",
+    "best_params": {
+      "learning_rate": 0.014231675736958105,
+      "num_leaves": 35,
+      "min_child_samples": 28,
+      "subsample": 0.9465557902746049,
+      "subsample_freq": 4,
+      "colsample_bytree": 0.9676920511290251,
+      "reg_lambda": 0.0022176292972619005,
+      "reg_alpha": 0.0056847353683637985
+    },
+    "target_transform": "ratio",
+    "n_trials_completed": 100,
+    "horizon": 5,
+    "early_stopping": "h-gapped",
+    "quantiles": [
+      0.1,
+      0.5,
+      0.9
+    ]
+  },
+  "ruler": 90800654.06,
+  "coverage_terciles": {
+    "low": 0.7976190476190477,
+    "mid": 1.0,
+    "high": 0.6987951807228916
+  },
+  "per_fold": []
+}
