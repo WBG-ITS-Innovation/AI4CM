@@ -5,7 +5,7 @@ required. Share this one file.
 
 **Generated:** 2026-08-04, updated 2026-08-05 (phase 7) · **Branch:** `model/excellence` @ `6c22009`
 **`origin/main`** @ `6c22009` (**Phase 1 via PR #23, Phase 2a via PR #24 — both merged**)
-**Suite:** 273 passing · **TEST (2025) gated reads: 0** — but see §0a, there is one
+**Suite:** 277 passing · **TEST (2025) gated reads: 0** — but see §0a, there are two
 retrospective disclosure
 **Canonical data SHA-256:** `0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1`
 
@@ -52,6 +52,35 @@ search and confirmation happens on TRAIN-internal rolling-origin folds and DEV (
 
 A retrospective entry recording this is appended to `experiments/test_access.log`. That file
 is gitignored, so **this section is the durable record**.
+
+### Second disclosure — the phase-3 "DEV" figures were DEV+TEST (found 2026-08-05)
+
+Writing the experiments logger surfaced a defect in item 1f's own fix. `eval_start` set a
+**floor** on the evaluation window and nothing set a ceiling, so pinned folds tiled forward
+from `eval_start` to the **end of the series**. That is harmless for the 2025 benchmark,
+whose window genuinely ends at the series end — and wrong for anything else.
+
+Pinning to `DEV_START` therefore evaluated 2024-01-01 … **2025-08-06**: 418 target dates
+where DEV has 262. So these previously reported "DEV" figures were computed over DEV *plus
+the whole available holdout*:
+
+| Figure, as reported | Reported | Actually measured over | Honest DEV-only |
+|---|---:|---|---:|
+| GBQuantile Revenues, DEV skill (phase 3) | 47.98% | 2024-01-01 … 2025-08-06, n=410 | **46.37%** |
+| GBQuantile State budget balance, DEV skill (phase 3) | 32.20% | same | **33.81%** |
+
+The correction is small in magnitude and that is not the point: the numbers were not
+DEV numbers. **`eval_end` now caps the window**, four regression tests pin it
+(`test_eval_end_caps_the_window` and neighbours), and both figures have been re-measured
+DEV-only and logged as reproductions in `experiments/log.csv`.
+
+Selection consequence: **none.** Those two figures were a fold-scheme sanity check, and no
+model, hyperparameter or threshold was chosen from them. Every subsequent number in the
+log is DEV-capped by construction.
+
+This was caught by an assertion written into the logging script *because* the sealed-holdout
+rule had just been tightened — `assert wins == {"dev"}` — not by review. Cheap guards on the
+window are worth more than care.
 
 ---
 
