@@ -246,3 +246,59 @@ def next_issue_date(published_root: Optional[Path] = None) -> str:
     while f"{base}-r{n}" in existing:
         n += 1
     return f"{base}-r{n}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLI — so a frontend can run a forecast WITHOUT importing the modelling stack
+#
+# The Streamlit venv has neither matplotlib nor sklearn, and it should not: it renders with
+# Plotly and the models belong to the backend. Importing the pipeline from the page crashed on
+# matplotlib and would then have crashed on sklearn, xgboost, lightgbm and catboost in turn.
+# Deferring pyplot (backend/lazy_plot.py) was worth doing on its own merits but was never going to
+# be sufficient.
+#
+# So the page dispatches here, the same pattern the Lab page and the model-pool lookup already use.
+# One interpreter owns the models; the frontend reads JSON.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _cli() -> int:
+    import argparse
+    import json as _json
+
+    ap = argparse.ArgumentParser(description="Run a forecast in official or exploratory mode.")
+    ap.add_argument("--mode", choices=[MODE_OFFICIAL, MODE_EXPLORATORY], required=True)
+    ap.add_argument("--target", required=True)
+    ap.add_argument("--data", required=True)
+    ap.add_argument("--horizon", type=int, default=VALIDATED_HORIZON)
+    ap.add_argument("--model", default="")
+    ap.add_argument("--publish", action="store_true",
+                    help="official mode only; refused otherwise by publish_official()")
+    a = ap.parse_args()
+
+    try:
+        if a.mode == MODE_OFFICIAL:
+            res = official_run(a.target, Path(a.data), horizon=a.horizon)
+            out = {"ok": True, "mode": res.mode, "target": res.target,
+                   "recipe_id": res.recipe_id, "model": res.model,
+                   "approved_by": list(res.gates.values())[0].get("approved_by"),
+                   "forecasts": _json.loads(res.forecasts.to_json(orient="records",
+                                                                  date_format="iso"))}
+            if a.publish:
+                out["published_to"] = str(publish_official(res))
+        else:
+            res = exploratory_run(a.target, a.model, Path(a.data), horizon=a.horizon)
+            out = {"ok": True, "mode": res.mode, "target": res.target, "model": res.model,
+                   "banner": res.banner,
+                   "forecasts": _json.loads(res.forecasts.to_json(orient="records",
+                                                                 date_format="iso"))}
+    except (NoRecipe, NotOfficial) as exc:
+        out = {"ok": False, "refused": True, "reason": str(exc)}
+    except Exception as exc:                        # pragma: no cover - surfaced to the page
+        out = {"ok": False, "refused": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    print(_json.dumps(out, default=str))
+    return 0 if out.get("ok") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

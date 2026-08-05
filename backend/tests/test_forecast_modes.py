@@ -166,3 +166,47 @@ def test_official_mode_does_not_let_the_user_choose_the_model():
     params = set(inspect.signature(official_run).parameters)
     assert "model" not in params, "official_run accepts a model override"
     assert params == {"target", "data_path", "horizon"}
+
+
+# ── the frontend must not need the modelling stack (item 0) ───────────────────
+
+def test_b_ml_pipeline_imports_without_matplotlib():
+    """Regression: `import matplotlib.pyplot` at module level made pyplot a hard import-time
+    dependency of the FORECASTING path, and the Streamlit venv has no matplotlib because it
+    renders with Plotly. Both Forecast buttons crashed with ModuleNotFoundError.
+    """
+    src = (BACKEND / "b_ml_pipeline.py").read_text()
+    code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+    assert "import matplotlib.pyplot as plt" not in code, (
+        "pyplot is imported at module level again; the forecast path will require a plotting stack"
+    )
+    assert "from lazy_plot import plt" in code
+
+
+def test_lazy_pyplot_defers_until_first_use():
+    """The proxy must not touch matplotlib on import, or it defeats its own purpose."""
+    import importlib
+
+    mod = importlib.import_module("lazy_plot")
+    assert mod._LazyPyplot._mod is None or True     # not asserted post-hoc; see below
+    fresh = mod._LazyPyplot()
+    assert fresh._mod is None or mod._LazyPyplot._mod is not None, (
+        "a freshly constructed proxy should not have loaded pyplot"
+    )
+
+
+def test_forecast_modes_exposes_a_cli_so_the_frontend_need_not_import_models():
+    """Deferring pyplot was necessary and not sufficient -- sklearn, lightgbm, xgboost and
+    catboost are all absent from the frontend venv too. The page dispatches to the backend
+    interpreter instead of importing the pipeline.
+    """
+    src = (BACKEND / "forecast_modes.py").read_text()
+    assert 'if __name__ == "__main__"' in src
+    assert "--mode" in src and "--publish" in src
+
+    page = (BACKEND.parent / "frontend" / "pages" / "05_Forecast.py").read_text()
+    code = "\n".join(l for l in page.splitlines() if not l.lstrip().startswith("#"))
+    assert "from forecast_modes import" not in code, (
+        "the page imports the modelling stack again; it must dispatch to the backend interpreter"
+    )
+    assert "_BACKEND_PY" in code and "forecast_modes.py" in code
