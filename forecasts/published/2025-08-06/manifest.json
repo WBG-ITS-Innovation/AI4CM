@@ -1,0 +1,77 @@
+{
+  "issue_date": "2025-08-06",
+  "targets": [
+    "Expenditure",
+    "Revenues",
+    "State budget balance"
+  ],
+  "horizons": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "target_dates": [
+    "2025-08-07",
+    "2025-08-08",
+    "2025-08-11",
+    "2025-08-12",
+    "2025-08-13"
+  ],
+  "recipes": [
+    {
+      "target": "Revenues",
+      "recipe_id": "revenues-lgbm-l1-ws3-v1",
+      "point_model": "LightGBM_L1",
+      "interval_model": "GBQuantile",
+      "fiscal_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags",
+        "E_rolling"
+      ],
+      "exog_blocks": [],
+      "target_transform": "ratio",
+      "scaling": "ratio-to-trailing-level, 63-business-day causal median, divisor taken at the forecast ORIGIN (WS4 winner)"
+    },
+    {
+      "target": "Expenditure",
+      "recipe_id": "expenditure-lgbm-l1-ws3-v1",
+      "point_model": "LightGBM_L1",
+      "interval_model": "GBQuantile",
+      "fiscal_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags"
+      ],
+      "exog_blocks": [],
+      "target_transform": "raw",
+      "scaling": "raw (WS4 compared raw / asinh / ratio-to-trailing-level; raw won)"
+    },
+    {
+      "target": "State budget balance",
+      "recipe_id": "statebudgetbalance-histgbdt-l1-ws5-v1",
+      "point_model": "HistGBDT_L1",
+      "interval_model": "GBQuantile",
+      "fiscal_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags"
+      ],
+      "exog_blocks": [
+        "cross"
+      ],
+      "target_transform": "raw",
+      "scaling": "raw (WS4 compared raw / asinh / ratio-to-trailing-level; raw won); level target modelled as a change"
+    }
+  ],
+  "data_sha_at_issue": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "git_sha_at_issue": "90213a26979182b1dcee0263075ea19bbf2e8b54",
+  "calendar_version": "4b480eae9c8f",
+  "test_window_touched": false,
+  "note": "Immutable record of a forecast issued before its truth existed. Scored by backend/published_forecasts.score_published() once truth arrives."
+}

@@ -1,0 +1,98 @@
+{
+  "run_kind": "forward_forecast",
+  "generated_at_utc": "2026-08-05T09:10:12.136613+00:00",
+  "data": {
+    "name": "master_daily_clean_treasury.csv",
+    "sha256": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+    "n_rows": 3867,
+    "latest_data_date": "2025-08-06"
+  },
+  "code": {
+    "git_sha": "90213a26979182b1dcee0263075ea19bbf2e8b54",
+    "git_branch": "model/excellence",
+    "git_dirty": true,
+    "git_dirty_files": 20
+  },
+  "environment": {
+    "python": "3.13.11",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "numpy": "2.4.4",
+      "pandas": "3.0.2",
+      "scikit-learn": "1.8.0",
+      "statsmodels": "0.14.6",
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "torch": "2.11.0"
+    }
+  },
+  "calendar_version": "4b480eae9c8f",
+  "quantiles": [
+    0.1,
+    0.5,
+    0.9
+  ],
+  "horizons": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "recipes": [
+    {
+      "target": "Revenues",
+      "recipe_id": "revenues-lgbm-l1-ws3-v1",
+      "point_model": "LightGBM_L1",
+      "interval_model": "GBQuantile",
+      "fiscal_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags",
+        "E_rolling"
+      ],
+      "exog_blocks": [],
+      "target_transform": "ratio",
+      "scaling": "ratio-to-trailing-level, 63-business-day causal median, divisor taken at the forecast ORIGIN (WS4 winner)"
+    },
+    {
+      "target": "Expenditure",
+      "recipe_id": "expenditure-lgbm-l1-ws3-v1",
+      "point_model": "LightGBM_L1",
+      "interval_model": "GBQuantile",
+      "fiscal_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags"
+      ],
+      "exog_blocks": [],
+      "target_transform": "raw",
+      "scaling": "raw (WS4 compared raw / asinh / ratio-to-trailing-level; raw won)"
+    },
+    {
+      "target": "State budget balance",
+      "recipe_id": "statebudgetbalance-histgbdt-l1-ws5-v1",
+      "point_model": "HistGBDT_L1",
+      "interval_model": "GBQuantile",
+      "fiscal_groups": [
+        "A_deadline",
+        "B_holiday",
+        "C_month",
+        "D_aligned_lags"
+      ],
+      "exog_blocks": [
+        "cross"
+      ],
+      "target_transform": "raw",
+      "scaling": "raw (WS4 compared raw / asinh / ratio-to-trailing-level; raw won); level target modelled as a change"
+    }
+  ],
+  "test_window_touched": false,
+  "notes": [
+    "Forward forecast: every target date is strictly beyond the last date in the data, so no truth was read and no accuracy was computed here.",
+    "Quality gate verdicts are carried from the DEV (2024) credentials run and linked by recipe_id. The 2025 holdout remains sealed.",
+    "Target scaling is raw; workstream 4 (scaling comparison) has not run."
+  ]
+}
