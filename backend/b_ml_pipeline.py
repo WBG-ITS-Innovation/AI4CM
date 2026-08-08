@@ -29,7 +29,13 @@ from typing import Sequence, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+# pyplot is deferred: importing this module must not require a plotting stack. The Streamlit
+# frontend imports it to run a forecast and its venv has no matplotlib (it renders with Plotly),
+# so a module-level import crashed the forecast path. See backend/lazy_plot.py.
+try:
+    from lazy_plot import plt
+except ImportError:  # pragma: no cover - package-relative entry points
+    from backend.lazy_plot import plt
 
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, HistGradientBoostingRegressor
@@ -50,6 +56,14 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 
+# X9: the canonical gate writer. Imported at module level so it is unambiguously in scope
+# wherever the integrity report is finalised, rather than relying on a nested try-block import.
+try:
+    from forecast_integrity import write_gate
+except Exception:  # pragma: no cover - resolved via the package path in some entry points
+    from backend.forecast_integrity import write_gate
+
+
 # Optional libraries
 try:
     from xgboost import XGBRegressor  # type: ignore
@@ -62,6 +76,16 @@ try:
     HAVE_LGBM = True
 except Exception:
     HAVE_LGBM = False
+
+# CatBoost is optional and NOT currently installed in the project venv, so the two
+# CatBoost entries below do not register. The code is here so adding the dependency is a
+# one-line change rather than a code change -- but nothing has been measured with it, and
+# no result anywhere in this repository involves CatBoost.
+try:
+    from catboost import CatBoostRegressor  # type: ignore
+    HAVE_CATBOOST = True
+except Exception:
+    HAVE_CATBOOST = False
 
 
 # =========================
@@ -409,6 +433,20 @@ def available_models() -> Dict[str, object]:
         )
         models["LightGBM"] = LGBMRegressor(**_lgbm)
         models["LightGBM_L1"] = LGBMRegressor(objective="l1", **_lgbm)
+    if HAVE_CATBOOST:
+        # Same discipline as the other L1 variants: hyperparameters are principled
+        # defaults, and the L1 entry differs from nothing else because there is no
+        # squared-error CatBoost twin to compare against yet. UNABLATED -- these have
+        # not been run on any fold, so they must not be promoted or quoted until they
+        # have been through the same TRAIN-folds-then-one-DEV-confirmation protocol as
+        # workstream 1.
+        _cb = dict(iterations=800, learning_rate=0.05, depth=6, l2_leaf_reg=3.0,
+                   random_seed=0, verbose=False, allow_writing_files=False)
+        models["CatBoost_L1"] = CatBoostRegressor(loss_function="MAE", **_cb)
+        # Quantile loss at alpha=0.5 is absolute error, so this is the interval-capable
+        # sibling rather than a different model class.
+        models["CatBoost_Quantile"] = CatBoostRegressor(
+            loss_function="Quantile:alpha=0.5", **_cb)
     return models
 
 
@@ -834,6 +872,11 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 val_mae_fold = float(np.mean(abs_residuals))
                 train_mae_fold = float(np.mean(np.abs(y_tr_fit - estimator.predict(X_tr_fit))))
                 conformal_radius = float(np.quantile(abs_residuals, cfg.nominal_pi))
+                # C8: the advertised level is a property of the published interval, so it is
+                # recorded as DATA. Without it a consumer has y_lo/y_hi with no idea what
+                # coverage they claim, and scoring them against a guessed level produces a
+                # confident verdict about nothing (the lab rendered "not reported" instead).
+                _nominal_pi_used = float(cfg.nominal_pi)
                 ratio = val_mae_fold / train_mae_fold if train_mae_fold > 0 else np.nan
                 print(f"[pipeline] {model_name} fold {fold_idx}: "
                       f"train_MAE={train_mae_fold:.2f}, val_MAE={val_mae_fold:.2f}, "
@@ -1348,17 +1391,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     print(f"[WARN] Run status: FAILED_QUALITY (outputs still written)")
                     # ✅ FIX 3: Store status but don't raise - outputs are still valid
                     integrity_report["run_status"] = "FAILED_QUALITY"
-                    integrity_report["quality_gate_failed"] = True
+                    write_gate(integrity_report, False)   # X9: canonical + legacy, kept in sync
                     # Save updated report (but don't abort)
                     with open(out_root / "artifacts" / "integrity_report.json", "w", encoding="utf-8") as f:
                         json.dump(integrity_report, f, indent=2, default=str)
                 else:
                     integrity_report["run_status"] = "SUCCESS"
-                    integrity_report["quality_gate_failed"] = False
+                    write_gate(integrity_report, True)    # X9: canonical + legacy, kept in sync
                     print(f"[OK] Quality gate passed: skill={skill_pct:.2f}% >= {_QUALITY_GATE_SKILL_PCT}%")
             else:
                 integrity_report["run_status"] = "SUCCESS" if not integrity_report.get("lag_warning", False) else "WARNING"
-                integrity_report["quality_gate_failed"] = False
+                write_gate(integrity_report, True)    # X9: canonical + legacy, kept in sync
             
             # Save final report with run_status
             with open(out_root / "artifacts" / "integrity_report.json", "w", encoding="utf-8") as f:

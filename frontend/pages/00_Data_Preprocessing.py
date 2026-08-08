@@ -16,8 +16,13 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
-st.set_page_config(page_title="Data Pre-processing • Georgia Treasury", layout="wide")
+from ui_styles import inject_design_system  # presentation only
+from ui_styles import render_app_header  # presentation only
+from ui_styles import plotly_chrome  # presentation only
+st.set_page_config(page_title="Data · Treasury Forecast", page_icon="🧹", layout="wide")
 inject_global_css()
+inject_design_system()
+render_app_header("Data pre-processing", "Build and inspect the canonical daily Treasury file")
 st.markdown(
     page_header("🧺 Data Pre-processing",
                 "Convert raw Treasury files into standardized forecasting datasets"),

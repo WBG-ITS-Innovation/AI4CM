@@ -32,6 +32,8 @@ class Config:
     eval_end: Optional[str] = None
     # Workstream 3 fiscal-calendar feature groups; None == pre-WS3 feature set.
     fiscal_groups: Optional[Tuple[str, ...]] = None
+    # Workstream 2: tuned LightGBM quantile hyperparameters. None == library defaults.
+    lgbm_params: Optional[Dict] = None
     model_filter: Optional[str] = None   # "GBQuantile", "ResidualRF" | None => all
     quantiles: Tuple[float, ...] = (0.10, 0.50, 0.90)
     lags_daily: Tuple[int, ...] = (1, 5, 20)
@@ -295,6 +297,22 @@ def _plot_quantiles(df_fold: pd.DataFrame, out_dir: str, title: str) -> None:
 
 # ---------- models ----------
 
+def registry_models() -> Dict[str, str]:
+    """The quantile models this family offers, as {name: description}.
+
+    Single source of truth so a model cannot be added to the run loop without appearing in
+    the reports and tests that enumerate the family.
+    """
+    return {
+        "GBQuantile": "GradientBoosting (quantile loss)",
+        "ResidualRF": "RandomForest + residual quantiles (baseline)",
+        # Workstream 2 port. Crossing-safe by construction and early-stopped with an h-row
+        # gap, so the stopping decision is not made against rows whose targets fall inside
+        # the validation block. See backend/tuning.py.
+        "LGBMQuantile": "LightGBM (quantile loss, crossing-safe, h-gapped early stopping)",
+    }
+
+
 def _fit_gb_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
     # Gradient Boosting quantile (pinball loss). Separate model per quantile.
     model = GradientBoostingRegressor(loss="quantile", alpha=q, random_state=42)
@@ -461,10 +479,7 @@ def run_pipeline(CONFIG: Config) -> None:
         raise ValueError("Unable to create CV folds — series too short for requested horizon/folds.")
 
     # Model registry (you can add more later without touching the bridge/UI)
-    registry = {
-        "GBQuantile": "GradientBoosting (quantile loss)",
-        "ResidualRF": "RandomForest + residual quantiles (baseline)"
-    }
+    registry = registry_models()
     chosen = list(registry.keys()) if not CONFIG.model_filter or CONFIG.model_filter.strip() == "" else [CONFIG.model_filter]
     chosen = [m for m in chosen if m in registry]
 
@@ -496,6 +511,17 @@ def run_pipeline(CONFIG: Config) -> None:
                     q_preds[q] = _fit_gb_quantile(X_tr, y_tr, X_te, q)
             elif model_name == "ResidualRF":
                 q_preds = _fit_residual_rf_quantiles(X_tr, y_tr, X_te, CONFIG.quantiles)
+            elif model_name == "LGBMQuantile":
+                from tuning import fit_quantiles
+                q_preds, n_cross = fit_quantiles(
+                    "LGBMQuantile", X_tr, y_tr, X_te,
+                    dict(CONFIG.lgbm_params or {}), CONFIG.horizon,
+                    quantiles=CONFIG.quantiles)
+                if n_cross:
+                    # Reported, never swallowed: frequent crossing means the model is
+                    # misconfigured, and silently sorting would hide that.
+                    print(f"[quantile] LGBMQuantile fold {fold_ix}: repaired {n_cross} "
+                          f"crossed row(s) of {len(X_te)}")
             else:
                 raise ValueError(f"Unknown model '{model_name}'")
 

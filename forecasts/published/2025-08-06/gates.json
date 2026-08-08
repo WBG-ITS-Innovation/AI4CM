@@ -1,0 +1,85 @@
+{
+  "revenues-lgbm-l1-ws3-v1": {
+    "target": "Revenues",
+    "gates": {
+      "signal": {
+        "passed": false,
+        "name": "signal (shuffled-target control)",
+        "measured": 1.2255,
+        "threshold": 1.5,
+        "reason_plain": "Shuffling the historical answers barely worsened this model's error (x1.23, we require x1.50). That means the inputs carry little information about what happens next, so the model is tracking the typical level rather than anticipating events.",
+        "corroboration": "Confirmed with two further instruments (a decision tree and a random forest) in reports/sentinel_probe_study.md; all three agree."
+      },
+      "overfitting": {
+        "passed": true,
+        "name": "overfitting cap",
+        "measured": "< 3.0",
+        "threshold": 3.0,
+        "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+      },
+      "vs_ruler": {
+        "passed": true,
+        "name": "beats the simple benchmark",
+        "measured": "55.92%",
+        "threshold": "> 0%",
+        "reason_plain": "Errors are 55.9% smaller than simply repeating the value from five business days earlier."
+      }
+    },
+    "status": "candidate -- pre-tuning"
+  },
+  "expenditure-lgbm-l1-ws3-v1": {
+    "target": "Expenditure",
+    "gates": {
+      "signal": {
+        "passed": false,
+        "name": "signal (shuffled-target control)",
+        "measured": 1.0882,
+        "threshold": 1.5,
+        "reason_plain": "Shuffling the historical answers barely worsened this model's error (x1.09, we require x1.50). That means the inputs carry little information about what happens next, so the model is tracking the typical level rather than anticipating events.",
+        "corroboration": "Confirmed with two further instruments (a decision tree and a random forest) in reports/sentinel_probe_study.md; all three agree."
+      },
+      "overfitting": {
+        "passed": true,
+        "name": "overfitting cap",
+        "measured": "< 3.0",
+        "threshold": 3.0,
+        "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+      },
+      "vs_ruler": {
+        "passed": true,
+        "name": "beats the simple benchmark",
+        "measured": "29.42%",
+        "threshold": "> 0%",
+        "reason_plain": "Errors are 29.4% smaller than simply repeating the value from five business days earlier."
+      }
+    },
+    "status": "candidate -- pre-tuning"
+  },
+  "statebudgetbalance-histgbdt-l1-ws5-v1": {
+    "target": "State budget balance",
+    "gates": {
+      "signal": {
+        "passed": true,
+        "name": "signal (shuffled-target control)",
+        "measured": 7.0058,
+        "threshold": 1.5,
+        "reason_plain": "Shuffling the historical answers made the error 7.0 times worse, so the inputs genuinely inform this target."
+      },
+      "overfitting": {
+        "passed": true,
+        "name": "overfitting cap",
+        "measured": "< 3.0",
+        "threshold": 3.0,
+        "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+      },
+      "vs_ruler": {
+        "passed": true,
+        "name": "beats the simple benchmark",
+        "measured": "20.01%",
+        "threshold": "> 0%",
+        "reason_plain": "Errors are 20.0% smaller than simply repeating the value from five business days earlier."
+      }
+    },
+    "status": "candidate -- pre-tuning"
+  }
+}

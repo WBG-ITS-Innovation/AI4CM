@@ -17,8 +17,12 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
-st.set_page_config(page_title="Compare Runs", layout="wide")
+from ui_styles import inject_design_system, plotly_chrome  # presentation only
+from ui_styles import render_app_header  # presentation only
+st.set_page_config(page_title="Compare · Treasury Forecast", page_icon="⚖️", layout="wide")
 inject_global_css()
+inject_design_system()
+render_app_header("Compare runs", "Put several runs side by side on the same target and horizon")
 st.markdown(
     page_header("📊 Compare Runs",
                 "Select 2-6 runs to compare forecasts, metrics, and find the best model"),
@@ -156,6 +160,7 @@ with tab_overlay:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
         xaxis_title="Date", yaxis_title=tgt,
     )
+    plotly_chrome(fig)
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
 # -------------------- Tab 2: Metric Comparison --------------------
@@ -211,6 +216,7 @@ with tab_metrics:
                 color_discrete_sequence=px.colors.qualitative.Plotly,
             )
             fig_m.update_layout(showlegend=False)
+            plotly_chrome(fig_m, showlegend=False)
             st.plotly_chart(fig_m, use_container_width=True, config={"displaylogo": False})
     else:
         st.info("No metrics available for the selected target/horizon combination.")
@@ -333,6 +339,7 @@ with tab_intervals:
         fig_cov.add_hline(y=0.90, line_dash="dash", line_color="red",
                           annotation_text="Target 90%")
         fig_cov.update_yaxes(range=[0, 1.05])
+        plotly_chrome(fig_cov)
         st.plotly_chart(fig_cov, use_container_width=True, config={"displaylogo": False})
 
         # Width chart
@@ -341,6 +348,7 @@ with tab_intervals:
             barmode="group", title="Average PI Width by Run (narrower = more precise)",
             height=380,
         )
+        plotly_chrome(fig_w)
         st.plotly_chart(fig_w, use_container_width=True, config={"displaylogo": False})
     else:
         st.info(

@@ -14,16 +14,27 @@ from backend_consts import QUALITY_GATE_SKILL_PCT
 from recommender import recommend_model, format_scorecard_markdown
 from ui_styles import (
     inject_global_css, metric_card, status_badge, section_header,
-    callout_box, grade_badge, page_header, info_tip, glossary_table,
+    callout_box, page_header, info_tip, glossary_table,
     COLORS,
+    inject_design_system, ds_metric, gate_badge_tri, reading_this_chart,
+    empty_state, plotly_layout, plotly_chrome, HELP, HOVER_BAR_PCT,
 )
+from format_gel import (NOT_REPORTED, NOT_VERIFIED, UNIT_LABEL, gel_millions,
+                        is_missing, number, pct, pct_points)
+from intervals import (calibration_verdict, coverage_by_model, coverage_by_tercile,
+                       detect_intervals, reliability_curve)
 
 APPROOT = Path(__file__).resolve().parents[1]
-RUNS_DIR = APPROOT / "runs"
+REPOROOT_BACKEND = APPROOT.parent / "backend"
+from paths import runs_dir
+RUNS_DIR = runs_dir()
 
-st.set_page_config(page_title="Dashboard — AI4CM", layout="wide")
+from ui_styles import render_app_header  # presentation only
+st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
 inject_global_css()
+inject_design_system()
 
+render_app_header("Dashboard", "Evaluate one run: accuracy, intervals and integrity checks")
 # ──────────────────────────────────────────────────────────────────────
 # Caching helpers
 # ──────────────────────────────────────────────────────────────────────
@@ -245,7 +256,15 @@ if _integ:
     _run_status = _integ.get("run_status", "UNKNOWN")
     _skill = _integ.get("skill_pct", None)
     _qg = _integ.get("quality_gate_passed", None)
-    _alignment_ok = _integ.get("alignment_ok", True)
+    # C_DL writes "alignment_ok": True as a LITERAL (c_dl_pipeline.py:958) rather than
+    # performing the check, and B_ML only sets it when the check ran. Defaulting a missing
+    # key to True converts "never checked" into "passed", which is the exact inversion this
+    # lab must not make. Missing -> None -> "never verified".
+    _alignment_ok = _integ.get("alignment_ok", None)
+    _alignment_verified = (_integ.get("pipeline", "") != "DL"
+                           and _integ.get("n_misaligned", None) is not None)
+    if not _alignment_verified:
+        _alignment_ok = None
 
     if _run_status == "SUCCESS" and _qg:
         # Quality gate PASSED — trust the forecast
@@ -271,7 +290,7 @@ if _integ:
         _verdict_icon = "❌"
         _verdict_title = "Error — Integrity Check Failed"
         _verdict_detail = f"Error: {_integ.get('error', 'unknown')}"
-    elif not _alignment_ok:
+    elif _alignment_ok is False:
         _verdict_status = "fail"
         _verdict_icon = "🔴"
         _verdict_title = "Alignment Error Detected"
@@ -309,85 +328,131 @@ else:
 # ── Scorecard cards row ──────────────────────────────────────────────
 st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# KPI STRIP — only what the project actually measures, sourced from artifacts
+#
+# What was removed and why:
+#   * The LETTER GRADE (A–F / "POOR"). It was a composite with no logged definition, so it could
+#     not be traced to anything and it compressed six independent judgements into one letter that
+#     hid all of them. A model can be accurate and have an unusable band; a grade cannot say that.
+#   * "Monthly Acc (within 10% tol)" from the strip. Its formula IS traceable
+#     (b_ml_pipeline.py:517) so it survives in the detail table WITH the formula stated, but it is
+#     not one of the six things this project measures and gates on.
+#   * R-Squared from the strip — a real metric, kept in the detail table, but not one of the six.
+#   * Every emoji from a metric label.
+#
+# Everything below reads from the run's integrity_report.json and metrics_long.csv. Where a metric
+# was never written, it renders "not reported" rather than a zero or an em dash.
+# ══════════════════════════════════════════════════════════════════════════════
+
 _mae_v = _sc.get("MAE", np.nan)
 _r2_v = _sc.get("R2", np.nan)
-_smape_v = _sc.get("sMAPE", np.nan)
-_pi_cov = _sc.get("PI Coverage", np.nan)
-_monthly_acc = _sc.get("Monthly Accuracy (10% tol)", np.nan)
 
-# Determine R² status (negative R² is a red flag)
-_r2_status = "neutral"
-if not np.isnan(_r2_v):
-    if _r2_v < 0:
-        _r2_status = "fail"
-    elif _r2_v >= 0.85:
-        _r2_status = "trust"
-    elif _r2_v >= 0.50:
-        _r2_status = "caution"
-    else:
-        _r2_status = "fail"
+# ── read the interval nominal AS DATA, from the column that names it ─────────────────
+# metrics_long.csv writes "PI_coverage@90" / "PI_width@90": the advertised level is in the column
+# NAME. That is the same principle intervals.py uses for yhat_p10/p90 and it is why the dashboard
+# no longer assumes 90% — if the pipeline changes the level, the column name changes with it.
+_pi_cov = np.nan
+_pi_nominal = None
+_pi_source = "no interval columns in metrics_long.csv"
+if metr is not None and not metr.empty:
+    import re as _re
+    _cov_cols = [c for c in metr.columns if _re.fullmatch(r"PI_coverage@(\d{1,2})", str(c))]
+    if _cov_cols:
+        _c = _cov_cols[0]
+        _pi_nominal = int(_re.fullmatch(r"PI_coverage@(\d{1,2})", _c).group(1)) / 100.0
+        _mf = metr
+        if _best and "model" in _mf.columns and (_mf["model"] == _best).any():
+            _mf = _mf[_mf["model"] == _best]
+        _vals = pd.to_numeric(_mf[_c], errors="coerce").dropna()
+        if len(_vals):
+            _pi_cov = float(_vals.mean())
+        _pi_source = f"read from the column name `{_c}`"
 
-g1, g2, g3, g4, g5, g6 = st.columns(6)
+# ── MASE: measured, but not written to these artifacts ──────────────────────────────
+# metrics_long.csv carries MAE, RMSE, sMAPE, MAPE, R2 and the PI columns — no MASE. It IS logged
+# for registry champions in experiments/log.csv, so this renders "not reported" here rather than
+# being recomputed on the page, which would produce a second implementation of a published number.
+_mase_v = np.nan
+if metr is not None and not metr.empty:
+    for _cand in ("MASE", "mase"):
+        if _cand in metr.columns:
+            _mf2 = metr
+            if _best and "model" in _mf2.columns and (_mf2["model"] == _best).any():
+                _mf2 = _mf2[_mf2["model"] == _best]
+            _mv = pd.to_numeric(_mf2[_cand], errors="coerce").dropna()
+            if len(_mv):
+                _mase_v = float(_mv.mean())
+            break
 
-with g1:
-    st.markdown(grade_badge(_grade), unsafe_allow_html=True)
+_mae_persist = _integ.get("mae_persistence", np.nan) if _integ else np.nan
+_skill_pct = _integ.get("skill_pct", np.nan) if _integ else np.nan
+_sent = _integ.get("shuffled_to_normal_ratio", np.nan) if _integ else np.nan
+_SENTINEL_THRESHOLD = 1.50
 
-with g2:
-    _best_display = _best or "N/A"
-    _best_delta = ""
-    if _quality_gate_failed:
-        _best_delta = "Not useful — below baseline"
-    st.markdown(
-        metric_card("Best Model", _best_display, delta=_best_delta,
-                     icon="🏆" if not _quality_gate_failed else "⚠️",
-                     status=_grade_status),
-        unsafe_allow_html=True,
-    )
+# Gate: the single canonical reader, so a run that wrote only the legacy inverted key is read
+# correctly instead of appearing to pass by absence.
+_gate_state = None
+if _integ:
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(REPOROOT_BACKEND))
+        from forecast_integrity import read_gate as _read_gate
+        _gate_state = _read_gate(_integ)
+    except Exception:
+        _gate_state = _integ.get("quality_gate_passed", None)
 
-with g3:
-    _mae_delta = ""
-    if _integ and not np.isnan(_mae_v):
-        _mae_persist = _integ.get("mae_persistence", np.nan)
-        if not np.isnan(_mae_persist) and _mae_persist > 0:
-            _skill_v = (1 - _mae_v / _mae_persist) * 100
-            _mae_delta = f"Skill: {_skill_v:.1f}%"
-    st.markdown(
-        metric_card("MAE", _fmt_large(_mae_v), delta=_mae_delta,
-                     icon="📐", status=_grade_status),
-        unsafe_allow_html=True,
-    )
+k1, k2, k3, k4, k5, k6 = st.columns(6)
 
-with g4:
-    _r2_display = f"{_r2_v:.4f}" if not np.isnan(_r2_v) else "N/A"
-    _r2_delta = ""
-    if not np.isnan(_r2_v) and _r2_v < 0:
-        _r2_delta = "Worse than mean"
-    st.markdown(
-        metric_card("R-Squared", _r2_display, delta=_r2_delta,
-                     icon="📊", status=_r2_status),
-        unsafe_allow_html=True,
-    )
+with k1:
+    st.metric(f"Model MAE ({UNIT_LABEL})", gel_millions(_mae_v),
+              help=("Average absolute error of the best model on this run's evaluation window, in "
+                    "millions of lari. Lower is better. Read from the run's own metrics, not "
+                    "recomputed here."))
+with k2:
+    st.metric(f"Benchmark MAE ({UNIT_LABEL})", gel_millions(_mae_persist),
+              help=HELP["ruler"])
+with k3:
+    st.metric("Skill vs benchmark",
+              pct_points(_skill_pct) if not is_missing(_skill_pct) else NOT_REPORTED,
+              help=HELP["skill"])
+with k4:
+    st.metric("Scaled error (MASE)", number(_mase_v),
+              help=(HELP["mase"] + "  This run's artifacts do not record MASE, so it shows as "
+                    "not reported; it is logged for the registry champions in "
+                    "experiments/log.csv."
+                    if is_missing(_mase_v) else HELP["mase"]))
+with k5:
+    _sent_txt = (f"{float(_sent):.2f} / {_SENTINEL_THRESHOLD:.2f} needed"
+                 if not is_missing(_sent) else NOT_REPORTED)
+    st.metric("Signal check", _sent_txt, help=HELP["sentinel"])
+with k6:
+    _cov_txt = (f"{_pi_cov:.0%} of {_pi_nominal:.0%}"
+                if not is_missing(_pi_cov) and _pi_nominal is not None
+                else (pct(_pi_cov) if not is_missing(_pi_cov) else NOT_REPORTED))
+    st.metric("Range coverage", _cov_txt,
+              help=(HELP["coverage"] + f"  Advertised level {_pi_source}."
+                    if _pi_nominal is not None
+                    else HELP["coverage"] + "  " + HELP["nominal"]))
 
-with g5:
-    _pi_display = f"{_pi_cov:.0%}" if not np.isnan(_pi_cov) else "N/A"
-    _pi_status = "neutral"
-    if not np.isnan(_pi_cov):
-        _pi_status = "trust" if _pi_cov >= 0.85 else ("caution" if _pi_cov >= 0.70 else "fail")
-    st.markdown(
-        metric_card("PI Coverage", _pi_display, icon="🎯", status=_pi_status),
-        unsafe_allow_html=True,
-    )
-
-with g6:
-    _ma_display = f"{_monthly_acc:.0%}" if not np.isnan(_monthly_acc) else "N/A"
-    _ma_status = "neutral"
-    if not np.isnan(_monthly_acc):
-        _ma_status = "trust" if _monthly_acc >= 0.80 else ("caution" if _monthly_acc >= 0.50 else "fail")
-    st.markdown(
-        metric_card("Monthly Acc", _ma_display, delta="within 10% tol",
-                     icon="📅", status=_ma_status),
-        unsafe_allow_html=True,
-    )
+# ── gate status and the best model, on their own row so neither is a number ──────────
+_gcol1, _gcol2 = st.columns([1, 2])
+with _gcol1:
+    st.markdown(gate_badge_tri(_gate_state, label="Quality gate"), unsafe_allow_html=True)
+with _gcol2:
+    _bm = _best or NOT_REPORTED
+    st.markdown(f"**Best model:** `{_bm}`"
+                + ("  ·  selected after the overfitting gate" if _gate_state is not None else ""))
+if _gate_state is None:
+    st.caption("No gate verdict is recorded in this run's artifact, so it reads as never "
+               "verified. That is not the same as passing.")
+elif _gate_state is False:
+    st.caption("This run failed its quality gate. Treat its figures as diagnostic, not as a "
+               "usable forecast.")
+if not is_missing(_sent) and float(_sent) < _SENTINEL_THRESHOLD:
+    st.caption(f"The signal check is below {_SENTINEL_THRESHOLD:.2f}, so the skill figure above "
+               f"reflects tracking a typical level rather than anticipating individual days. "
+               f"Both numbers only mean something together.")
 
 # ── Scorecard detail table + warnings ────────────────────────────────
 st.markdown('<div class="spacer-md"></div>', unsafe_allow_html=True)
@@ -402,8 +467,8 @@ with st.expander("Detailed Scorecard & Recommendations", expanded=False):
             "MAPE": "Mean Absolute Percentage Error — percentage-based error",
             "sMAPE": "Symmetric MAPE — handles near-zero actuals better",
             "R2": "R-Squared — fraction of variance explained (1.0 = perfect)",
-            "Monthly Accuracy (10% tol)": "Share of months where forecast is within 10% of actual",
-            "PI Coverage": "Share of actuals falling inside prediction intervals (target: 90%)",
+            "Monthly Accuracy (10% tol)": ("Share of MONTHS whose forecast total is within 10% of the actual total. Formula (b_ml_pipeline.py:517): mean(|monthly_actual - monthly_pred| / max(|monthly_actual|, 1e-9) <= 0.10). A composite, kept for continuity and not gated on."),
+            "PI Coverage": HELP["coverage"],
             "PI Avg Width": "Average width of prediction intervals (narrower = more precise)",
             "N predictions": "Number of out-of-sample prediction points used",
         }
@@ -489,9 +554,13 @@ _freq = None
 if gran == "Weekly (Fri)": _freq = "W-FRI"
 elif gran == "Monthly (EOM)": _freq = "ME"
 
-# PI detection
-has_pi_cols = {"y_lo","y_hi"}.issubset(set(df_t.columns))
-has_pi = has_pi_cols and df_t["y_lo"].notna().any() and df_t["y_hi"].notna().any()
+# PI detection.
+# Was: {"y_lo","y_hi"}.issubset(...) with a hard-coded 90% target downstream. That made
+# E_QUANTILE (yhat_p10/p50/p90) invisible and scored a correct 80% band as broken. The
+# advertised level is now read from the artifact -- see frontend/intervals.py.
+_ispec = detect_intervals(df_t)
+has_pi_cols = _ispec is not None
+has_pi = bool(has_pi_cols and df_t[_ispec.lo].notna().any() and df_t[_ispec.hi].notna().any())
 if has_pi_cols and not has_pi:
     st.markdown(
         callout_box(
@@ -510,8 +579,8 @@ if has_pi_cols and not has_pi:
 st.markdown('<div class="spacer-lg"></div>', unsafe_allow_html=True)
 
 tab_overlay, tab_leader, tab_errors, tab_intervals, tab_integrity, tab_feat_imp, tab_ensemble, tab_downloads = st.tabs(
-    ["📈 Overlay", "🏆 Leaderboard", "📉 Errors", "🎯 Intervals",
-     "🔒 Integrity", "🔍 Features", "🔗 Ensemble", "📥 Downloads"]
+    ["Overlay", "Leaderboard", "Errors", "Intervals",
+     "Integrity", "Features", "Ensemble", "Downloads"]
 )
 
 # ── Tab: Overlay ─────────────────────────────────────────────────────
@@ -613,6 +682,7 @@ with tab_overlay:
         yaxis=dict(gridcolor="#f1f5f9", showgrid=True, tickformat=","),
         font=dict(family="Inter, -apple-system, sans-serif"),
     )
+    plotly_chrome(fig)
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
     # Small multiples
@@ -628,6 +698,7 @@ with tab_overlay:
                     title=f"{m0} — predictions by horizon",
                 )
                 grid.update_layout(font=dict(family="Inter, -apple-system, sans-serif"))
+                plotly_chrome(grid)
                 st.plotly_chart(grid, use_container_width=True, config={"displaylogo": False})
             else:
                 st.caption("Only one horizon available — nothing to compare.")
@@ -667,23 +738,65 @@ with tab_leader:
                 metric_choice, ascending=ascending
             )
 
-            # Styled bar chart
-            color_scale = "Teal" if ascending else "Teal_r"
-            fig_lb = px.bar(
-                agg, x="model", y=metric_choice,
-                title=f"Average {metric_choice} across folds",
-                height=400,
-                color=metric_choice,
-                color_continuous_scale=color_scale,
-            )
-            fig_lb.update_layout(
-                showlegend=False,
-                plot_bgcolor="white",
-                xaxis=dict(gridcolor="#f1f5f9"),
-                yaxis=dict(gridcolor="#f1f5f9", tickformat=","),
-                font=dict(family="Inter, -apple-system, sans-serif"),
-            )
+            # ── Overfit-excluded models must be visible, not silently ranked ──────
+            # The integrity report records which models the M-4 capacity gate excluded from
+            # best-model selection (overfit_excluded_models). This page previously ignored
+            # that field entirely, so an excluded model could sit at the top of the
+            # leaderboard looking like the winner.
+            _excluded = set(_integ.get("overfit_excluded_models", []) or [])
+            _ratios = _integ.get("overfit_ratios", {}) or {}
+            _gate_r = _integ.get("overfit_gate_ratio", None)
+            agg["_excluded"] = agg["model"].isin(_excluded)
+            agg["_ratio"] = agg["model"].map(lambda m: _ratios.get(m, np.nan))
+
+            _bar_cols = [COLORS["fail"] if ex else COLORS["info"]
+                         for ex in agg["_excluded"]]
+            fig_lb = go.Figure()
+            fig_lb.add_trace(go.Bar(
+                x=agg["model"], y=agg[metric_choice], marker_color=_bar_cols,
+                name=metric_choice,
+                customdata=np.stack([
+                    agg["_ratio"].fillna(-1.0),
+                    agg["_excluded"].astype(int)], axis=-1),
+                hovertemplate=("<b>%{x}</b><br>" + metric_choice + ": %{y:,.4g}"
+                               "<br>Overfit ratio: %{customdata[0]:.2f}"
+                               "<extra></extra>")))
+            plotly_layout(fig_lb, ytitle=metric_choice, legend_bottom=False, height=400)
+            fig_lb.update_layout(title=f"Average {metric_choice} across folds")
+            plotly_chrome(fig_lb)
             st.plotly_chart(fig_lb, use_container_width=True, config={"displaylogo": False})
+            if _excluded:
+                st.markdown(reading_this_chart(
+                    f"Red bars are models the overfitting gate <b>excluded from selection</b>: "
+                    f"{', '.join(sorted(_excluded))}. They appear here for comparison only. A "
+                    f"model is excluded when its validation error exceeds its training error "
+                    f"by more than {_gate_r if _gate_r is not None else 'the gate'}x, which "
+                    f"means it memorised the history rather than learned from it — a low bar "
+                    f"on this chart is not a good model."), unsafe_allow_html=True)
+            else:
+                st.markdown(reading_this_chart(
+                    "Lower is better for error metrics. No model was excluded by the "
+                    "overfitting gate in this run."), unsafe_allow_html=True)
+
+            # ── Best model must agree with the integrity report ───────────────────
+            # The recommender picks by lowest MAE; the integrity report's best_model is the
+            # one that also passed the overfit gate. Where they differ the gated choice is
+            # authoritative, and the disagreement is shown rather than resolved silently.
+            _integ_best = _integ.get("best_model", None)
+            if _integ_best and _best and _integ_best != _best:
+                st.markdown(
+                    callout_box(
+                        f"<b>Best-model sources disagree.</b> This page's ranking (lowest "
+                        f"{metric_choice}) picks <b>{_best}</b>; the run's own integrity "
+                        f"report, which also applies the overfitting gate, records "
+                        f"<b>{_integ_best}</b>. The integrity report is authoritative — a "
+                        f"model that wins on error but fails the capacity gate is not the "
+                        f"best model.",
+                        "caution", icon="⚠️"),
+                    unsafe_allow_html=True)
+            elif _integ_best:
+                st.caption(f"Best model agrees with the run's integrity report: "
+                           f"**{_integ_best}** (gated selection).")
 
             # Highlight winner
             if len(agg) > 0:
@@ -721,6 +834,7 @@ with tab_errors:
             fig_e = px.line(g, x="date", y="abs_err", title=f"Absolute error — {m0}", height=340)
             fig_e.update_layout(plot_bgcolor="white", yaxis_tickformat=",",
                                 font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_e)
             st.plotly_chart(fig_e, use_container_width=True, config={"displaylogo": False})
 
         with c2:
@@ -735,6 +849,7 @@ with tab_errors:
             )
             fig_h.update_yaxes(showticklabels=False)
             fig_h.update_layout(font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_h)
             st.plotly_chart(fig_h, use_container_width=True, config={"displaylogo": False})
 
         c3, c4 = st.columns(2)
@@ -743,6 +858,7 @@ with tab_errors:
             fig_hist = px.histogram(g, x="resid", nbins=bins, title=f"Residual distribution — {m0}", height=340)
             fig_hist.update_layout(plot_bgcolor="white",
                                    font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_hist)
             st.plotly_chart(fig_hist, use_container_width=True, config={"displaylogo": False})
 
         with c4:
@@ -752,6 +868,7 @@ with tab_errors:
                             title="Rolling MAE (20 periods)", height=340)
             fig_r.update_layout(plot_bgcolor="white", yaxis_tickformat=",",
                                 font=dict(family="Inter, -apple-system, sans-serif"))
+            plotly_chrome(fig_r)
             st.plotly_chart(fig_r, use_container_width=True, config={"displaylogo": False})
 
 # ── Tab: Interval Diagnostics ────────────────────────────────────────
@@ -763,42 +880,192 @@ with tab_intervals:
 
     if not has_pi:
         st.markdown(
-            callout_box(
-                "No prediction interval columns found. Intervals are produced by "
-                "ML (conformal) and Statistical (native) pipelines.",
-                "info", icon="ℹ️",
+            empty_state(
+                "No prediction intervals in this run.",
+                filename="predictions_long.csv (needs y_lo/y_hi or yhat_p10/p50/p90)",
+                looked_in=str(base_dir),
+                command="Run the E_QUANTILE family, or B_ML with conformal intervals enabled",
             ),
             unsafe_allow_html=True,
         )
     else:
-        dfpi = df_t.dropna(subset=["y_lo","y_hi"]).copy()
-        if dfpi.empty:
+        st.caption(f"Interval columns: `{_ispec.lo}` / `{_ispec.hi}` "
+                   f"({_ispec.band_label}) · advertised level: "
+                   f"{pct(_ispec.nominal) if _ispec.nominal_known else NOT_REPORTED}")
+        if not _ispec.nominal_known:
             st.markdown(
-                callout_box("Interval columns exist but contain no data after filtering.", "caution", icon="⚠️"),
-                unsafe_allow_html=True,
-            )
+                callout_box(
+                    "<b>This run does not record the advertised coverage level.</b> "
+                    + _ispec.nominal_source
+                    + " Coverage below is a measurement, not a verdict.",
+                    "caution", icon="⚠️"),
+                unsafe_allow_html=True)
+
+        cov_tbl = coverage_by_model(df_t, _ispec)
+        if cov_tbl.empty:
+            st.markdown(
+                empty_state("Interval columns exist but hold no usable rows.",
+                            filename="predictions_long.csv",
+                            looked_in=str(base_dir),
+                            command="Re-run this family; intervals need validation rows"),
+                unsafe_allow_html=True)
         else:
-            dfpi["covered"] = ((dfpi["y_true"] >= dfpi["y_lo"]) & (dfpi["y_true"] <= dfpi["y_hi"])).astype(int)
-            cov = dfpi.groupby("model", as_index=False)["covered"].mean()
+            # ── headline: coverage vs the advertised level, tri-state ──────────
+            _mdl = cov_tbl.iloc[0]["model"]
+            _cov = float(cov_tbl.iloc[0]["coverage"])
+            _n = int(cov_tbl.iloc[0]["n"])
+            _state, _why = calibration_verdict(_cov, _ispec.nominal, _n)
 
-            fig_cov = px.bar(cov, x="model", y="covered",
-                             title="Empirical coverage (target: 90%)", height=380,
-                             color="covered", color_continuous_scale="Teal")
-            fig_cov.add_hline(y=0.90, line_dash="dash", line_color=COLORS["fail"],
-                              annotation_text="Target 90%")
-            fig_cov.update_yaxes(range=[0, 1.05])
-            fig_cov.update_layout(plot_bgcolor="white", showlegend=False,
-                                  font=dict(family="Inter, -apple-system, sans-serif"))
-            st.plotly_chart(fig_cov, use_container_width=True, config={"displaylogo": False})
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Measured coverage", pct(_cov), help=HELP["coverage"])
+            with c2:
+                st.metric("Advertised level",
+                          pct(_ispec.nominal) if _ispec.nominal_known else NOT_REPORTED,
+                          help=HELP["nominal"])
+            with c3:
+                st.metric("Predictions scored", f"{_n:,}")
+            st.markdown(gate_badge_tri(_state, label="Calibration"),
+                        unsafe_allow_html=True)
+            st.caption(_why)
 
-            dfpi["bandwidth"] = (dfpi["y_hi"] - dfpi["y_lo"]).astype(float)
-            bw = dfpi.groupby("model", as_index=False)["bandwidth"].mean()
-            fig_bw = px.bar(bw, x="model", y="bandwidth",
-                            title="Average PI width (narrower = more precise)", height=380,
-                            color="bandwidth", color_continuous_scale="Teal_r")
-            fig_bw.update_layout(plot_bgcolor="white", showlegend=False, yaxis_tickformat=",",
-                                 font=dict(family="Inter, -apple-system, sans-serif"))
-            st.plotly_chart(fig_bw, use_container_width=True, config={"displaylogo": False})
+            # ── per-model coverage ────────────────────────────────────────────
+            fig_cov = go.Figure()
+            fig_cov.add_trace(go.Bar(
+                x=cov_tbl["model"], y=cov_tbl["coverage"], name="Measured coverage",
+                marker_color=COLORS["info"], hovertemplate=HOVER_BAR_PCT))
+            if _ispec.nominal_known:
+                fig_cov.add_hline(
+                    y=_ispec.nominal, line_dash="dash", line_color=COLORS["fail"],
+                    annotation_text=f"Advertised {_ispec.nominal:.0%}")
+            fig_cov.update_yaxes(range=[0, 1.05], tickformat=".0%")
+            plotly_layout(fig_cov, ytitle="Share of actuals inside the range",
+                          legend_bottom=False)
+            fig_cov.update_layout(title="Coverage by model")
+            plotly_chrome(fig_cov)
+            st.plotly_chart(fig_cov, use_container_width=True,
+                            config={"displaylogo": False})
+            st.markdown(reading_this_chart(
+                "Each bar is the share of actual values that fell inside that model's "
+                "predicted range. The dashed line is the level the range advertises. Bars "
+                "well below the line mean the range is too narrow and understates risk; "
+                "well above means it is wider than necessary and less informative."
+                if _ispec.nominal_known else
+                "Each bar is the share of actual values that fell inside that model's "
+                "predicted range. There is no reference line because this run does not "
+                "record what level the range advertises, so there is nothing to compare "
+                "the measurement against."), unsafe_allow_html=True)
+
+            # ── per-magnitude-tercile coverage: the known product defect ──────
+            st.markdown(section_header(
+                "Coverage on small, middle and large days",
+                "The project's biggest known weakness — shown, not hidden"),
+                unsafe_allow_html=True)
+            terc = coverage_by_tercile(df_t, _ispec, model=_mdl)
+            if terc.empty:
+                st.markdown(
+                    empty_state(
+                        "Not enough spread in actual values to split into three groups.",
+                        filename="predictions_long.csv",
+                        looked_in=str(base_dir),
+                        command="Needs at least 6 scored rows with varying magnitudes"),
+                    unsafe_allow_html=True)
+            else:
+                fig_t = go.Figure()
+                _cols = [COLORS["trust"] if (not _ispec.nominal_known or
+                                             v >= _ispec.nominal - 0.05)
+                         else COLORS["fail"] for v in terc["coverage"]]
+                fig_t.add_trace(go.Bar(
+                    x=terc["tercile"], y=terc["coverage"], marker_color=_cols,
+                    name="Coverage",
+                    customdata=np.stack([terc["n"], terc["mean_magnitude"] / 1e6], axis=-1),
+                    hovertemplate=("<b>%{x}</b><br>Coverage: %{y:.1%}<br>"
+                                   "Days: %{customdata[0]:,}<br>"
+                                   "Average size: %{customdata[1]:,.1f} M GEL"
+                                   "<extra></extra>")))
+                if _ispec.nominal_known:
+                    fig_t.add_hline(y=_ispec.nominal, line_dash="dash",
+                                    line_color=COLORS["fail"],
+                                    annotation_text=f"Advertised {_ispec.nominal:.0%}")
+                fig_t.update_yaxes(range=[0, 1.05], tickformat=".0%")
+                plotly_layout(fig_t, ytitle="Coverage", legend_bottom=False)
+                fig_t.update_layout(title=f"Coverage by day size — {_mdl}")
+                plotly_chrome(fig_t)
+                st.plotly_chart(fig_t, use_container_width=True,
+                                config={"displaylogo": False})
+                st.markdown(reading_this_chart(
+                    "Days are split into three equal groups by how large the actual value "
+                    "was. A range can look well calibrated on average while missing most "
+                    "of the largest days — and the largest days are the ones a cash buffer "
+                    "exists for. If the right-hand bar is much lower than the others, the "
+                    "range is least trustworthy exactly when it matters most."),
+                    unsafe_allow_html=True)
+                st.dataframe(
+                    pd.DataFrame({
+                        "Day size": terc["tercile"],
+                        "Coverage": [pct(v) for v in terc["coverage"]],
+                        "Days": [f"{int(v):,}" for v in terc["n"]],
+                        f"Average size ({UNIT_LABEL})":
+                            [gel_millions(v) for v in terc["mean_magnitude"]],
+                    }), hide_index=True, use_container_width=True)
+
+            # ── reliability: where inside the band actuals land ───────────────
+            st.markdown(section_header(
+                "Where actuals fall inside the range",
+                "Distinguishes a wrongly-shaped range from a merely wrong-width one"),
+                unsafe_allow_html=True)
+            rc = reliability_curve(df_t, _ispec, model=_mdl)
+            if rc.empty:
+                st.markdown(
+                    empty_state("Ranges have zero width, so position cannot be computed.",
+                                filename="predictions_long.csv",
+                                looked_in=str(base_dir),
+                                command="Check the interval model produced non-degenerate bands"),
+                    unsafe_allow_html=True)
+            else:
+                _rc_cols = [COLORS["fail"] if p in ("below band", "above band")
+                            else COLORS["info"] for p in rc["position"]]
+                fig_r = go.Figure()
+                fig_r.add_trace(go.Bar(
+                    x=rc["position"], y=rc["share"], marker_color=_rc_cols,
+                    name="Share of predictions",
+                    customdata=rc["n"],
+                    hovertemplate=("<b>%{x}</b><br>Share: %{y:.1%}<br>"
+                                   "Days: %{customdata:,}<extra></extra>")))
+                _ideal = 1.0 / max(1, len(rc) - 2)
+                fig_r.add_hline(y=_ideal, line_dash="dot", line_color=COLORS["neutral"],
+                                annotation_text="Even spread")
+                fig_r.update_yaxes(tickformat=".0%")
+                plotly_layout(fig_r, ytitle="Share of predictions", legend_bottom=False)
+                fig_r.update_layout(
+                    title=f"Position of the actual within its own range — {_mdl}")
+                plotly_chrome(fig_r)
+                st.plotly_chart(fig_r, use_container_width=True,
+                                config={"displaylogo": False})
+                st.markdown(reading_this_chart(
+                    "For each day we ask where the actual value sat inside that day's own "
+                    "predicted range — 0.00 at the bottom edge, 1.00 at the top. A "
+                    "well-shaped range spreads actuals evenly across the middle bars. The "
+                    "two red bars are days the actual fell outside the range entirely. Mass "
+                    "piling up at one edge means the range is centred in the wrong place, "
+                    "which widening it would not fix."), unsafe_allow_html=True)
+
+            # ── width, for reference ──────────────────────────────────────────
+            fig_bw = go.Figure()
+            fig_bw.add_trace(go.Bar(
+                x=cov_tbl["model"], y=cov_tbl["mean_width"] / 1e6,
+                marker_color=COLORS["neutral"], name="Average width",
+                hovertemplate="<b>%{x}</b><br>%{y:,.1f} M GEL<extra></extra>"))
+            plotly_layout(fig_bw, ytitle=f"Average width ({UNIT_LABEL})",
+                          legend_bottom=False)
+            fig_bw.update_layout(title="Average range width")
+            plotly_chrome(fig_bw)
+            st.plotly_chart(fig_bw, use_container_width=True,
+                            config={"displaylogo": False})
+            st.markdown(reading_this_chart(
+                "How wide each model's range is on average. Narrower is only better if "
+                "coverage holds up — a narrow range that misses the actual is worse than a "
+                "wide one that contains it."), unsafe_allow_html=True)
 
 # ── Tab: Forecast Integrity ──────────────────────────────────────────
 with tab_integrity:
@@ -818,12 +1085,17 @@ with tab_integrity:
         try:
             integrity = json.loads(integrity_path.read_text(encoding="utf-8"))
 
-            alignment_ok = integrity.get("alignment_ok", True)
+            # Tri-state, same reasoning as the banner above: a hardcoded or absent
+            # alignment_ok must not render as a pass.
+            _n_mis = integrity.get("n_misaligned", None)
+            _is_dl = integrity.get("pipeline", "") == "DL"
+            alignment_ok = (None if (_is_dl or _n_mis is None)
+                            else bool(integrity.get("alignment_ok", False)))
             skill_pct = integrity.get("skill_pct", np.nan)
             skill_threshold = QUALITY_GATE_SKILL_PCT
 
             # Verdict
-            if not alignment_ok:
+            if alignment_ok is False:
                 _iv_status, _iv_text = "fail", "NOT OK — Alignment Error"
             elif np.isnan(skill_pct):
                 _iv_status, _iv_text = "caution", "UNKNOWN — Skill cannot be computed"
@@ -842,14 +1114,22 @@ with tab_integrity:
             st.markdown('<div class="spacer-sm"></div>', unsafe_allow_html=True)
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                _align_text = "Aligned" if alignment_ok else f"{integrity.get('n_misaligned', 0)} misaligned"
-                _align_st = "trust" if alignment_ok else "fail"
+                if alignment_ok is None:
+                    _align_text = NOT_VERIFIED
+                    _align_st = "neutral"
+                elif alignment_ok:
+                    _align_text = "Aligned"
+                    _align_st = "trust"
+                else:
+                    _align_text = f"{integrity.get('n_misaligned', 0)} misaligned"
+                    _align_st = "fail"
                 st.markdown(
                     metric_card("Alignment", _align_text,
-                                icon="✅" if alignment_ok else "❌", status=_align_st),
+                                icon={True: "✅", False: "❌", None: "⬜"}[alignment_ok],
+                                status=_align_st),
                     unsafe_allow_html=True,
                 )
-                if not alignment_ok and integrity.get("misaligned_examples"):
+                if alignment_ok is False and integrity.get("misaligned_examples"):
                     with st.expander("Misaligned examples"):
                         st.json(integrity["misaligned_examples"][:3])
 
@@ -875,7 +1155,7 @@ with tab_integrity:
                 _sk_display = _fmt_pct(skill_pct, 2) if not np.isnan(skill_pct) else "N/A"
                 _sk_st = "trust" if (not np.isnan(skill_pct) and skill_pct >= skill_threshold) else "fail"
                 st.markdown(
-                    metric_card("Skill %", _sk_display, icon="📊", status=_sk_st),
+                    metric_card("Skill %", _sk_display, status=_sk_st),
                     unsafe_allow_html=True,
                 )
 
@@ -907,18 +1187,33 @@ with tab_integrity:
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Horizon", integrity.get("horizon", "N/A"))
-                st.metric("Best Shift", integrity.get("best_shift", 0))
+                st.metric("Horizon", integrity.get("horizon", "N/A"),
+                          help="How many steps ahead each prediction was made, in the "
+                               "run's own time unit (business days for daily runs).")
+                st.metric("Best Shift", integrity.get("best_shift", 0),
+                          help="If shifting the predictions in time made them fit better, "
+                               "this is by how much. Anything other than 0 suggests the "
+                               "predictions may be mis-dated rather than accurate.")
             with col2:
                 rmse_model = integrity.get("rmse_model", np.nan)
                 rmse_persist = integrity.get("rmse_persistence", np.nan)
-                st.metric("Model RMSE", _fmt_num(rmse_model, 2))
-                st.metric("Baseline RMSE", _fmt_num(rmse_persist, 2))
+                st.metric("Model RMSE", _fmt_num(rmse_model, 2),
+                          help="Root mean squared error. Like average error but penalises "
+                               "large misses more heavily, so it is sensitive to the few "
+                               "very large days.")
+                st.metric("Baseline RMSE", _fmt_num(rmse_persist, 2),
+                          help="The same measure for the simple benchmark — assume the "
+                               "value from one horizon ago repeats. The model should be "
+                               "lower than this.")
             with col3:
                 r2_model = integrity.get("r2_model", np.nan)
                 r2_persist = integrity.get("r2_persistence", np.nan)
-                st.metric("Model R²", _fmt_num(r2_model, 3))
-                st.metric("Baseline R²", _fmt_num(r2_persist, 3))
+                st.metric("Model R²", _fmt_num(r2_model, 3),
+                          help="Share of the ups and downs the model explains. 1.0 is "
+                               "perfect, 0 is no better than predicting the average, and "
+                               "negative is worse than that.")
+                st.metric("Baseline R²", _fmt_num(r2_persist, 3),
+                          help="The same measure for the simple benchmark.")
 
             # Checks
             st.markdown('<div class="spacer-sm"></div>', unsafe_allow_html=True)
@@ -1054,6 +1349,7 @@ with tab_feat_imp:
                 plot_bgcolor="white",
                 font=dict(family="Inter, -apple-system, sans-serif"),
             )
+            plotly_chrome(fig_fi)
             st.plotly_chart(fig_fi, use_container_width=True, config={"displaylogo": False})
 
             with st.expander("Full feature importance table"):
@@ -1147,6 +1443,7 @@ with tab_ensemble:
                         plot_bgcolor="white",
                         font=dict(family="Inter, -apple-system, sans-serif"),
                     )
+                    plotly_chrome(fig_ens)
                     st.plotly_chart(fig_ens, use_container_width=True, config={"displaylogo": False})
 
                     if not ens_lb.empty:

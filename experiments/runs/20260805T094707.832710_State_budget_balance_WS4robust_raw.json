@@ -1,0 +1,37 @@
+{
+  "run_id": "20260805T094707.832710_State_budget_balance_WS4robust_raw",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T09:47:07.832710+00:00",
+  "git_sha": "98c93e1ca381",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "State budget balance",
+  "feature_set_hash": "653fe6386d78",
+  "params": "2707da6b4393",
+  "seed": 0,
+  "fold_scheme": "TRAIN-internal rolling-origin fold, eval year 2020",
+  "dev_mae": "144535082.0789",
+  "mase": "",
+  "skill_vs_ruler": "8.4044",
+  "sentinel_ratio": "",
+  "coverage_low": "",
+  "coverage_mid": "",
+  "coverage_high": "",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS4 robustness: raw on eval window 2020, level drift 151.9%, n=262",
+  "model": "WS4robust_raw",
+  "git_sha_full": "98c93e1ca381ae08c3b8abe22acd007b7ae79cf6",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws4robust:raw"
+  ],
+  "params_full": {
+    "study": "ws4_robustness",
+    "target_transform": "raw",
+    "eval_window": "2020",
+    "level_drift_pct": 151.9324,
+    "horizon": 5
+  },
+  "ruler": 157796943.42137402,
+  "coverage_terciles": {},
+  "per_fold": []
+}

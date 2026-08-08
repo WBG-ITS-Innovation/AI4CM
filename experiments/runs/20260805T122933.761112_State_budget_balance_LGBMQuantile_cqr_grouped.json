@@ -1,0 +1,44 @@
+{
+  "run_id": "20260805T122933.761112_State_budget_balance_LGBMQuantile_cqr_grouped",
+  "schema_version": 1,
+  "timestamp": "2026-08-05T12:29:33.761112+00:00",
+  "git_sha": "683a18598f9e",
+  "data_sha": "0b009fd031ad3fa0",
+  "target": "State budget balance",
+  "feature_set_hash": "19d7f5356fcc",
+  "params": "b7f2461d73e6",
+  "seed": 0,
+  "fold_scheme": "CQR calibrated on a causal TRAIN slice; DEV confirmation",
+  "dev_mae": "182294096.4074",
+  "mase": "",
+  "skill_vs_ruler": "",
+  "sentinel_ratio": "",
+  "coverage_low": "0.7381",
+  "coverage_mid": "0.7711",
+  "coverage_high": "0.5422",
+  "calendar_version": "4b480eae9c8f",
+  "note": "WS7 CQR cqr_grouped on State budget balance, DEV n=250",
+  "model": "LGBMQuantile+cqr_grouped",
+  "git_sha_full": "683a18598f9e0940043f41304b579a9103ace1f2",
+  "data_sha_full": "0b009fd031ad3fa0dbdb35fd9a3733144b04a8e9d37fa4298499e073265361f1",
+  "feature_names": [
+    "ws7:cqr_grouped"
+  ],
+  "params_full": {
+    "study": "ws7_cqr",
+    "model": "LGBMQuantile",
+    "cqr": "cqr_grouped",
+    "alpha": 0.2,
+    "horizon": 5,
+    "calibration_rows": 502,
+    "conditional_floor": 0.6,
+    "gate_passed": false
+  },
+  "ruler": null,
+  "coverage_terciles": {
+    "low": 0.7380952380952381,
+    "mid": 0.7710843373493976,
+    "high": 0.5421686746987951
+  },
+  "per_fold": []
+}

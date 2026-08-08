@@ -11,13 +11,129 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
-st.set_page_config(page_title="Models • Georgia Treasury", layout="wide")
+from ui_styles import inject_design_system  # presentation only
+from ui_styles import render_app_header  # presentation only
+st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
+inject_design_system()
+render_app_header("Models", "Model families, promoted recipes and their evidence")
 st.markdown(
     page_header("🧩 Model Families & Parameters",
                 "Reference guide for all available forecasting models and their configurations"),
     unsafe_allow_html=True,
 )
+
+# ──────────────────────────────────────────────────────────────────────
+# PROMOTED RECIPES (live, from registry/recipes.json)
+#
+# The rest of this page is a static reference for every model family available. This
+# section is different: it is what has actually been promoted per target, with the
+# evidence, read live from the registry. If it disagrees with the reference below, the
+# registry wins -- it is the thing tied to logged runs.
+# ──────────────────────────────────────────────────────────────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "backend"))
+
+
+from format_gel import gel_millions as _gel_m  # noqa: E402
+
+
+def _render_registry() -> None:
+    try:
+        from registry import load_registry, verify_against_log
+    except Exception as exc:  # pragma: no cover - import guard for a demo machine
+        st.info(f"Registry unavailable ({exc}).")
+        return
+    try:
+        reg = load_registry()
+    except FileNotFoundError as exc:
+        st.warning(str(exc))
+        return
+
+    st.subheader("Promoted recipes — one per target")
+    st.caption(
+        "Champions selected on training folds and confirmed on 2024. "
+        "**Nothing here is approved**: no approval workflow exists yet, and neither "
+        "hyperparameter tuning nor target scaling has been run."
+    )
+
+    rows = []
+    for r in reg["recipes"]:
+        cred = r["dev_credentials"]
+        pub = r["publication"]
+        rows.append({
+            "Target": r["target"],
+            "Model": r["point_model"],
+            "Intervals": r.get("interval_model", "—"),
+            "Typical error 2024 (M GEL)": _gel_m(cred["dev_mae"]),
+            "vs benchmark": f"{cred['skill_vs_ruler_pct']:.1f}% better",
+            "Verdict": ("✅ forecast" if pub["verdict"] == "publishable"
+                        else "❌ withheld as forecast"),
+            "Status": r["status"],
+            "Approved by": r["approved_by"] or "— nobody —",
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+    chk = verify_against_log()
+    if chk["ok"]:
+        st.success(
+            f"All {chk['metrics_checked']} quoted figures reconcile against "
+            f"`experiments/log.csv`. Every number here is traceable to a logged run."
+        )
+    else:
+        st.error("Registry does not reconcile with the experiments log:\n" +
+                 "\n".join(f"- {p}" for p in chk["problems"]))
+
+    for r in reg["recipes"]:
+        cred, pub = r["dev_credentials"], r["publication"]
+        verdict = ("usable as a forecast" if pub["verdict"] == "publishable"
+                   else "WITHHELD as a forecast")
+        with st.expander(f"{r['target']} — {r['point_model']} · {verdict}"):
+            st.markdown(f"**Recipe id** `{r['id']}`  \n"
+                        f"**Family** {r['family']} · **Intervals** "
+                        f"{r.get('interval_model', '—')}  \n"
+                        f"**Target scaling** {r['scaling']}  \n"
+                        f"**Fiscal calendar version** `{r['calendar_version']}`")
+            st.markdown("**Feature groups**: " + ", ".join(r["feature_groups"]) +
+                        (("  \n**Exogenous blocks**: " + ", ".join(r["exog_blocks"]))
+                         if r.get("exog_blocks") else ""))
+            st.markdown(f"**Why this recipe** — {r['provenance_note']}")
+
+            st.markdown("**Evidence (2024 confirmation)**")
+            e1, e2, e3 = st.columns(3)
+            e1.metric("Typical error", f"{_gel_m(cred['dev_mae'])} M GEL")
+            e2.metric("vs simple benchmark", f"{cred['skill_vs_ruler_pct']:.1f}%")
+            e3.metric("Scaled error (1.0 = benchmark)", f"{cred['mase']:.2f}")
+            st.caption(f"Logged run `{cred['run_id']}` · window {cred['window']} · "
+                       f"n={cred['n']}")
+
+            st.markdown("**Checks**")
+            for key, g in cred["gates"].items():
+                icon = "✅" if g.get("passed") else "❌"
+                st.markdown(f"- {icon} **{g.get('name', key)}** — "
+                            f"{g.get('reason_plain', '')}")
+                if g.get("corroboration"):
+                    st.caption(f"  {g['corroboration']}")
+
+            if pub["verdict"] != "publishable":
+                st.error(f"**Withheld as a forecast.** {pub['reason_plain']}")
+                if pub.get("named_fix"):
+                    st.warning(f"**Named fix:** {pub['named_fix']}")
+
+            nb = cred.get("not_the_dev_best")
+            if nb:
+                st.info(
+                    f"**Not the single best 2024 result.** {nb['better_option']} scored "
+                    f"{_gel_m(nb['its_dev_mae'])} M GEL versus {_gel_m(nb['this_dev_mae'])} "
+                    f"M GEL here ({nb['gap_pct']:.1f}% apart). {nb['why_promoted_anyway']}"
+                )
+
+    st.caption("Pending: " + " · ".join(reg["pending_workstreams"]))
+    st.divider()
+
+
+_render_registry()
 
 RUNTIME_LEGEND = "⚡ very fast · ⏱ medium · 🐢 slower"
 

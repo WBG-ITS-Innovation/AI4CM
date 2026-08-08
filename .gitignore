@@ -23,6 +23,13 @@ backend/forecast_runs/
 # OS cruft
 .DS_Store
 Thumbs.db
+# Published forecasts ARE tracked -- forecasts/published/ is the only record of what was
+# actually said, and a scorecard nobody can audit is worthless. Working forward artifacts
+# under backend/forecast_runs/ stay ignored; those are regenerable, a published forecast is
+# not.
+!forecasts/published/
+!forecasts/scorecard.csv
+
 # Phase 2 experiments. The append-only log AND its per-run detail JSONs are tracked:
 # verify_log_integrity() requires a JSON for every row, so ignoring runs/ would make a
 # fresh clone fail its own integrity check and "reproducible from a logged run" a claim
