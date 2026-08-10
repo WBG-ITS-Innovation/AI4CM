@@ -312,3 +312,69 @@ def test_monthly_accuracy_composite_states_its_formula_where_it_survives():
 
 
 NOT_REPORTED_TEXT = "not reported"
+
+
+# ── item 3: the benchmark series reaches the Forecast chart ───────────────────
+
+FORECAST = FRONTEND / "pages" / "05_Forecast.py"
+
+
+def test_forecast_chart_plots_the_benchmark_as_its_own_trace():
+    """The trace is added, AND its guard is satisfied for the real published data.
+
+    Streamlit 1.40.1's AppTest cannot read a plotly_chart element's value -- the accessor raises
+    a session_state KeyError -- so the rendered figure is not inspectable here. Rather than claim
+    an assertion I cannot make, this checks the two halves that together mean the trace is
+    reached: the page adds it under `if _bench is not None`, and `_benchmark_series` returns a
+    series for every published target. The backend suite
+    (test_forecast_baseline.py) covers the data half in depth.
+    """
+    code = "\n".join(l for l in _src(FORECAST).splitlines()
+                     if not l.lstrip().startswith("#"))
+    assert "_bench = _benchmark_series(rows)" in code
+    assert "if _bench is not None:" in code
+    assert "name=_BENCH_LABEL" in code, "the benchmark trace is not added to the figure"
+
+    # the guard is satisfied for real data, so the branch is taken
+    import pandas as _pd
+
+    from forward_forecast import benchmark_series
+    issues = sorted((REPO / "forecasts" / "published").glob("*/forecast.csv"))
+    if not issues:
+        pytest.skip("no published issue on disk")
+    fc = _pd.read_csv(issues[-1])
+    for target, g in fc.groupby("target"):
+        assert benchmark_series(g) is not None, (
+            f"{target} would render no benchmark trace -- the guard is not satisfied"
+        )
+
+
+def test_benchmark_trace_is_distinguishable_without_colour():
+    """These pages get printed. A benchmark identifiable only by colour is lost in greyscale.
+
+    Asserted on the trace's declared style, since the figure itself is not inspectable (above).
+    """
+    code = _src(FORECAST)
+    trace = code[code.index("name=_BENCH_LABEL") - 700:code.index("name=_BENCH_LABEL")]
+    assert 'dash="dashdot"' in trace, "the benchmark line is not dashed"
+    assert 'symbol="x"' in trace, "the benchmark markers are not distinct"
+
+
+def test_benchmark_column_appears_in_the_forecast_table():
+    at = AppTest.from_file(str(FORECAST), default_timeout=300)
+    at.run()
+    tables = [d.value for d in at.dataframe]
+    assert tables, "no table rendered"
+    assert any("Benchmark" in list(t.columns) for t in tables), (
+        f"no Benchmark column; first table columns: {list(tables[0].columns)}"
+    )
+
+
+def test_forecast_header_shows_model_and_benchmark_error_side_by_side():
+    """The comparison must be visible rather than implied — the point of item 3."""
+    at = AppTest.from_file(str(FORECAST), default_timeout=300)
+    at.run()
+    labels = [mm.label for mm in at.metric]
+    assert any(l.startswith("Model error on 2024") for l in labels), labels
+    assert any(l.startswith("Benchmark error") for l in labels), labels
+    assert any(l == "Model is better by" for l in labels), labels
