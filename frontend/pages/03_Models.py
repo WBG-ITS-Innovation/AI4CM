@@ -37,6 +37,9 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "backend"))
 
 
 from format_gel import gel_millions as _gel_m  # noqa: E402
+from format_gel import (NOT_REPORTED, UNIT_LABEL, gel_millions, number, pct,  # noqa: E402
+                        pct_points, ratio)
+from ui_styles import (empty_state, gate_badge_tri, section_header, HELP)  # noqa: E402
 
 
 def _render_registry() -> None:
@@ -592,3 +595,184 @@ with tabs[4]:
 - **Quantiles (P10/P50/P90)**: distributional forecasts for uncertainty-aware planning  
 """
     )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PER-MODEL DETAIL VIEW
+#
+# Assembled by backend/model_reference.py and read as JSON, because the modelling libraries live in
+# the backend interpreter and not the one running Streamlit.
+#
+# Three kinds of content, labelled differently on purpose:
+#   * descriptions  -- prose, marked "general description, not a measured claim";
+#   * hyperparameters -- read LIVE from available_models() via get_params(), diffed against a fresh
+#     instance so only what the pipeline actually SETS is highlighted. Change a value in the
+#     pipeline and this page moves with it; nothing is transcribed;
+#   * measured performance -- experiments/log.csv only, every figure carrying its run_id.
+#
+# Coverage reads "not reported" for point models because those runs never wrote it. Measured, not
+# assumed: 0 of the point-model rows in the log carry a coverage figure.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_model_detail() -> None:
+    import subprocess as _sp
+
+    st.markdown(section_header("Model reference",
+                               "What each model is, what it is configured with, and what it "
+                               "actually measured"),
+                unsafe_allow_html=True)
+
+    _repo = _Path(__file__).resolve().parents[2]
+
+    @st.cache_data(show_spinner="Reading the model pool from the backend…", ttl=300)
+    def _reference() -> dict:
+        for _py in (_repo / "backend" / ".venv" / "bin" / "python",
+                    _repo / "backend" / ".venv" / "Scripts" / "python.exe"):
+            if not _py.exists():
+                continue
+            try:
+                out = _sp.run([str(_py), "backend/model_reference.py"], cwd=str(_repo),
+                              capture_output=True, text=True, timeout=180)
+            except Exception:
+                continue
+            if out.returncode == 0:
+                line = next((l for l in reversed(out.stdout.splitlines())
+                             if l.strip().startswith("{")), "")
+                if line:
+                    return json.loads(line)
+        return {}
+
+    ref = _reference()
+    if not ref:
+        st.markdown(
+            empty_state(
+                "The model reference could not be assembled.",
+                filename="backend/model_reference.py",
+                looked_in=str(_repo / "backend" / ".venv"),
+                command="./backend/.venv/bin/python backend/model_reference.py"),
+            unsafe_allow_html=True)
+        return
+
+    models = ref["models"]
+    perf = ref.get("performance", {})
+    champs = ref.get("champions", {})
+
+    _names = sorted(models)
+    _champ_names = {n for n in _names if n in champs}
+    st.caption(f"{len(_names)} models in the pool · {len(_champ_names)} promoted as a champion "
+               f"({', '.join(sorted(_champ_names))}) · "
+               f"{sum(1 for m in models.values() if not m['available'])} unavailable")
+
+    _pick = st.selectbox("Model", _names,
+                         index=_names.index("LightGBM_L1") if "LightGBM_L1" in _names else 0)
+    m = models[_pick]
+
+    # ── availability ──────────────────────────────────────────────────────────
+    if not m["available"]:
+        st.error(f"**{_pick} is unavailable in this environment.** Its library "
+                 f"(`{m.get('missing_library', 'unknown')}`) is not installed, so the model cannot "
+                 f"be run or configured. It is listed here rather than hidden, so the pool's "
+                 f"contents do not silently change with the environment.")
+
+    # ── description: general, not measured ────────────────────────────────────
+    st.markdown(f"#### {_pick}")
+    st.caption(f"{m.get('family', '—')} · {m.get('pipeline')} · class "
+               f"`{m.get('class', '—')}`")
+    if m.get("summary"):
+        st.markdown(m["summary"])
+        st.caption(f"_{m['description_kind']}._ It describes how the model works; it says nothing "
+                   f"about how well it performed here. For that, see the measured table below.")
+
+    # ── champion record, exactly as stored ────────────────────────────────────
+    for rec in champs.get(_pick, []):
+        cred = rec["dev_credentials"]
+        with st.container():
+            st.success(f"**Promoted as champion for {rec['target']}** · recipe `{rec['id']}`")
+            st.markdown(
+                f"**Status** {rec['status']}  \n"
+                f"**Approved by** {rec['approved_by'] or 'none — no approval workflow exists yet'}  \n"
+                f"**Target scaling** {rec['scaling']}  \n"
+                f"**Feature groups** {', '.join(rec['feature_groups'])}"
+                + (f"  \n**Exogenous blocks** {', '.join(rec['exog_blocks'])}"
+                   if rec.get("exog_blocks") else "")
+                + f"  \n**Fiscal calendar version** `{rec['calendar_version']}`")
+            st.caption(f"Evidence: run `{cred['run_id']}` · {cred['window']} · n={cred['n']}")
+            for key, g in cred["gates"].items():
+                st.markdown(gate_badge_tri(g.get("passed", None),
+                                           label=g.get("name", key)),
+                            unsafe_allow_html=True)
+                if g.get("reason_plain"):
+                    st.caption(g["reason_plain"])
+            if rec["publication"]["verdict"] != "publishable":
+                st.error(f"**Withheld as a forecast.** {rec['publication']['reason_plain']}")
+
+    # ── hyperparameters, read live ────────────────────────────────────────────
+    hp = m["hyperparameters"]
+    st.markdown("##### Configuration")
+    if hp.get("note"):
+        st.info(hp["note"])
+    _set = hp.get("set_by_pipeline", [])
+    if _set:
+        st.caption(f"{len(_set)} of {hp['n_total']} parameters are set by the pipeline; the rest "
+                   f"are library defaults. Read live from the code — if a value changes in the "
+                   f"pipeline, it changes here.")
+        st.dataframe(pd.DataFrame([{
+            "Parameter": p["name"], "Current value": p["value"],
+            "What it controls": p["controls"] or NOT_REPORTED,
+            "Sensible range": p["range"] or NOT_REPORTED} for p in _set]),
+            hide_index=True, use_container_width=True)
+    elif m["available"]:
+        st.caption("This model holds no explicitly set parameters — it runs on library defaults, "
+                   "or is constructed per fold.")
+    if hp.get("library_default"):
+        with st.expander(f"Inherited library defaults ({len(hp['library_default'])})"):
+            st.dataframe(pd.DataFrame([{
+                "Parameter": p["name"], "Value": p["value"],
+                "What it controls": p["controls"] or ""} for p in hp["library_default"]]),
+                hide_index=True, use_container_width=True)
+
+    # ── measured performance, from the log only ───────────────────────────────
+    st.markdown("##### Measured performance")
+    rows = perf.get(_pick, [])
+    if not rows:
+        st.markdown(
+            empty_state(
+                f"{_pick} has no logged runs, so nothing measured can be shown for it.",
+                filename="experiments/log.csv",
+                looked_in=str(_repo / "experiments"),
+                command="Run an ablation for this model; runs append to the log automatically"),
+            unsafe_allow_html=True)
+        st.caption("A model with no logged run is not a bad model — it is an unmeasured one. "
+                   "Nothing here is inferred from a sibling model.")
+    else:
+        _tsel = st.multiselect("Target", sorted({r["target"] for r in rows}), default=[])
+        _view = [r for r in rows if not _tsel or r["target"] in _tsel]
+        st.caption(f"{len(_view)} of {len(rows)} logged runs. Every figure carries the run that "
+                   f"produced it; nothing is recomputed on this page.")
+        st.dataframe(pd.DataFrame([{
+            "Target": r["target"],
+            "Window": r["window"],
+            f"MAE ({UNIT_LABEL})": gel_millions(r["mae"]),
+            "MASE": number(r["mase"]),
+            "Skill vs ruler": pct_points(r["skill_vs_ruler_pct"]),
+            "Signal": ratio(r["sentinel"]),
+            "Coverage low": pct(r["coverage_low"]),
+            "Coverage mid": pct(r["coverage_mid"]),
+            "Coverage high": pct(r["coverage_high"]),
+            "run_id": r["run_id"],
+        } for r in _view]), hide_index=True, use_container_width=True,
+            column_config={
+                "Skill vs ruler": st.column_config.TextColumn(help=HELP["skill"]),
+                "Signal": st.column_config.TextColumn(help=HELP["sentinel"]),
+                "MASE": st.column_config.TextColumn(help=HELP["mase"]),
+                "Coverage high": st.column_config.TextColumn(help=HELP["tercile_coverage"]),
+                "run_id": st.column_config.TextColumn(
+                    help="The logged run this row came from. Its full record, including data and "
+                         "code fingerprints, is in experiments/runs/<run_id>.json."),
+            })
+        if all(r["coverage_high"] is None for r in _view):
+            st.info(ref.get("coverage_note", ""))
+
+    st.divider()
+
+
+_render_model_detail()
