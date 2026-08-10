@@ -926,6 +926,7 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                                 shift_diagnostic_horizon_aware,
                                 compute_skill_score,
                                 compute_persistence_baseline,
+                                validate_alignment_step_based,
                             )
                         except ImportError:
                             from backend.forecast_integrity import (
@@ -955,9 +956,47 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                                     "best_shift": shift_result.get("best_shift", 0),
                                     "is_lag0_issue": shift_result.get("is_lag0_issue", False),
                                     "is_persistence_like": shift_result.get("is_persistence_like", False),
-                                    "alignment_ok": True,
                                     "mask_target_at_origin": stock,
                                 })
+
+                                # ── alignment: CHECKED, not asserted ────────────────────
+                                # This field used to be the literal `True`. Nothing verified it,
+                                # so a DL run displayed a green alignment tick that no check had
+                                # earned -- and because the dashboard also defaulted a MISSING key
+                                # to True, "never checked" and "passed" were indistinguishable.
+                                #
+                                # The property it is supposed to attest is the one every other
+                                # family checks: in the modelling index, the target date must sit
+                                # exactly `h` positions after the origin date. build_sequences()
+                                # constructs them as idx[end_i] and idx[end_i + horizon] over
+                                # F.index, so F.index is the index those positions refer to.
+                                #
+                                # Written from the checker's own verdict, so a misalignment
+                                # produces False. If the check cannot run at all the key is
+                                # omitted entirely rather than guessed -- read_gate()-style, an
+                                # absent verdict must read as "not checked", never as a pass.
+                                try:
+                                    _align = validate_alignment_step_based(
+                                        df_pred_h, pd.DatetimeIndex(F.index), h)
+                                    _dl_integrity["alignment_ok"] = bool(
+                                        _align.get("alignment_ok", False))
+                                    _dl_integrity["n_misaligned"] = int(
+                                        _align.get("n_misaligned", 0))
+                                    _dl_integrity["misaligned_examples"] = _align.get(
+                                        "misaligned_examples", [])[:5]
+                                    _dl_integrity["alignment_checked"] = True
+                                    if not _dl_integrity["alignment_ok"]:
+                                        print(f"[DL][WARN] Alignment FAILED for {target} h={h}: "
+                                              f"{_dl_integrity['n_misaligned']} of "
+                                              f"{len(df_pred_h)} predictions are not exactly {h} "
+                                              f"steps after their origin.")
+                                except Exception as _ax:
+                                    # No verdict rather than a favourable one.
+                                    _dl_integrity.pop("alignment_ok", None)
+                                    _dl_integrity["alignment_checked"] = False
+                                    _dl_integrity["alignment_check_error"] = str(_ax)
+                                    print(f"[DL][WARN] Alignment check could not run for {target} "
+                                          f"h={h}: {_ax}. Reporting no verdict rather than a pass.")
                                 # Quality gate
                                 _QUALITY_GATE = 5.0
                                 if skill_pct < _QUALITY_GATE:
