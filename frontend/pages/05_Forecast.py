@@ -22,7 +22,14 @@ APPROOT = Path(__file__).resolve().parents[1]
 REPOROOT = APPROOT.parent
 sys.path.insert(0, str(REPOROOT / "backend"))
 
+# The benchmark readers are pure pandas + json, so this interpreter can import them directly.
+# One definition of the benchmark column then serves both the evaluator and this page.
+from forward_forecast import BENCHMARK_LABEL as _BENCH_LABEL  # noqa: E402
+from forward_forecast import benchmark_mae_for_target as _benchmark_mae  # noqa: E402
+from forward_forecast import benchmark_series as _benchmark_series  # noqa: E402
 from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
+from ui_styles import TOK as _TOK  # noqa: E402
+from ui_styles import HELP, reading_this_chart  # noqa: E402
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
 from ui_styles import render_app_header  # presentation only
@@ -58,7 +65,8 @@ def load_all() -> Optional[Dict]:
         return None
 
 
-from format_gel import UNIT_LABEL, gel_millions as m  # noqa: E402
+from format_gel import NOT_REPORTED, UNIT_LABEL, pct_points  # noqa: E402
+from format_gel import gel_millions as m  # noqa: E402
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -140,6 +148,34 @@ for target in fc["target"].unique():
         if pub.get("named_fix"):
             st.warning(f"**What would change this:** {pub['named_fix']}")
 
+    # ── the audited benchmark error beside the model's, so the comparison is visible ─────
+    # Model MAE from the registry's DEV credentials; benchmark MAE from
+    # experiments/runs/<run_id>.json (field `ruler`), which the registry labels
+    # "h=5 business-day persistence, the single shared ruler across all four families".
+    # Neither is recomputed here. Cross-checked once: (ruler - dev_mae)/ruler reproduces each
+    # recorded skill to ~1e-5, the residual being the log storing skill to four decimals.
+    _bm = _benchmark_mae(target)
+    if _bm.get("available"):
+        _h1, _h2, _h3 = st.columns(3)
+        with _h1:
+            st.metric(f"Model error on 2024 ({UNIT_LABEL})", m(_bm["model_mae"]),
+                      help=("Average absolute error of this recipe on the 2024 window, read from "
+                            "the audited run that earned the recipe its credentials."))
+        with _h2:
+            st.metric(f"Benchmark error ({UNIT_LABEL})", m(_bm["benchmark_mae"]),
+                      help=HELP["ruler"] + "  " + str(_bm.get("ruler_note", "")))
+        with _h3:
+            st.metric("Model is better by",
+                      pct_points(_bm["skill_pct"]) if _bm.get("skill_pct") is not None
+                      else NOT_REPORTED,
+                      help=HELP["skill"])
+        st.caption(f"Both figures come from run `{_bm['run_id']}` on {_bm.get('window')} "
+                   f"(n={_bm.get('n')}). They describe how this recipe performed on 2024 — not the "
+                   f"forecast below, which has no actual values to be scored against yet.")
+    else:
+        st.caption(f"No audited benchmark error is recorded for {target}: "
+                   f"{_bm.get('ruler_note', NOT_REPORTED)}.")
+
     left, right = st.columns([3, 2], gap="large")
 
     # Band chart
@@ -156,6 +192,23 @@ for target in fc["target"].unique():
             x=d, y=rows["p50"] / 1e6, mode="lines+markers",
             line=dict(color=COLORS["info"], width=3),
             marker=dict(size=9), name="Central estimate"))
+
+        # ── the persistence benchmark, READ from the artifact ───────────────────────
+        # `origin_value` IS the h-step persistence prediction. Evaluation's
+        # compute_persistence_baseline() documents its definition as y_hat(t+h) = y(t) and computes
+        # it from this same column, so plotting it reads the evaluator's own field rather than
+        # reimplementing the benchmark. Flat because all five days share one origin.
+        _bench = _benchmark_series(rows)
+        if _bench is not None:
+            fig.add_trace(go.Scatter(
+                x=d, y=_bench / 1e6, mode="lines+markers",
+                line=dict(color=_TOK["stop_ink"], width=2, dash="dashdot"),
+                marker=dict(size=7, symbol="x"),
+                name=_BENCH_LABEL,
+                hovertemplate=("<b>%{x|%a %d %b %Y}</b><br>"
+                               "Benchmark (value carried forward): %{y:,.1f} M GEL<br>"
+                               "<i>the yardstick every model here is scored against</i>"
+                               "<extra></extra>")))
         fig.update_layout(
             height=340, margin=dict(l=10, r=10, t=30, b=10),
             yaxis_title="Million lari", xaxis_title=None,
@@ -165,6 +218,16 @@ for target in fc["target"].unique():
         plotly_chrome(fig)
         st.plotly_chart(fig, use_container_width=True,
                         config={"displaylogo": False})
+        st.markdown(reading_this_chart(
+            "The solid line is the central estimate for each working day and the shaded band is "
+            "the range we expect the actual figure to fall inside on eight days out of ten. A "
+            "wider band means less certainty about that day, not a worse forecast.<br><br>"
+            "The <b>dash-dot line with crosses is the benchmark</b>: assume the value from the "
+            "origin date simply repeats. It is flat because all five days are forecast from the "
+            "same origin. Every accuracy figure in this project is stated as an improvement over "
+            "that line, which is what makes figures from different model families comparable. "
+            "<b>These dates have no actual value yet</b>, so the benchmark here is a rival "
+            "prediction to compare against — not an error."), unsafe_allow_html=True)
 
     # Table in millions
     with right:
@@ -173,6 +236,9 @@ for target in fc["target"].unique():
             "Low": rows["p10"].map(lambda v: m(v)),
             "Central": rows["p50"].map(lambda v: m(v)),
             "High": rows["p90"].map(lambda v: m(v)),
+            "Benchmark": (_benchmark_series(rows).map(lambda v: m(v))
+                          if _benchmark_series(rows) is not None
+                          else [NOT_REPORTED] * len(rows)),
         })
         st.caption(UNIT_LABEL.capitalize())
         st.dataframe(tbl, hide_index=True, use_container_width=True)

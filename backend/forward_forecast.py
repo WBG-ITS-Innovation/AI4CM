@@ -301,3 +301,83 @@ def write_artifacts(out_dir: Path, forecasts: pd.DataFrame, provenance: Dict,
         g.write_text(json.dumps(gates, indent=2, default=str), encoding="utf-8")
         paths["gates_json"] = str(g)
     return paths
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THE PERSISTENCE BENCHMARK, READ NOT RECOMPUTED
+#
+# `origin_value` in a forward artifact IS the h-step persistence prediction. Evaluation's
+# `forecast_integrity.compute_persistence_baseline()` documents its definition as
+# `y_hat(t+h) = y(t)` (the origin value) and computes it from exactly that column, so a page
+# reading `origin_value` is reading the identical field the evaluator reads — not a second
+# implementation of it.
+#
+# For a forward run every horizon shares one origin, so the series is a FLAT carried-forward line.
+# That is not a simplification; it is what "today's value carried forward" means at every horizon
+# from a single origin.
+#
+# The benchmark's *error* is a different quantity and deliberately not derived here: forward dates
+# have no truth, so there is nothing to measure against. The audited benchmark MAE comes from the
+# DEV credentials run instead — see `benchmark_mae_for_target`.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Column carrying the persistence prediction in a forward artifact.
+BENCHMARK_COLUMN = "origin_value"
+
+BENCHMARK_LABEL = "Benchmark: today's value carried forward"
+
+BENCHMARK_EXPLANATION = (
+    "The benchmark every model in this project is measured against: assume the value from the "
+    "origin date repeats. It is flat because all five days are forecast from the same origin. "
+    "These dates have no actual value yet, so this is a rival prediction to compare against, not "
+    "an error measurement."
+)
+
+
+def benchmark_series(forecasts: "pd.DataFrame") -> Optional["pd.Series"]:
+    """The persistence prediction per forward row, read from the artifact.
+
+    Returns ``None`` when the column is absent, so a caller renders "not reported" rather than
+    falling back to a computation of its own.
+    """
+    if BENCHMARK_COLUMN not in getattr(forecasts, "columns", []):
+        return None
+    s = pd.to_numeric(forecasts[BENCHMARK_COLUMN], errors="coerce")
+    return None if s.isna().all() else s
+
+
+def benchmark_mae_for_target(target: str) -> Dict:
+    """The audited benchmark MAE for ``target``, from its DEV credentials run.
+
+    Read from ``experiments/runs/<run_id>.json`` (field ``ruler``) via the registry, which labels it
+    "h=5 business-day persistence, the single shared ruler across all four families". Nothing is
+    recomputed: this is the number the recorded skill was calculated from, and
+    ``(ruler - dev_mae) / ruler`` reproduces each recorded skill to ~1e-5, the residual being the
+    log storing skill to four decimals.
+    """
+    import json as _json
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from registry import load_registry
+
+    for rec in load_registry()["recipes"]:
+        if rec["target"] != target:
+            continue
+        cred = rec["dev_credentials"]
+        rid = cred["run_id"]
+        jp = Path(__file__).resolve().parent.parent / "experiments" / "runs" / f"{rid}.json"
+        ruler = None
+        if jp.exists():
+            try:
+                ruler = _json.loads(jp.read_text(encoding="utf-8")).get("ruler")
+            except Exception:
+                ruler = None
+        return {"target": target, "run_id": rid, "window": cred.get("window"),
+                "n": cred.get("n"), "benchmark_mae": ruler,
+                "model_mae": cred.get("dev_mae"),
+                "skill_pct": cred.get("skill_vs_ruler_pct"),
+                "ruler_note": cred.get("ruler_note"),
+                "available": ruler is not None}
+    return {"target": target, "run_id": None, "benchmark_mae": None, "model_mae": None,
+            "skill_pct": None, "available": False,
+            "ruler_note": "no registry recipe, so no audited benchmark for this target"}
