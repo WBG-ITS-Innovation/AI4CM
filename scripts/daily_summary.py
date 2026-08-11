@@ -96,20 +96,38 @@ def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> 
         the series.  Skill above the threshold and "reproduces persistence"
         can both be true at once — measured against different baselines — and
         a model that only replays yesterday is not usable for planning even
-        when it clears the skill bar.
+        when it clears the skill bar;
+      * the intervals are miscalibrated (item 5).  This is the FOURTH distinct
+        verdict, and it used to be invisible here: a coverage failure arrived
+        only as `run_status=FAILED_QUALITY` or the generic "quality gate
+        failed", so an E_QUANTILE family withheld for broken intervals was
+        indistinguishable from one withheld for poor skill.  A model whose P50
+        is excellent and whose 80% band covers 43% of outcomes needs a
+        different fix from one that simply cannot forecast, and the reason a
+        family was withheld is what a treasury reader acts on.
+
+    The four verdicts — leakage, no signal, persistence-mimicry, coverage —
+    are deliberately independent conditions, each with its own phrasing, and
+    ``test_failure_mode_distinctness.py`` pins the separation.
     """
     reasons: list[str] = []
+    coverage_reasons = _coverage_failure_reasons(report or {})
     if report:
         status = str(report.get("run_status", "")).strip().upper()
+        generic = None
         if status == "FAILED_QUALITY":
-            reasons.append("run_status=FAILED_QUALITY")
+            generic = "run_status=FAILED_QUALITY"
         else:
             # X9: read through the single canonical reader. This function previously checked
             # only `quality_gate_passed`, so a B_ML run -- which wrote the INVERTED
             # `quality_gate_failed` -- was reported as PASSING its gate when it had failed.
             from forecast_integrity import read_gate
             if read_gate(report) is False:
-                reasons.append("quality gate failed (per the family's integrity report)")
+                generic = "quality gate failed (per the family's integrity report)"
+        # Suppress the generic line only when the specific cause is already stated below.
+        # Dropping it unconditionally would hide failures that have no named cause.
+        if generic and not coverage_reasons:
+            reasons.append(generic)
     if leakage_flag:
         reasons.append("leakage flag raised")
     if report.get("signal_detected") is False:
@@ -118,7 +136,53 @@ def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> 
         reasons.append(f"no signal beyond shuffled targets (ratio {ratio_s})")
     if shift_flag:
         reasons.append("forecast is persistence-like (shift diagnostic)")
+    reasons.extend(coverage_reasons)
     return reasons
+
+
+def _coverage_failure_reasons(report: dict) -> list[str]:
+    """Interval miscalibration, phrased as its own verdict.
+
+    The nominal level is read as data (``coverage_nominal``) and only falls back to the key name
+    when a run predates that field — the level is a property of the fitted alphas, not of the
+    string that carries the number (audit field #2).
+
+    Deliberately says nothing about skill, leakage or persistence: a family whose intervals are
+    broken but whose median is excellent must be told exactly that.
+    """
+    out: list[str] = []
+    # 1. The family's own gate already named coverage. Trust it and quote it.
+    for r in report.get("quality_gate_reasons") or []:
+        if "coverage" in str(r).lower():
+            out.append(f"intervals miscalibrated: {r}")
+    if out:
+        return out
+
+    # 2. No named reason, but the numbers are present and outside the band.
+    measured = None
+    for key in ("coverage_p10_p90", "coverage"):
+        if _is_number(report.get(key)):
+            measured = float(report[key])
+            break
+    if measured is None:
+        for key, val in report.items():
+            if str(key).startswith("coverage_p") and _is_number(val):
+                measured = float(val)
+                break
+    if measured is None:
+        return out
+
+    nominal = report.get("coverage_nominal")
+    nominal = float(nominal) if _is_number(nominal) else 0.80
+    band = report.get("coverage_band")
+    if isinstance(band, (list, tuple)) and len(band) == 2 and all(_is_number(b) for b in band):
+        lo, hi = float(band[0]), float(band[1])
+    else:
+        lo, hi = max(0.0, nominal - 0.10), min(1.0, nominal + 0.10)
+    if not (lo <= measured <= hi):
+        out.append(f"intervals miscalibrated: coverage {measured:.1%} outside "
+                   f"[{lo:.0%}, {hi:.0%}] (nominal {nominal:.0%})")
+    return out
 
 
 def _fmt_money(x) -> str:

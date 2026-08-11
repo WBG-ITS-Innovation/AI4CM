@@ -369,27 +369,154 @@ def _fit_residual_rf_quantiles(X_tr, y_tr, X_te, quantiles: Tuple[float, ...]) -
         preds[hi] = np.maximum(preds[hi], preds[lo])
     return preds
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE NOMINAL LEVEL IS DATA, NOT A KEY NAME
+#
+# Audit field #2. The level a coverage figure describes used to live ONLY in the string
+# `coverage_p10_p90`. A consumer -- the backtest report, the Dashboard, a Treasury reader --
+# takes that name as authoritative, while nothing tied it to the alphas actually fitted.
+#
+# The dangerous case is not a renamed key, it is a re-configured one. `Config.quantiles` is
+# ordinary configuration: set it to (0.05, 0.50, 0.95) and the family produces a **90%**
+# interval. Before this block the gate still tested that coverage against [0.70, 0.90] -- a band
+# built around an assumed nominal 80% -- so a perfectly calibrated 90% interval would have been
+# FAILED for miscalibration, and a badly calibrated one could have passed. The verdict would have
+# been wrong for a reason no artifact recorded.
+#
+# So the level is derived from the fitted alphas, written as data next to the number, and the key
+# name is asserted against it. A key that no longer matches its alphas is a hard error, because
+# emitting `coverage_p10_p90` for a 5/95 interval is not a cosmetic defect -- it is a mislabelled
+# measurement.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Half-width of the accepted coverage band, in coverage points. ~3-sigma binomial at ~150 points.
+COVERAGE_TOLERANCE = 0.10
+
+
+class CoverageLevelMismatch(ValueError):
+    """A coverage key claims quantiles the pipeline did not fit."""
+
+
+def coverage_spec(quantiles: Sequence[float]) -> Dict:
+    """What interval a coverage number over ``quantiles`` actually describes.
+
+    The widest pair is the interval: coverage is reported for the outermost quantiles, so the
+    nominal level is ``max - min``. Everything downstream reads the level from here rather than
+    assuming 80%.
+    """
+    qs = sorted(float(q) for q in quantiles)
+    if len(qs) < 2:
+        return {"measurable": False, "coverage_key": None, "coverage_nominal": None,
+                "coverage_lower_quantile": None, "coverage_upper_quantile": None,
+                "reason": (f"an interval needs two quantiles; the pipeline is configured with "
+                           f"{qs} so no coverage can be measured")}
+    lo, hi = qs[0], qs[-1]
+    return {
+        "measurable": True,
+        "coverage_lower_quantile": lo,
+        "coverage_upper_quantile": hi,
+        "coverage_nominal": round(hi - lo, 10),
+        "coverage_key": f"coverage_p{int(round(lo * 100))}_p{int(round(hi * 100))}",
+        "reason": None,
+    }
+
+
+def assert_coverage_key_matches_alphas(key: str, quantiles: Sequence[float]) -> Dict:
+    """Refuse a coverage key that does not name the quantiles actually fitted.
+
+    Raises rather than warning: a mislabelled coverage figure is read as authoritative by every
+    consumer, and there is no safe degraded behaviour for publishing one.
+    """
+    spec = coverage_spec(quantiles)
+    if not spec["measurable"]:
+        raise CoverageLevelMismatch(
+            f"cannot emit {key!r}: {spec['reason']}")
+    if key != spec["coverage_key"]:
+        raise CoverageLevelMismatch(
+            f"coverage key {key!r} does not match the fitted quantiles "
+            f"{sorted(float(q) for q in quantiles)}, which describe a "
+            f"{spec['coverage_nominal']:.0%} interval and would be reported as "
+            f"{spec['coverage_key']!r}. The key name is what consumers read as the nominal "
+            f"level, so a mismatch is a mislabelled measurement, not a cosmetic defect.")
+    return spec
+
+
+#: The key this family has always published, and which `scripts/backtest_report.py` and the
+#: Dashboard read. It is a *claim about the alphas*, so it is only emitted when it is true.
+LEGACY_COVERAGE_KEY = "coverage_p10_p90"
+
+
+def emit_coverage(into: Dict, coverage: Optional[float],
+                  quantiles: Sequence[float]) -> Dict:
+    """Write a coverage number together with the level it describes.
+
+    One emitter for all three artifacts (leaderboard, metrics_long, integrity report) so the
+    number and its level cannot drift apart in one of them.
+
+    The derived key is always correct by construction. ``LEGACY_COVERAGE_KEY`` is written *only*
+    when it genuinely names the fitted alphas -- so a reconfigured pipeline degrades to a
+    consumer finding no `coverage_p10_p90` and rendering "not reported", rather than reading a
+    90% coverage figure under a name that says 80%. Silence beats a mislabelled number.
+    """
+    spec = coverage_spec(quantiles)
+    into["coverage_key"] = spec["coverage_key"]
+    into["coverage_nominal"] = spec["coverage_nominal"]
+    into["coverage_lower_quantile"] = spec["coverage_lower_quantile"]
+    into["coverage_upper_quantile"] = spec["coverage_upper_quantile"]
+    if not spec["measurable"]:
+        into["coverage_unavailable_reason"] = spec["reason"]
+        return spec
+
+    into[spec["coverage_key"]] = coverage
+    into["coverage_band"] = list(coverage_band_for(spec["coverage_nominal"]))
+    try:
+        assert_coverage_key_matches_alphas(LEGACY_COVERAGE_KEY, quantiles)
+        into[LEGACY_COVERAGE_KEY] = coverage
+    except CoverageLevelMismatch as exc:
+        into["legacy_coverage_key_omitted"] = str(exc)
+    return spec
+
+
+def coverage_band_for(nominal: float,
+                      tolerance: float = COVERAGE_TOLERANCE) -> Tuple[float, float]:
+    """The accepted band around a nominal level, clamped to [0, 1].
+
+    Rounded because it is published: an unrounded ``0.7000000000000001`` in an artifact invites a
+    reader to wonder what it means.
+    """
+    return (round(max(0.0, nominal - tolerance), 10),
+            round(min(1.0, nominal + tolerance), 10))
+
+
 def quantile_quality_gate(skill_pct: float, coverage: Optional[float],
                           min_skill: float = 5.0,
-                          coverage_band: Tuple[float, float] = (0.70, 0.90),
+                          coverage_band: Optional[Tuple[float, float]] = None,
+                          nominal: float = 0.80,
                           ) -> Tuple[bool, List[str]]:
     """Quality gate for a quantile model: skill AND calibrated intervals.
 
-    A quantile family exists to produce intervals a treasury can plan
-    around, so miscalibrated coverage fails the gate even when P50 skill
-    is excellent.  The band is the nominal 80% (P10–P90) ± 10pp, roughly
-    a 3-sigma binomial tolerance at ~150 evaluation points.
-    Returns (passed, reasons); reasons is empty when passed.
+    A quantile family exists to produce intervals a treasury can plan around, so miscalibrated
+    coverage fails the gate even when P50 skill is excellent.
+
+    ``nominal`` is the level the intervals were fitted for and must be passed from
+    ``coverage_spec()`` rather than assumed; the band defaults to nominal ± ``COVERAGE_TOLERANCE``
+    (~3-sigma binomial at ~150 evaluation points). An explicit ``coverage_band`` still overrides,
+    for callers that have a reason. The default ``nominal=0.80`` reproduces the previous
+    ``(0.70, 0.90)`` exactly, so existing verdicts do not move.
+
+    Every reason names which of the two conditions failed, so a coverage failure is never read as
+    a skill failure -- the four verdicts stay four.
     """
+    band = coverage_band if coverage_band is not None else coverage_band_for(nominal)
     reasons: List[str] = []
     if not np.isfinite(skill_pct) or skill_pct < min_skill:
         reasons.append(f"skill {skill_pct:.2f}% < {min_skill:.1f}% required")
     if coverage is None or not np.isfinite(coverage):
-        reasons.append("coverage not measurable (P10/P90 missing)")
-    elif not (coverage_band[0] <= coverage <= coverage_band[1]):
+        reasons.append("coverage not measurable (interval quantiles missing)")
+    elif not (band[0] <= coverage <= band[1]):
         reasons.append(
             f"coverage {coverage:.1%} outside "
-            f"[{coverage_band[0]:.0%}, {coverage_band[1]:.0%}] (nominal 80%)"
+            f"[{band[0]:.0%}, {band[1]:.0%}] (nominal {nominal:.0%})"
         )
     return (len(reasons) == 0, reasons)
 
@@ -582,9 +709,11 @@ def run_pipeline(CONFIG: Config) -> None:
                 pl = _pinball_loss(y_te_out, q_preds[q], q)
                 pinballs[q].append(pl)
 
-            if 0.1 in CONFIG.quantiles and 0.9 in CONFIG.quantiles:
-                lower = q_preds[0.1]
-                upper = q_preds[0.9]
+            # The interval is whatever the configured alphas describe -- not a hardcoded 10/90.
+            _cspec = coverage_spec(CONFIG.quantiles)
+            if _cspec["measurable"]:
+                lower = q_preds[_cspec["coverage_lower_quantile"]]
+                upper = q_preds[_cspec["coverage_upper_quantile"]]
                 cov = float(((y_te_out >= lower) & (y_te_out <= upper)).mean())
                 coverages.append(cov)
 
@@ -613,7 +742,8 @@ def run_pipeline(CONFIG: Config) -> None:
         for q in sorted(CONFIG.quantiles):
             agg[f"pinball_q{int(q*100)}"] = float(np.mean(pinballs[q]))
         if coverages:
-            agg["coverage_p10_p90"] = float(np.mean(coverages))
+            # The level travels WITH the number, so a reader never parses the key name.
+            emit_coverage(agg, float(np.mean(coverages)), CONFIG.quantiles)
         leaderboard_rows.append(agg)
 
         # Long metrics for each fold/quantile
@@ -628,11 +758,14 @@ def run_pipeline(CONFIG: Config) -> None:
                     "value": float(pinballs[q][i-1])
                 })
         if coverages:
+            _spec = coverage_spec(CONFIG.quantiles)
             for i, v in enumerate(coverages, 1):
                 metrics_rows.append({
                     "model": model_name, "fold": i,
-                    "metric": "coverage_p10_p90",
-                    "quantile": None, "value": float(v)
+                    "metric": _spec["coverage_key"],
+                    # `quantile` was always blank on a coverage row, which is exactly the field
+                    # that should have carried the level. It now does.
+                    "quantile": _spec["coverage_nominal"], "value": float(v)
                 })
 
     # Write master outputs
@@ -659,20 +792,32 @@ def run_pipeline(CONFIG: Config) -> None:
             mae_persist = compute_persistence_baseline(g)["mae_persistence"]
             mae_p50 = float(np.mean(np.abs(g["y_true"].values - g["yhat_p50"].values)))
             skill_pct = ((mae_persist - mae_p50) / mae_persist * 100.0) if mae_persist > 0 else float("nan")
+            # Read the interval off the fitted alphas, then look for the columns THOSE imply.
+            cspec = coverage_spec(CONFIG.quantiles)
             coverage = None
-            if {"yhat_p10", "yhat_p90"}.issubset(g.columns):
-                coverage = float(np.mean((g["y_true"].values >= g["yhat_p10"].values)
-                                         & (g["y_true"].values <= g["yhat_p90"].values)))
-            gate_passed, gate_reasons = quantile_quality_gate(skill_pct, coverage)
-            per_model[str(model_name)] = {
+            lo_col = hi_col = None
+            if cspec["measurable"]:
+                lo_col = f"yhat_p{int(round(cspec['coverage_lower_quantile'] * 100))}"
+                hi_col = f"yhat_p{int(round(cspec['coverage_upper_quantile'] * 100))}"
+                if {lo_col, hi_col}.issubset(g.columns):
+                    coverage = float(np.mean((g["y_true"].values >= g[lo_col].values)
+                                             & (g["y_true"].values <= g[hi_col].values)))
+            # The band follows the nominal level. Assuming 80% here would fail a correctly
+            # calibrated 90% interval for miscalibration -- a wrong verdict for a recorded reason.
+            nominal = cspec["coverage_nominal"] if cspec["measurable"] else 0.80
+            gate_passed, gate_reasons = quantile_quality_gate(
+                skill_pct, coverage, nominal=nominal)
+            entry = {
                 "n_predictions": int(len(g)),
                 "mae_p50": mae_p50,
                 "mae_persistence": mae_persist,
                 "skill_pct": skill_pct,
-                "coverage_p10_p90": coverage,
+                "coverage_source_columns": [lo_col, hi_col],
                 "gate_passed": gate_passed,
                 "gate_reasons": gate_reasons,
             }
+            emit_coverage(entry, coverage, CONFIG.quantiles)
+            per_model[str(model_name)] = entry
             cov_s = f"{coverage:.1%}" if coverage is not None else "n/a"
             print(f"[quantile] {model_name}: n={len(g)}, P50 MAE={mae_p50:,.2f}, "
                   f"Persistence MAE={mae_persist:,.2f}, Skill={skill_pct:.2f}%, "
@@ -699,7 +844,9 @@ def run_pipeline(CONFIG: Config) -> None:
                 "mae_p50": best["mae_p50"],
                 "mae_persistence": best["mae_persistence"],
                 "skill_pct": best["skill_pct"],
-                "coverage_p10_p90": best["coverage_p10_p90"],
+                # Carried through from the winning model, level included -- see emit_coverage.
+                **{k: v for k, v in best.items() if k.startswith("coverage")
+                   or k == LEGACY_COVERAGE_KEY},
                 "quality_gate_passed": best["gate_passed"],
                 "quality_gate_reasons": best["gate_reasons"],
                 "run_status": "SUCCESS" if best["gate_passed"] else "FAILED_QUALITY",

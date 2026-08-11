@@ -164,6 +164,81 @@ def test_all_three_conditions_yield_three_separate_reasons():
     assert len(rs) == len(set(rs)) >= 3, f"expected 3+ distinct reasons, got {rs}"
 
 
+# ── the FOURTH verdict: coverage (item 5) ─────────────────────────────────
+
+def test_coverage_failure_is_its_own_verdict_not_a_generic_gate_failure():
+    """A broken interval must not read as "quality gate failed" and nothing more.
+
+    Before item 5 a coverage failure reached this function only as run_status=FAILED_QUALITY, so
+    an E_QUANTILE family withheld for a 43%-covering 80% band was indistinguishable from one
+    withheld for poor skill. Those need different fixes.
+    """
+    rs = _reasons({"run_status": "FAILED_QUALITY", "signal_detected": True,
+                   "quality_gate_reasons": ["coverage 43.2% outside [70%, 90%] (nominal 80%)"],
+                   "coverage_p10_p90": 0.432, "coverage_nominal": 0.80})
+    joined = _joined(rs)
+    assert "intervals miscalibrated" in joined, rs
+    assert "43.2%" in joined, "the reason must quote the measured coverage"
+    assert not any("leak" in r.lower() for r in rs), rs
+    assert not any("no signal" in r.lower() for r in rs), rs
+    assert not any("persistence-like" in r.lower() for r in rs), rs
+    assert "run_status=FAILED_QUALITY" not in joined, (
+        "the generic line should give way once the specific cause is named")
+
+
+def test_coverage_failure_is_detected_from_the_numbers_when_no_reason_is_named():
+    rs = _reasons({"run_status": "SUCCESS", "signal_detected": True,
+                   "coverage_p10_p90": 0.432, "coverage_nominal": 0.80})
+    assert any("intervals miscalibrated" in r for r in rs), rs
+
+
+def test_a_coverage_failure_does_not_mention_skill_when_skill_is_fine():
+    """The wrong reason costs as much trust as the wrong number."""
+    rs = _reasons({"run_status": "SUCCESS", "signal_detected": True, "skill_pct": 45.0,
+                   "coverage_p10_p90": 0.432, "coverage_nominal": 0.80})
+    assert not any("skill" in r.lower() for r in rs), rs
+
+
+def test_the_nominal_level_is_read_as_data_not_assumed():
+    """A 91% coverage figure is a PASS at nominal 90% and a FAIL at an assumed 80%.
+
+    This is audit field #2 reaching the verdict layer: the level travels with the number, so a
+    correctly calibrated 90% interval is not withheld for miscalibration.
+    """
+    ninety = {"run_status": "SUCCESS", "signal_detected": True,
+              "coverage_p5_p95": 0.910, "coverage_nominal": 0.90,
+              "coverage_band": [0.80, 1.00]}
+    assert _reasons(ninety) == [], (
+        f"a well-calibrated 90% interval was withheld: {_reasons(ninety)}")
+
+    # The identical number, with the level left to be assumed, is judged against 80%.
+    assumed = {"run_status": "SUCCESS", "signal_detected": True, "coverage_p10_p90": 0.910}
+    assert any("intervals miscalibrated" in r for r in _reasons(assumed)), _reasons(assumed)
+
+
+def test_all_four_conditions_yield_four_separate_reasons():
+    """Co-occurrence must not collapse the four verdicts into one."""
+    rs = _reasons({"signal_detected": False, "shuffled_to_normal_ratio": 0.83,
+                   "run_status": "SUCCESS",
+                   "coverage_p10_p90": 0.432, "coverage_nominal": 0.80},
+                  leak=True, shift=True)
+    joined = _joined(rs)
+    for phrase in ("leak", "no signal", "persistence-like", "intervals miscalibrated"):
+        assert phrase in joined, f"{phrase!r} missing from {rs}"
+    assert len(rs) == len(set(rs)) >= 4, f"expected 4+ distinct reasons, got {rs}"
+
+
+def test_a_measurable_and_calibrated_coverage_produces_no_reason():
+    assert _reasons({"run_status": "SUCCESS", "signal_detected": True,
+                     "coverage_p10_p90": 0.781, "coverage_nominal": 0.80}) == []
+
+
+def test_absent_coverage_is_not_treated_as_a_failure():
+    """Point-model families log no coverage; that is 'not measured', not 'failed'."""
+    rs = _reasons({"run_status": "SUCCESS", "signal_detected": True})
+    assert not any("interval" in r.lower() for r in rs), rs
+
+
 def test_signal_present_and_clean_shift_produces_no_reason():
     """The gate must stay quiet when nothing is wrong."""
     assert _reasons({"signal_detected": True, "run_status": "SUCCESS"}) == []
