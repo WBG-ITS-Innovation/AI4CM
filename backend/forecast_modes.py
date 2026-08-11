@@ -86,6 +86,11 @@ class OfficialResult:
     provenance: Dict
     gates: Dict
 
+    #: ``estimator_store.FittedEstimator`` per fit, retained by ``publish_official``. Exploratory
+    #: results deliberately have no equivalent: nothing unpublished needs re-deriving, and the
+    #: blobs carry Treasury data.
+    estimators: List = field(default_factory=list)
+
     mode: str = MODE_OFFICIAL
 
     @property
@@ -167,14 +172,16 @@ def official_run(target: str, data_path: Path, horizon: int = VALIDATED_HORIZON)
         transform=r.get("params", {}).get("target_transform", "raw"),
     )
     raw = pd.read_csv(data_path)
-    fc = run_forward(raw, champ)
+    sink: List = []
+    fc = run_forward(raw, champ, estimator_sink=sink)
     prov = build_provenance(str(data_path), [champ])
     gates = {r["id"]: {"target": target,
                        "gates": r.get("dev_credentials", {}).get("gates", {}),
                        "status": r["status"],
                        "approved_by": r["approved_by"]}}
     return OfficialResult(target=target, recipe_id=r["id"], model=r["point_model"],
-                          horizon=horizon, forecasts=fc, provenance=prov, gates=gates)
+                          horizon=horizon, forecasts=fc, provenance=prov, gates=gates,
+                          estimators=sink)
 
 
 def exploratory_run(target: str, model: str, data_path: Path,
@@ -224,7 +231,16 @@ def publish_official(result, *, published_root: Optional[Path] = None,
 
     src = Path(forward_dir or DEFAULT_OUT)
     write_artifacts(src, result.forecasts, result.provenance, result.gates)
-    return publish(src, published_root=published_root)
+    dest = publish(src, published_root=published_root)
+
+    # Retain what produced the numbers. The blobs are gitignored and the manifest is not -- see
+    # estimator_store's module docstring for why this one published artifact is not tracked.
+    if getattr(result, "estimators", None):
+        from estimator_store import save_estimators
+        origin = pd.DatetimeIndex(pd.to_datetime(result.forecasts["origin_date"]).unique())
+        save_estimators(dest, result.estimators, keep_index=origin,
+                        provenance=result.provenance)
+    return dest
 
 
 def next_issue_date(published_root: Optional[Path] = None) -> str:

@@ -42,17 +42,18 @@ def champions_from_registry() -> list:
     return out
 
 
-def main() -> int:
+def main(publish: bool = False) -> int:
     champs = champions_from_registry()
     raw = pd.read_csv(DATA)
     print(f"[forward] data through {pd.to_datetime(raw['date']).max().date()}, "
           f"{len(raw)} rows")
 
     frames = []
+    sink: list = []
     for c in champs:
         print(f"[forward] {c.target}: {c.point_model} + GBQuantile, "
               f"groups={sorted(c.fiscal_groups)}, exog={sorted(c.exog_blocks) or 'none'}")
-        df = run_forward(raw, c)
+        df = run_forward(raw, c, estimator_sink=sink)
         frames.append(df)
         for _, r in df.iterrows():
             print(f"           {r['target_date'].date()}  h={r['horizon']}  "
@@ -74,8 +75,36 @@ def main() -> int:
     for k, v in paths.items():
         print(f"  {k}: {v}")
     print(f"[forward] test_window_touched = {prov['test_window_touched']}")
+
+    if publish:
+        dest = _publish_and_retain(forecasts, prov, sink)
+        print(f"[forward] published to {dest}")
     return 0
 
 
+def _publish_and_retain(forecasts: pd.DataFrame, prov: dict, sink: list) -> Path:
+    """Publish the issue and retain the estimators behind it, then prune old blobs.
+
+    Retention is opt-in on this runner because publishing is: an accidental publish is not
+    reversible, since a published forecast is the only record of what was said.
+    """
+    from estimator_store import (DEFAULT_KEEP_LAST, issues_with_unscored_horizons,
+                                 prune_estimators, save_estimators)
+    from published_forecasts import PUBLISHED_ROOT, publish
+
+    dest = publish(DEFAULT_OUT)
+    origin = pd.DatetimeIndex(pd.to_datetime(forecasts["origin_date"]).unique())
+    mpath = save_estimators(dest, sink, keep_index=origin, provenance=prov)
+    total = json.loads(mpath.read_text())["total_bytes"]
+    print(f"[forward] retained {len(sink)} estimators, {total / 1024 / 1024:.2f} MB "
+          f"(blobs gitignored; manifest tracked -- see backend/estimator_store.py)")
+
+    protect = issues_with_unscored_horizons(PUBLISHED_ROOT)
+    for act in prune_estimators(PUBLISHED_ROOT, keep_last=DEFAULT_KEEP_LAST, protect=protect):
+        print(f"[forward] pruned {act['n_blobs']} blobs from {act['issue_date']}, "
+              f"freed {act['bytes_freed'] / 1024 / 1024:.2f} MB")
+    return dest
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(publish="--publish" in sys.argv))

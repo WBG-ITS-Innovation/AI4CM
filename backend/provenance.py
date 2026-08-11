@@ -94,12 +94,16 @@ def describe_code() -> Dict[str, Any]:
 
 
 def describe_environment(packages=("numpy", "pandas", "scikit-learn", "statsmodels",
-                                   "xgboost", "lightgbm", "torch")) -> Dict[str, Any]:
+                                   "xgboost", "lightgbm", "torch", "joblib")) -> Dict[str, Any]:
     """Package versions.
 
     These change the model set silently: ``b_ml_pipeline`` gates XGBoost and LightGBM
     behind import success, so the same config produces a different leaderboard on a
     machine where one is missing.
+
+    ``joblib`` is here because it is the reader of the persisted estimators
+    (``estimator_store``), not because it affects a fit: a pickle written by one joblib and
+    read by another is exactly the mismatch that must be detectable at load time.
     """
     versions: Dict[str, Optional[str]] = {}
     for name in packages:
