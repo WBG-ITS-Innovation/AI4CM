@@ -182,13 +182,52 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "the edges cannot cross. Early stopping leaves a gap the size of the forecast horizon, so "
         "the stopping decision is not made against rows whose answers sit inside the validation "
         "slice."},
-    "Theta": {"family": "Statistical", "summary":
-        "A classical decomposition method: de-trend the series, forecast the pieces, recombine. "
-        "Strong on smooth seasonal series and a well-known competition benchmark. Not currently "
-        "in the pool."},
+    # ── A_STAT (backend/run_a_stat.py) ──────────────────────────────────────────────────────
+    # These keys use the family's own UPPERCASE dispatch names. They were previously "ETS" and
+    # "Theta", which matched nothing the pipeline dispatches on and nothing model_pool()
+    # enumerated -- so both descriptions were unreachable from the page and no test noticed
+    # (item 6 part 3). The names now come from run_a_stat.registry_models().
     "ETS": {"family": "Statistical", "summary":
         "Exponential smoothing — a weighted average of the past where recent observations count "
         "for more, with optional trend and seasonal terms. Uses only the target's own history."},
+    "THETA": {"family": "Statistical", "summary":
+        "A classical decomposition method: de-trend the series, forecast the pieces, recombine. "
+        "Strong on smooth seasonal series and a well-known competition benchmark."},
+    "SARIMAX": {"family": "Statistical", "summary":
+        "Seasonal ARIMA with optional external regressors. Models the series through its own "
+        "autocorrelation and differencing, and is the only A_STAT model that can take exogenous "
+        "inputs."},
+    "STL_ARIMA": {"family": "Statistical", "summary":
+        "Splits the series into trend, season and remainder (STL), forecasts the remainder with "
+        "ARIMA, then recombines. Useful when the seasonal shape is strong and stable."},
+    "NAIVE": {"family": "Baseline", "summary":
+        "Carry the last observed value forward. This is the reference every other model in the "
+        "project is measured against, not a competitor — see the h-step persistence ruler."},
+    "WEEKDAY_MEAN": {"family": "Baseline", "summary":
+        "Predict each day with the historical average for that weekday. A calendar-only "
+        "reference: it knows what Tuesdays look like and nothing else."},
+    "MOVAVG": {"family": "Baseline", "summary":
+        "Predict the mean of the last N observations (7 by default). A smoothing reference with "
+        "no trend or seasonal term."},
+
+    # ── C_DL (backend/c_dl_registry.py) ─────────────────────────────────────────────────────
+    # Added in item 6: the artifact validator errored on a published C_DL champion ("MLP") that
+    # was in no enumerable pool, so a consumer reading the leaderboard could not look up what won.
+    "LSTM": {"family": "Deep learning", "summary":
+        "A recurrent network with gated memory, reading the sequence in order and carrying state "
+        "forward. The standard sequence baseline."},
+    "GRU": {"family": "Deep learning", "summary":
+        "A recurrent network like LSTM with a simpler gating scheme — fewer parameters, often "
+        "comparable accuracy on short series."},
+    "DCNN": {"family": "Deep learning", "summary":
+        "A dilated causal convolution stack: each layer looks further back than the last, so a "
+        "wide receptive field is reached without recurrence. Causal by construction."},
+    "TRANSFORMER": {"family": "Deep learning", "summary":
+        "Self-attention over the input window, so any position can attend to any earlier one "
+        "directly rather than through carried state."},
+    "MLP": {"family": "Deep learning", "summary":
+        "A plain feed-forward network over the flattened window. No sequence structure at all, "
+        "which makes it the honest floor the sequence models have to beat."},
 }
 
 
@@ -266,6 +305,7 @@ def model_pool() -> Dict[str, Dict]:
     sys.path.insert(0, str(BACKEND))
     import b_ml_pipeline as bml
     import e_quantile_daily_pipeline as eq
+    import run_a_stat as astat
 
     out: Dict[str, Dict] = {}
     for name, est in bml.available_models().items():
@@ -282,6 +322,44 @@ def model_pool() -> Dict[str, Dict]:
                                                            "fold rather than holding a configured "
                                                            "instance, so parameters are shown "
                                                            "only where a tuned set was logged.")}})
+
+    # A_STAT builds its models per fold from a single dispatch, like E_QUANTILE, and runs one
+    # model per invocation via TG_MODEL_FILTER. `role` distinguishes the three reference
+    # baselines from the four statistical forecasters, so a count can exclude the references
+    # rather than presenting them as competitors.
+    _roles = astat.model_roles()
+    for name, desc in astat.registry_models().items():
+        out.setdefault(name, {"name": name, "pipeline": "A_STAT", "available": True,
+                              "class": "(constructed per fold)",
+                              "role": _roles.get(name, "forecast"),
+                              "registry_description": desc,
+                              "hyperparameters": {"set_by_pipeline": [], "library_default": [],
+                                                  "n_total": 0,
+                                                  "note": ("This family constructs its model per "
+                                                           "fold from TG_PARAM_OVERRIDES, so "
+                                                           "there is no configured instance to "
+                                                           "introspect.")}})
+
+    # C_DL. Guarded because it imports torch: a machine without it must see the models marked
+    # unavailable, not see them disappear -- the same rule as the boosters below.
+    from c_dl_registry import registry_models as _cdl_registry
+    _cdl_models = _cdl_registry()
+    try:
+        import c_dl_pipeline  # noqa: F401 - probing whether the family can actually run
+        _cdl_available, _cdl_why = True, None
+    except Exception as exc:                       # noqa: BLE001 - torch may be absent
+        _cdl_available, _cdl_why = False, f"{type(exc).__name__}: {exc}"
+    for name, desc in _cdl_models.items():
+        entry = {"name": name, "pipeline": "C_DL", "available": _cdl_available,
+                 "class": "(torch module, built per fold)" if _cdl_available else "(unavailable)",
+                 "registry_description": desc,
+                 "hyperparameters": {"set_by_pipeline": [], "library_default": [], "n_total": 0,
+                                     "note": ("Architecture sizes are set in make_model() and the "
+                                              "training schedule in ConfigDL; neither is a "
+                                              "configured estimator instance to introspect.")}}
+        if not _cdl_available:
+            entry["missing_library"] = _cdl_why
+        out.setdefault(name, entry)
 
     # Models that exist in the code but are unavailable because a library is missing must SAY so
     # rather than vanishing from the page.

@@ -121,6 +121,72 @@ def _fallback_fold(idx: pd.DatetimeIndex, horizon: int) -> List[Tuple[pd.Timesta
     tr_end = idx[-(te_len + horizon)]
     return [(tr_end, te_start, te_end)]
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE MODELS THIS FAMILY OFFERS -- ONE SOURCE OF TRUTH
+#
+# Item 6 part 3. `model_reference.DESCRIPTIONS` described ETS and Theta while `model_pool()`
+# enumerated only B_ML and E_QUANTILE, so two descriptions were unreachable from the Models page
+# and no test could tell. The fix is not to delete the descriptions -- these are real production
+# models, and this module (not the unreferenced `a_stat_models_pipeline.py`) is the one
+# `scripts/run_daily_forecast.sh` invokes. The fix is to make the family enumerable, the same way
+# E_QUANTILE already is via its `registry_models()`.
+#
+# `_fc` dispatches on these names and now REFUSES an unknown one. It used to fall through to a
+# naive forecast, so `TG_MODEL_FILTER=XGBoost` would have produced a carried-forward last value
+# published under the label "XGBoost".
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: ``{NAME: {"summary": ..., "role": "forecast" | "baseline"}}``
+#: ``role`` matters for counting: a reference baseline is not a competing model, and summing the
+#: two would inflate any headline count shown to a client (see reports/gate_audit.md §4).
+A_STAT_MODELS: Dict[str, Dict[str, str]] = {
+    "NAIVE": {"role": "baseline",
+              "summary": "Carry the last observed value forward. The reference every other "
+                         "model is measured against, not a competitor."},
+    "WEEKDAY_MEAN": {"role": "baseline",
+                     "summary": "Predict each day with the historical average for that weekday. "
+                                "A calendar-only reference."},
+    "MOVAVG": {"role": "baseline",
+               "summary": "Predict the mean of the last N observations (default 7). A smoothing "
+                          "reference with no trend or seasonal term."},
+    "ETS": {"role": "forecast",
+            "summary": "Exponential smoothing — a weighted average of the past where recent "
+                       "observations count for more, with optional trend and seasonal terms. "
+                       "Uses only the target's own history."},
+    "SARIMAX": {"role": "forecast",
+                "summary": "Seasonal ARIMA with optional external regressors. Models the series "
+                           "through its own autocorrelation and differencing, and is the only "
+                           "A_STAT model that can take exogenous inputs."},
+    "STL_ARIMA": {"role": "forecast",
+                  "summary": "Split the series into trend, season and remainder (STL), forecast "
+                             "the remainder with ARIMA, then recombine. Useful when the seasonal "
+                             "shape is strong and stable."},
+    "THETA": {"role": "forecast",
+              "summary": "A classical decomposition method: de-trend the series, forecast the "
+                         "pieces, recombine. Strong on smooth seasonal series and a well-known "
+                         "competition benchmark."},
+}
+
+
+class UnknownAStatModel(ValueError):
+    """A model name this family does not implement."""
+
+
+def registry_models() -> Dict[str, str]:
+    """The models this family offers, as ``{name: description}``.
+
+    Mirrors ``e_quantile_daily_pipeline.registry_models()`` so both families are enumerable by the
+    same contract, and so a model cannot be added to the dispatch without appearing in the
+    reports, the Models page and the tests that enumerate it.
+    """
+    return {name: spec["summary"] for name, spec in A_STAT_MODELS.items()}
+
+
+def model_roles() -> Dict[str, str]:
+    """``{name: "forecast" | "baseline"}`` — so a count can exclude the references."""
+    return {name: spec["role"] for name, spec in A_STAT_MODELS.items()}
+
+
 # predictors — each returns (y_pred, y_lo, y_hi) as numpy arrays
 def _nan_pi(n: int) -> Tuple[np.ndarray, np.ndarray]:
     """Return NaN prediction interval arrays of length n."""
@@ -132,6 +198,12 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
     Returns (y_pred, y_lo, y_hi).  Models without native PIs return NaN for y_lo/y_hi.
     """
     m = model.upper()
+    if m not in A_STAT_MODELS:
+        raise UnknownAStatModel(
+            f"A_STAT does not implement {model!r}. Known models: "
+            f"{', '.join(sorted(A_STAT_MODELS))}. Refusing to forecast -- this used to fall "
+            f"through to a carried-forward last value, which would be published under the "
+            f"requested model's name.")
     n = len(idx)
     pi_alpha = float(ov.get("pi_alpha", 0.10))  # 90 % PI by default
 
@@ -208,8 +280,11 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
         y_pred = ThetaModel(y_tr).fit().forecast(n).values.astype(float)
         return y_pred, *_nan_pi(n)
 
-    y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
-    return y_pred, *_nan_pi(n)
+    # Unreachable: membership was checked above. Kept as an explicit failure rather than a
+    # silent naive fallback, so a model listed in A_STAT_MODELS but never wired here is caught.
+    raise UnknownAStatModel(
+        f"{m} is listed in A_STAT_MODELS but has no branch in _fc(); it was added to the "
+        f"registry without being implemented.")
 
 def _plot_overlay(df_slice: pd.DataFrame, out_png: Path, ops: Optional[pd.Series]):
     fig, ax = plt.subplots(figsize=(12,4))
@@ -329,8 +404,15 @@ def main():
         rows.append({"target":target,"horizon":horizon,"cadence":cadence,"model":m,
                      "MAE":_mae(g['y_true'],g['y_pred']),"RMSE":_rmse(g['y_true'],g['y_pred'])})
     metr=pd.DataFrame(rows); metr.to_csv(outroot/"metrics_long.csv", index=False)
-    lb=(metr.groupby("model",as_index=False)["MAE"].mean().sort_values("MAE")
+    # The identity columns must be carried onto EVERY row. This groupby used to aggregate MAE
+    # alone, dropping target/horizon/cadence -- and the persistence row below was concatenated
+    # *with* them, so the baseline row was identified and the model rows were not. A consumer
+    # asking "which model won for target X" got NaN for the winner. RMSE was dropped the same way,
+    # which is why it read as an all-null column despite being computed in metrics_long.
+    lb=(metr.groupby("model",as_index=False)[["MAE","RMSE"]].mean().sort_values("MAE")
+           .assign(target=target, horizon=horizon, cadence=cadence)
            .assign(rank=lambda x: np.arange(1,len(x)+1)))
+    lb=lb[["target","horizon","cadence","model","MAE","RMSE","rank"]]
 
     # ✅ FIX STAT-2 / C-2: Persistence baseline (shared h-step ruler) + quality gate
     _stat_integrity = {"pipeline": "STAT", "target": target, "horizon": horizon}
