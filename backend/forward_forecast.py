@@ -139,6 +139,27 @@ def _build_design(raw: pd.DataFrame, champ: Champion, date_col: str = "date"
     return X, s
 
 
+def _selection_run_id(champ: "Champion") -> Optional[str]:
+    """The run that SELECTED this recipe -- not the fit being persisted.
+
+    Carried so a published estimator can be traced back to the evidence that chose its recipe,
+    under a name that cannot be mistaken for this fit's identity. The distinction is real: that
+    run trained on TRAIN <=2023 and was scored on DEV 2024, while a forward fit uses all history
+    through the issue date. The forward path writes no row to ``experiments/log.csv``, so no
+    logged ``run_id`` describes it.
+    """
+    if not champ.recipe_id:
+        return None
+    try:
+        from registry import load_registry
+        for r in load_registry()["recipes"]:
+            if r["id"] == champ.recipe_id:
+                return (r.get("dev_credentials") or {}).get("run_id")
+    except Exception:                       # pragma: no cover - registry is optional here
+        return None
+    return None
+
+
 def _wrap(est, transform: str, level=None):
     """Apply the recipe's target transform, if any."""
     if transform in (None, "", "raw"):
@@ -148,7 +169,14 @@ def _wrap(est, transform: str, level=None):
 
 
 def _fit_predict_point(X_tr, y_tr, X_new, model_name: str,
-                       transform: str = "raw", level=None) -> float:
+                       transform: str = "raw", level=None) -> Tuple[float, object]:
+    """Fit the point model and return ``(prediction, fitted_estimator)``.
+
+    The estimator used to be discarded. It is returned so a published issue can retain what
+    produced it (``estimator_store``) -- the prediction is computed from the same fitted object
+    in the same call, so nothing about the number changes. ``test_estimator_store.py`` proves
+    that by comparing a run that captures against one that does not.
+    """
     from sklearn.base import clone
 
     from b_ml_pipeline import available_models
@@ -157,37 +185,52 @@ def _fit_predict_point(X_tr, y_tr, X_new, model_name: str,
         raise KeyError(f"point model {model_name!r} not in available_models()")
     est = _wrap(clone(models[model_name]), transform, level)
     est.fit(X_tr, y_tr)
-    return float(np.asarray(est.predict(X_new)).ravel()[0])
+    return float(np.asarray(est.predict(X_new)).ravel()[0]), est
 
 
 def _fit_predict_quantiles(X_tr, y_tr, X_new,
                            quantiles: Sequence[float] = QUANTILES,
-                           transform: str = "raw", level=None) -> Dict[float, float]:
+                           transform: str = "raw", level=None
+                           ) -> Tuple[Dict[float, float], Dict[float, object]]:
     """GBQuantile per quantile, then enforce monotonicity.
 
     Independently fitted quantiles can cross -- p90 below p50 -- which is not a wide
     interval but an invalid one. Sorting the three values is the minimal honest repair and
     is what the E_QUANTILE family already does.
+
+    Returns the sorted predictions and the fitted estimators, keyed by the quantile each was
+    fitted for. Note the estimators are keyed by their **own** alpha, while the returned values
+    are sorted across quantiles: after a crossing repair, the p90 *value* may not be the one the
+    p90 *model* produced. The manifest records each model under the quantile it was fitted for,
+    which is the honest label.
     """
     from sklearn.ensemble import GradientBoostingRegressor
     out: Dict[float, float] = {}
+    fitted: Dict[float, object] = {}
     for q in quantiles:
         m = _wrap(GradientBoostingRegressor(loss="quantile", alpha=float(q),
                                             random_state=0), transform, level)
         m.fit(X_tr, y_tr)
         out[float(q)] = float(np.asarray(m.predict(X_new)).ravel()[0])
+        fitted[float(q)] = m
     vals = sorted(out.values())
-    return {q: v for q, v in zip(sorted(out), vals)}
+    return {q: v for q, v in zip(sorted(out), vals)}, fitted
 
 
 def run_forward(raw: pd.DataFrame,
                 champ: Champion,
                 horizons: Sequence[int] = FORWARD_HORIZONS,
-                date_col: str = "date") -> pd.DataFrame:
+                date_col: str = "date",
+                estimator_sink: Optional[List] = None) -> pd.DataFrame:
     """Fit one model per horizon on all available history; predict the final origin.
 
     Returns one row per horizon with ``target_date``, ``p10``, ``p50``, ``p90``,
     ``origin_date``, ``origin_value``. No truth column exists by construction.
+
+    ``estimator_sink``, when given a list, is appended with a
+    ``estimator_store.FittedEstimator`` per fit, so a published issue can retain what produced
+    it. Capture is opt-in and read-only with respect to the forecast: the same fitted objects
+    produce the predictions either way.
     """
     X, s = _build_design(raw, champ, date_col)
     stock = _is_stock(champ.target)
@@ -224,10 +267,25 @@ def run_forward(raw: pd.DataFrame,
         X_tr, y_tr = X[usable], y_h[usable]
         X_new = X.loc[[origin]]
 
-        p50_raw = _fit_predict_point(X_tr, y_tr, X_new, champ.point_model,
-                                     transform=champ.transform, level=level)
-        qs = _fit_predict_quantiles(X_tr, y_tr, X_new,
-                                    transform=champ.transform, level=level)
+        p50_raw, point_est = _fit_predict_point(X_tr, y_tr, X_new, champ.point_model,
+                                                transform=champ.transform, level=level)
+        qs, quantile_ests = _fit_predict_quantiles(X_tr, y_tr, X_new,
+                                                   transform=champ.transform, level=level)
+
+        if estimator_sink is not None:
+            from estimator_store import FittedEstimator
+            common = dict(target=champ.target, horizon=int(h),
+                          feature_names=list(X.columns), n_train_rows=int(usable.sum()),
+                          origin_date=str(pd.Timestamp(origin).date()),
+                          target_transform=champ.transform, recipe_id=champ.recipe_id,
+                          selection_run_id=_selection_run_id(champ),
+                          fiscal_groups=tuple(champ.fiscal_groups),
+                          exog_blocks=tuple(champ.exog_blocks or ()))
+            estimator_sink.append(
+                FittedEstimator(kind="point", estimator=point_est, **common))
+            for q, m in quantile_ests.items():
+                estimator_sink.append(
+                    FittedEstimator(kind=f"q{int(round(q * 100)):02d}", estimator=m, **common))
 
         base = origin_value if stock else 0.0
         rows.append({

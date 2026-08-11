@@ -30,6 +30,20 @@ Thumbs.db
 !forecasts/published/
 !forecasts/scorecard.csv
 
+# ...with ONE deliberate exception: the persisted estimator blobs. This diverges from the rule
+# directly above, and the reason is not disk (measured: 10.45 MB per issue). A fitted estimator
+# embeds client data -- the full training target and trailing-level series, plus tree split
+# thresholds and leaf values that are functions of the training data and CANNOT be scrubbed at
+# all. Committing one would place raw Treasury figures permanently in every clone of a World Bank
+# repository, unremovable without rewriting history.
+#
+# The manifest IS tracked, and carries a SHA-256 per blob. So a clone can still prove which
+# estimator produced a published number and detect a substituted one; what it cannot do is run it.
+# forecast.csv IS the claim and must survive a clone; an estimator only re-derives it.
+# See backend/estimator_store.py.
+forecasts/published/*/estimators/*
+!forecasts/published/*/estimators/manifest.json
+
 # Phase 2 experiments. The append-only log AND its per-run detail JSONs are tracked:
 # verify_log_integrity() requires a JSON for every row, so ignoring runs/ would make a
 # fresh clone fail its own integrity check and "reproducible from a logged run" a claim
