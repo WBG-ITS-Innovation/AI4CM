@@ -221,6 +221,21 @@ fire at once and must produce four separate lines.
 
 ## 4. Model counts — what to present to a client
 
+> **Superseded by item 6 (2026-08-11).** Finding 6 below was closed by making A_STAT enumerable:
+> `model_pool()` now returns **23** — 13 B_ML point models, 3 E_QUANTILE interval methods, and 7
+> A_STAT models (4 statistical forecasters plus 3 reference baselines). `DESCRIPTIONS` is now
+> exactly the same set, pinned in both directions by
+> `test_every_description_is_reachable_and_every_pool_entry_described`.
+>
+> The recommendation is unchanged in substance and sharper in detail: **never present a single
+> headline number.** Say "13 machine-learning models and 4 statistical models compete on each
+> target; prediction intervals come from 3 quantile methods; 3 further entries are reference
+> baselines, not competitors." The champion-eligible pool for the three live recipes remains the
+> **13**. The section below is kept as written for the record.
+
+---
+
+
 `model_pool()` returns **16**; `available_models()` returns **13**. Both are correct and they count
 different things:
 

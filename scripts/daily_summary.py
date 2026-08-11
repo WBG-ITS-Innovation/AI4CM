@@ -427,6 +427,15 @@ def main() -> int:
     parser.add_argument("--mode", choices=["production", "backtest"], default="production",
                         help="production: warn when data is stale. backtest: the data "
                              "deliberately ends in the past; label the run instead of warning.")
+    # The contract gate. On by default: an artifact that fails the contract is one the Agent
+    # would read wrongly, so publishing it is the harm. --no-validate exists for diagnosing a
+    # broken run, not for getting past the gate.
+    parser.add_argument("--no-validate", action="store_true",
+                        help="skip the artifact contract check (diagnosis only)")
+    parser.add_argument("--strict-validate", action="store_true",
+                        help="promote contract warnings to errors; what a NEW run should meet")
+    parser.add_argument("--published-root", default=None, type=Path,
+                        help="also validate the published forecast issues under this directory")
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
@@ -560,6 +569,23 @@ def main() -> int:
     (run_dir / "SUMMARY.json").write_text(json.dumps(payload, indent=2))
 
     print(report)
+
+    # ── the contract gate ────────────────────────────────────────────────────────────────────
+    # SUMMARY.json and the per-family tables are a published interface, read by the AI4CM Agent.
+    # Validate the files that were just written, before anything downstream consumes them. This
+    # reads the ARTIFACTS -- the existing contract tests grep the writer's source, which is why no
+    # SUMMARY.json on disk carries schema_version even though every such test passes.
+    if not args.no_validate:
+        from artifact_validation import validate_run
+        vrep = validate_run(run_dir, strict=args.strict_validate,
+                            published_root=args.published_root)
+        print("\n" + "-" * 40)
+        print("ARTIFACT CONTRACT")
+        print(vrep.summary())
+        if not vrep.ok:
+            print("\nERROR: artifacts failed the contract and must not be published. "
+                  "Fix the writer, not the validator.", file=sys.stderr)
+            return 2
 
     if n_ok < len(families):
         print("ERROR: one or more requested families produced no output.", file=sys.stderr)

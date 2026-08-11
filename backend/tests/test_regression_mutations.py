@@ -478,26 +478,82 @@ def test_a_family_writing_no_shift_fields_raises_no_persistence_flag():
 # ── 8. the model-count composition (the open question) ───────────────────────
 
 def test_the_model_counts_are_pinned_so_a_headline_number_cannot_drift():
-    """13 point models, 3 interval methods, 16 in the page's pool.
+    """28 enumerated: 13 B_ML + 3 E_QUANTILE + 7 A_STAT (4 stat, 3 baselines) + 5 C_DL.
 
     Pinned because the page presents a count to a client. If a model is added the number must
     change deliberately, with the composition still stated -- not silently.
+
+    Item 6 raised this from 16 to 28. A_STAT was added because ETS and Theta were described but
+    listed nowhere; C_DL was added because the new artifact validator errored on a real published
+    champion ("MLP") that no enumerable pool contained. The deliberate change is the point of this
+    test existing.
     """
+    from collections import Counter
+
     from b_ml_pipeline import available_models
     import model_reference as mr
 
-    bml = set(available_models())
-    pool = set(mr.model_pool())
-    quantile_only = pool - bml
+    pool = mr.model_pool()
+    by_pipeline = Counter(v["pipeline"] for v in pool.values())
 
-    assert len(bml) == 13, f"B_ML point pool changed: {len(bml)} -> {sorted(bml)}"
+    assert len(set(available_models())) == 13, "B_ML point pool changed"
+    assert by_pipeline == {"B_ML": 13, "E_QUANTILE": 3, "A_STAT": 7, "C_DL": 5}, dict(by_pipeline)
+    assert len(pool) == 28, f"model_pool() changed: {len(pool)}"
+
+    quantile_only = {k for k, v in pool.items() if v["pipeline"] == "E_QUANTILE"}
     assert quantile_only == {"GBQuantile", "ResidualRF", "LGBMQuantile"}, sorted(quantile_only)
-    assert len(pool) == 16, f"model_pool() changed: {len(pool)}"
 
-    # Two descriptions belong to A_STAT and are unreachable from this pool -- so DESCRIPTIONS is
-    # not a model count and must never be presented as one.
-    unreachable = set(mr.DESCRIPTIONS) - pool
-    assert unreachable == {"ETS", "Theta"}, sorted(unreachable)
+    # The three A_STAT references are baselines, not competitors: a headline count that sums them
+    # in would present the ruler as a rival to the models measured against it.
+    baselines = {k for k, v in pool.items() if v.get("role") == "baseline"}
+    assert baselines == {"NAIVE", "WEEKDAY_MEAN", "MOVAVG"}, sorted(baselines)
+
+
+def test_every_description_is_reachable_and_every_pool_entry_described():
+    """Item 6 part 3: DESCRIPTIONS and the enumerable pool must be the same set.
+
+    Previously DESCRIPTIONS had 18 entries while model_pool() enumerated 16, and the two extra
+    ("ETS", "Theta") matched neither the pool nor the family's own dispatch names -- so they were
+    dead text nothing could surface. This pins both directions, so a model added to a pipeline
+    without a description, or a description written for a model that does not exist, fails here.
+    """
+    import model_reference as mr
+
+    pool = set(mr.model_pool())
+    described = set(mr.DESCRIPTIONS)
+
+    assert described - pool == set(), (
+        f"descriptions unreachable from the Models page: {sorted(described - pool)}")
+    assert pool - described == set(), (
+        f"pool entries with no description: {sorted(pool - described)}")
+
+
+def test_a_stat_registry_matches_what_the_dispatch_implements():
+    """A name in the registry with no branch in ``_fc`` would be an advertised model that cannot run."""
+    import inspect
+
+    import run_a_stat as astat
+
+    src = inspect.getsource(astat._fc)
+    for name in astat.registry_models():
+        assert f'== "{name}"' in src, (
+            f"{name} is advertised by registry_models() but has no branch in _fc()")
+
+
+def test_a_stat_refuses_an_unknown_model_instead_of_forecasting_naively():
+    """It used to fall through to a carried-forward last value under the requested name."""
+    import numpy as _np
+    import run_a_stat as astat
+
+    y = pd.Series(_np.arange(50.0), index=pd.bdate_range("2024-01-01", periods=50))
+    idx = pd.bdate_range("2024-03-12", periods=5)
+
+    with pytest.raises(astat.UnknownAStatModel, match="does not implement"):
+        astat._fc("XGBoost", y, idx, {}, "Daily")
+
+    # ...and a real one still works.
+    pred, lo, hi = astat._fc("NAIVE", y, idx, {}, "Daily")
+    assert len(pred) == 5 and pred[0] == 49.0
 
 
 def test_no_integrity_verdict_is_written_as_an_unconditional_literal():

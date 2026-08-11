@@ -610,6 +610,13 @@ class MLPReg(nn.Module):
         b, L, C = x.shape
         return self.net(x.reshape(b, L*C)).squeeze(-1)
 
+# The catalogue lives in c_dl_registry (no torch import) so the Models page can enumerate this
+# family on a machine without torch. Re-exported here because this is where callers expect it.
+# Added in item 6: the artifact validator caught a published champion ("MLP") that was in no
+# enumerable pool, so a consumer reading the leaderboard could not look up what had won.
+from c_dl_registry import C_DL_MODELS, registry_models  # noqa: E402,F401
+
+
 def make_model(name: str, in_dim: int, seq_len: int, cfg: ConfigDL) -> nn.Module:
     n = name.lower()
     if n=="lstm":        return LSTMReg(in_dim, hid=96, layers=2, dropout=cfg.dropout)
