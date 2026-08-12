@@ -380,6 +380,133 @@ def model_pool() -> Dict[str, Dict]:
     return out
 
 
+# ── The client-facing composition, derived rather than asserted ─────────────────────────────
+#
+# The sentence we give a client used to be a string in a pinned test. When C_DL became
+# enumerable in item 6 the pool went from 23 to 28 and the sentence did not move, so for a
+# while we were telling clients about a pool that no longer matched the registry and nothing
+# detected it. The counts below are computed from `model_pool()`, and `client_framing()`
+# writes the sentence from them, so adding a model changes the sentence or fails the test.
+
+#: Which client-facing category a pool entry belongs to, keyed by the pipeline that offers it.
+#: A_STAT is split by the `role` the registry records, because three of its seven models are
+#: the ruler the others are measured against, and counting a ruler as a rival is the specific
+#: error this whole section exists to prevent.
+_CATEGORY_BY_PIPELINE = {
+    "B_ML": "machine-learning models",
+    "C_DL": "deep-learning models",
+    "E_QUANTILE": "quantile methods",
+}
+
+#: Order the categories appear in the sentence.
+CATEGORY_ORDER = ("machine-learning models", "deep-learning models", "statistical models",
+                  "quantile methods", "reference baselines")
+
+#: Categories whose models produce point forecasts and are ranked against each other on a
+#: target. Quantile methods produce intervals; baselines are the ruler. Neither competes.
+COMPETING_CATEGORIES = ("machine-learning models", "deep-learning models", "statistical models")
+
+#: The category a registry recipe draws its `point_model` from. Cross-checked against
+#: `registry/recipes.json` by `composition()`, so promoting a model from another family
+#: fails rather than quietly widening the pool we describe to a client.
+CHAMPION_POOL_CATEGORY = "machine-learning models"
+
+
+def client_category(entry: Dict) -> str:
+    """The client-facing category of one `model_pool()` entry.
+
+    Raises on an unrecognised pipeline **by design**: a fifth family must not be able to
+    appear in the pool while silently missing from every number we quote.
+    """
+    pipeline = entry.get("pipeline")
+    if pipeline == "A_STAT":
+        return ("reference baselines" if entry.get("role") == "baseline"
+                else "statistical models")
+    try:
+        return _CATEGORY_BY_PIPELINE[pipeline]
+    except KeyError:
+        raise ValueError(
+            f"{entry.get('name')!r} comes from pipeline {pipeline!r}, which has no client-facing "
+            f"category. Add it to _CATEGORY_BY_PIPELINE and decide whether it competes "
+            f"(COMPETING_CATEGORIES) before quoting any model count to a client."
+        ) from None
+
+
+def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
+    """Counts by client-facing category, derived from the pool.
+
+    Also derives the two different things the word "champion" means here, because
+    conflating them is how a true sentence becomes a wrong one:
+
+    * `champion_pool` — the models a **registry recipe** may promote as its `point_model`,
+      i.e. the set an official published forecast is selected from.
+    * `daily_best_model_families` — the families `daily_summary.py` writes a per-family
+      `best_model` for. Every family that produces a leaderboard is in here, so a consumer
+      ranking families (as the Agent does) is choosing across all of them, not across
+      `champion_pool`.
+    """
+    pool = model_pool() if pool is None else pool
+
+    counts: Dict[str, int] = {c: 0 for c in CATEGORY_ORDER}
+    members: Dict[str, List[str]] = {c: [] for c in CATEGORY_ORDER}
+    for name, entry in pool.items():
+        cat = client_category(entry)
+        counts[cat] += 1
+        members[cat].append(name)
+    for names in members.values():
+        names.sort()
+
+    champion_pool = sorted(members[CHAMPION_POOL_CATEGORY])
+
+    # Cross-check: every model a recipe actually promotes must be in that pool. This is the
+    # check that catches "the registry promoted a C_DL model" before a client is told the
+    # eligible pool is the machine-learning one.
+    import sys
+    sys.path.insert(0, str(BACKEND))
+    from registry import load_registry
+    promoted = sorted({r["point_model"] for r in load_registry()["recipes"]})
+    off_pool = [m for m in promoted if m not in champion_pool]
+
+    return {
+        "counts": counts,
+        "members": members,
+        "total": sum(counts.values()),
+        "competing_total": sum(counts[c] for c in COMPETING_CATEGORIES),
+        "champion_pool_category": CHAMPION_POOL_CATEGORY,
+        "champion_pool": champion_pool,
+        "champion_pool_size": len(champion_pool),
+        "promoted_by_registry": promoted,
+        "promoted_outside_champion_pool": off_pool,
+        "daily_best_model_families": sorted({e["pipeline"] for e in pool.values()}),
+    }
+
+
+def _join(parts: List[str]) -> str:
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def client_framing(pool: Optional[Dict[str, Dict]] = None) -> str:
+    """The composition sentence, written from the derived counts.
+
+    Never a single headline number: the entries are not one kind of thing, and summing them
+    presents the ruler and the interval methods as rivals to the point models.
+    """
+    comp = composition(pool)
+    counts = comp["counts"]
+
+    competing = [f"{counts[c]} {c}" for c in COMPETING_CATEGORIES if counts[c]]
+    sentence = f"{_join(competing)} compete on each target"
+    if counts["quantile methods"]:
+        sentence += (f"; prediction intervals come from "
+                     f"{counts['quantile methods']} quantile methods")
+    if counts["reference baselines"]:
+        sentence += (f"; {counts['reference baselines']} further entries are reference "
+                     f"baselines, not competitors")
+    return sentence + "."
+
+
 def measured_performance() -> Dict[str, List[Dict]]:
     """Every logged run, grouped by model. Source: experiments/log.csv + the per-run JSON.
 

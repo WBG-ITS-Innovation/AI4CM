@@ -176,6 +176,24 @@ def validate_summary(path: Path, rep: ValidationReport, strict: bool = False) ->
                     f"{key!r} absent -- a consumer cannot identify which run this is. Written by "
                     f"the current daily_summary.py, so this artifact predates it.")
 
+    # Input identity (review C1). SUMMARY.txt has always printed `Data file: <name>`; the JSON
+    # twin did not carry it, so a consumer could not say which dataset produced the run and the
+    # two artifacts of the same run disagreed. Same severity rule as run_id: a real defect, but
+    # on a historical artifact it is a fact rather than a blocker.
+    if "data_file" not in d:
+        rep.add(sev, art, "incomplete",
+                "'data_file' absent -- a consumer cannot say which dataset produced this run, "
+                "though SUMMARY.txt names it. Written by the current daily_summary.py, so this "
+                "artifact predates it.")
+    elif not (isinstance(d["data_file"], str) and d["data_file"].strip()):
+        rep.add(ERROR, art, "malformed",
+                f"'data_file' is {d['data_file']!r}, expected a non-empty file name")
+    elif "/" in d["data_file"] or "\\" in d["data_file"]:
+        # A bare name, not a path: the path is machine-specific and would leak the writer's
+        # filesystem into a published interface.
+        rep.add(ERROR, art, "malformed",
+                f"'data_file' is {d['data_file']!r}, expected a bare file name, not a path")
+
     fams = d.get("families")
     if not isinstance(fams, list):
         if "families" in d:
