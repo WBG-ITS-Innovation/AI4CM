@@ -44,8 +44,13 @@ MASE scale (TRAIN-only, season=5):
 
 - Unified yardstick not built: E_QUANTILE is still on a calendar-day index, so its `h=5` means 5
   *calendar* days against every other family's 5 business days.
-- E_QUANTILE has no stock-target path, so `State budget balance` cannot yet be forecast by the family
-  that three workstreams depend on.
+- ~~E_QUANTILE has no stock-target path, so `State budget balance` cannot yet be forecast by the
+  family that three workstreams depend on.~~ **No longer true — corrected 2026-08-12.** Measured end
+  to end against DEV 2024: 262 predictions, skill 30.53%, coverage 65.6%, gate FAILED on coverage.
+  The family models the delta and reconstructs the level, exactly as B_ML and C_DL do. What blocks a
+  published stock forecast here is the **coverage gate**, not a missing implementation. Capability is
+  now machine-readable in `backend/family_capabilities.py` rather than asserted in this file, because
+  a claim recorded only in prose drifts — nothing fails when it goes stale, as this entry shows.
 - `Revenues` contains negative values (min −443,977,588) and the validity report flags 39 of 41
   columns. Whether these are refund conventions or data problems decides whether `log1p` target
   scaling is applicable at all.

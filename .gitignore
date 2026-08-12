@@ -17,8 +17,25 @@ data_preprocessed/
 # Local path cache
 frontend/.tg_paths.json
 
-# Daily forecast run outputs (artifacts, incl. treasury outputs — never commit)
-backend/forecast_runs/
+# Daily forecast run outputs (artifacts, incl. treasury outputs — never commit).
+# Note the pattern: the CONTENTS are ignored, not the directory. `backend/forecast_runs/` would
+# exclude the directory itself, and git never descends into an excluded directory -- so the
+# negations below would silently do nothing.
+backend/forecast_runs/**
+!backend/forecast_runs/
+!backend/forecast_runs/*/
+
+# ...except the two SUMMARY files. The Agent's entry point is SUMMARY.json, and with the whole
+# directory ignored NO run artifact existed in a clone at all -- so a consumer could not read one,
+# and the two fields it needs (data_file, client_framing) had nowhere to appear. Fields being
+# correct in the writer while absent from every artifact was the blocker, not the code.
+#
+# Safe to track because these two are AGGREGATE ONLY: model names, MAEs, skill percentages, gate
+# verdicts and the data file's NAME. No row-level predictions, no Treasury series. That is the same
+# class as forecasts/published/, which is tracked for the same reason. The row-level artifacts
+# (predictions_long.csv, leaderboard.csv, metrics_long.csv) stay ignored.
+!backend/forecast_runs/*/SUMMARY.json
+!backend/forecast_runs/*/SUMMARY.txt
 
 # OS cruft
 .DS_Store

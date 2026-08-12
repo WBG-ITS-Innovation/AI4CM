@@ -1,0 +1,78 @@
+{
+  "run_date": "2026-07-29",
+  "target": "Revenues",
+  "cadence": "Daily",
+  "horizon": "5",
+  "families": [
+    {
+      "name": "A_STAT",
+      "ok": true,
+      "models": "ETS, Persistence (baseline)",
+      "best_model": "ETS (MAE 44,199,748)",
+      "best_model_display": "ETS (MAE 44,199,748)",
+      "skill_pct": "27.51%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": true,
+      "gate_reasons": [],
+      "leakage_flag": false,
+      "shift_flag": false
+    },
+    {
+      "name": "B_ML",
+      "ok": true,
+      "models": "\u26a1 Persistence (baseline), Lasso, Ridge, RandomForest, ElasticNet, ExtraTrees, XGBoost, HistGBDT, LightGBM",
+      "best_model": "Lasso (MAE 43,472,942)",
+      "best_model_display": "WITHHELD \u2014 leakage flag raised, not usable; Lasso (MAE 43,472,942) for diagnosis only",
+      "skill_pct": "28.71%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": false,
+      "gate_reasons": [
+        "leakage flag raised"
+      ],
+      "leakage_flag": true,
+      "shift_flag": true
+    },
+    {
+      "name": "E_QUANTILE",
+      "ok": true,
+      "models": "GBQuantile, ResidualRF",
+      "best_model": "n/a (not produced)",
+      "best_model_display": "n/a (not produced)",
+      "skill_pct": "55.40%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": true,
+      "gate_reasons": [],
+      "leakage_flag": false,
+      "shift_flag": false
+    },
+    {
+      "name": "C_DL",
+      "ok": true,
+      "models": "MLP, TRANSFORMER, DCNN, LSTM, GRU",
+      "best_model": "MLP (MAE 47,217,031)",
+      "best_model_display": "MLP (MAE 47,217,031)",
+      "skill_pct": "10.84%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": true,
+      "gate_reasons": [],
+      "leakage_flag": false,
+      "shift_flag": true
+    }
+  ],
+  "overall": {
+    "families_requested": 4,
+    "families_ok": 4,
+    "families_gate_passed": 3,
+    "leakage_flags": 1,
+    "shift_flags": 2,
+    "quality_gate_failures": 1
+  },
+  "freshness": {
+    "line": "Latest data date: 2025-08-06 (357 day(s) before run date 2026-07-29)",
+    "stale": true
+  }
+}

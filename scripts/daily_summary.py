@@ -140,6 +140,47 @@ def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> 
     return reasons
 
 
+def _composition_fields() -> dict:
+    """The model-composition block for SUMMARY.json, or an explicit reason it is absent.
+
+    Derived from ``model_reference.model_pool()``, which imports every family's registry. That
+    import can fail on a machine missing a modelling library, and a summary must not fail because
+    the *catalogue* could not be read -- the run itself is unaffected.
+
+    So absence follows the pattern documented in AGENT_ARTIFACT_CONTRACT.md §0: never a bare
+    missing key, always a companion field naming the reason. A consumer that finds
+    ``client_framing`` absent and ``client_framing_unavailable_reason`` present knows the
+    composition was not derivable here, as opposed to a writer that forgot to emit it.
+    """
+    try:
+        sys.path.insert(0, str(BACKEND_DIR))
+        from model_reference import client_framing, composition
+
+        comp = composition()
+        return {
+            "client_framing": client_framing(),
+            "model_composition": {
+                "counts": comp["counts"],
+                "members": comp["members"],
+                # The two different things "champion" means here. Conflating them is how a true
+                # sentence becomes a wrong one: `champion_pool` is what a registry recipe may
+                # promote, `daily_best_model_families` is every family this file writes a
+                # per-family `best_model` for -- and the Agent ranks across the latter.
+                "champion_pool": comp.get("champion_pool"),
+                "champion_pool_category": comp.get("champion_pool_category"),
+                "daily_best_model_families": comp.get("daily_best_model_families"),
+                # Integrity cross-check, carried so a consumer does not have to trust the
+                # sentence: any model a recipe actually promotes that is NOT in champion_pool.
+                # Non-empty means the eligible pool a client was told about is wrong.
+                "promoted_by_registry": comp.get("promoted_by_registry"),
+                "promoted_outside_champion_pool": comp.get("promoted_outside_champion_pool"),
+            },
+        }
+    except Exception as exc:                       # noqa: BLE001 - a catalogue, not the run
+        return {"client_framing_unavailable_reason":
+                f"could not derive the model composition: {type(exc).__name__}: {exc}"}
+
+
 def _coverage_failure_reasons(report: dict) -> list[str]:
     """Interval miscalibration, phrased as its own verdict.
 
@@ -534,6 +575,16 @@ def main() -> int:
         # date range belong to provenance.json (contract 7), and duplicating them here
         # would create a second place for them to drift.
         "data_file": data_file.name,
+        # client_framing / model_composition: `model_reference.client_framing()` and
+        # `composition()` existed and were tested, and nothing ever wrote them -- so no artifact
+        # carried the composition and the Agent correctly reported "composition not recorded" on
+        # every run. A derived sentence nobody publishes is not a contract field.
+        #
+        # Written as BOTH the prose sentence a client reads and the counts it was derived from, so
+        # a consumer can requote the sentence or recompute from the numbers without re-deriving
+        # the categories itself. Never a single headline count: the entries are not one kind of
+        # thing (see reports/gate_audit.md §4).
+        **_composition_fields(),
         "families": [
             {
                 "name": s["name"],

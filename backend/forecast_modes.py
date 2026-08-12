@@ -98,15 +98,188 @@ class OfficialResult:
         return True
 
 
-def targets_available(data_path: Path) -> List[str]:
-    """Every column in the canonical file that could be a forecast target.
+# ══════════════════════════════════════════════════════════════════════════════
+# TARGET ELIGIBILITY
+#
+# `targets_available` used to read `nrows=1` and return all 41 columns, so a column could be
+# offered as a forecast target while being non-numeric, entirely null, or far too short to fit a
+# single fold. Reading one row makes a length check impossible by construction.
+#
+# Eligibility is now measured, and **the reason a column is ineligible travels with the verdict**.
+# That matters more than the verdict: a consumer told only "no" has to invent an explanation, and
+# an invented explanation shown to a treasury is worse than a blank.
+#
+# The threshold is derived from the evaluation windows, not chosen here:
+#     DEFAULT_MIN_TRAIN (1008, ~4y) + horizon (the embargo) + DEFAULT_EVAL_BLOCK (126, ~6m)
+# i.e. enough history to train on a realistic base, keep a horizon-sized embargo, and still have
+# one complete evaluation block left. Below that a number could be produced but not evaluated,
+# which on this project is the same as not having one.
+# ══════════════════════════════════════════════════════════════════════════════
 
-    All 41 are offered, not only the three with recipes — but see ``recipe_status``: a target
-    without a recipe is refused in official mode rather than silently given someone else's.
+#: Columns that are never forecast targets: the index itself and the two calendar flags.
+NON_TARGET_COLUMNS = frozenset({"date", "is_weekend", "is_holiday"})
+
+#: Machine-readable ineligibility codes. A consumer should branch on these, not on the prose.
+INELIGIBLE_NOT_NUMERIC = "not_numeric"
+INELIGIBLE_ALL_NULL = "all_null"
+INELIGIBLE_INSUFFICIENT_HISTORY = "insufficient_history"
+INELIGIBLE_UNUSABLE_DATE_INDEX = "unusable_date_index"
+
+
+def min_history_rows(horizon: int = VALIDATED_HORIZON) -> int:
+    """Non-null rows a target needs to be evaluable at ``horizon``.
+
+    ``DEFAULT_MIN_TRAIN + horizon + DEFAULT_EVAL_BLOCK``. Imported from ``evaluation_windows`` so
+    the two cannot drift: if the fold sizing changes, this moves with it.
     """
-    df = pd.read_csv(data_path, nrows=1)
-    drop = {"date", "is_weekend", "is_holiday"}
-    return [c for c in df.columns if c not in drop]
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from evaluation_windows import DEFAULT_EVAL_BLOCK, DEFAULT_MIN_TRAIN
+
+    return int(DEFAULT_MIN_TRAIN) + int(horizon) + int(DEFAULT_EVAL_BLOCK)
+
+
+@dataclass
+class Eligibility:
+    """Whether one column can be forecast, and if not, why — in both forms."""
+
+    target: str
+    eligible: bool
+    #: ``None`` when eligible; otherwise one of the ``INELIGIBLE_*`` codes.
+    code: Optional[str] = None
+    #: Plain language a consumer may quote verbatim. Never assemble your own.
+    reason: Optional[str] = None
+    n_usable: int = 0
+    n_required: int = 0
+    dtype: str = ""
+    first_date: Optional[str] = None
+    last_date: Optional[str] = None
+
+    def as_dict(self) -> Dict:
+        return {"target": self.target, "eligible": self.eligible, "code": self.code,
+                "reason": self.reason, "n_usable": self.n_usable,
+                "n_required": self.n_required, "dtype": self.dtype,
+                "first_date": self.first_date, "last_date": self.last_date}
+
+
+def date_index_status(data_path: Path, date_col: str = "date") -> Dict:
+    """Whether the file's date index is parseable, unique and sortable.
+
+    A file-level property: if it fails, **no** target in the file is eligible, because a
+    horizon measured in business-day positions is meaningless over an index with holes or
+    duplicates. Reported separately so a consumer can say "the file is unusable" rather than
+    listing 41 identical column failures.
+    """
+    try:
+        raw = pd.read_csv(data_path, usecols=[date_col])
+    except Exception as exc:                       # noqa: BLE001
+        return {"ok": False, "reason": f"could not read {date_col!r} from the file: {exc}",
+                "n": 0, "n_unique": 0, "n_unparseable": 0, "monotonic": None}
+
+    parsed = pd.to_datetime(raw[date_col], errors="coerce")
+    n = int(len(parsed))
+    n_bad = int(parsed.isna().sum())
+    n_unique = int(parsed.dropna().nunique())
+    monotonic = bool(parsed.dropna().is_monotonic_increasing)
+
+    if n == 0:
+        reason = "the file has no rows, so there is no date index"
+    elif n_bad:
+        reason = (f"{n_bad} of {n} values in {date_col!r} could not be parsed as dates, so rows "
+                  f"cannot be placed in time")
+    elif n_unique != n - n_bad:
+        dupes = (n - n_bad) - n_unique
+        reason = (f"{dupes} duplicate date(s) in {date_col!r}; a horizon counted in index "
+                  f"positions is ambiguous when one date appears twice")
+    else:
+        reason = None
+
+    return {"ok": reason is None, "reason": reason, "n": n, "n_unique": n_unique,
+            "n_unparseable": n_bad, "monotonic": monotonic}
+
+
+def target_eligibility(data_path: Path, horizon: int = VALIDATED_HORIZON,
+                       date_col: str = "date") -> Dict[str, Eligibility]:
+    """Every candidate column with a verdict and the reason behind it.
+
+    Checks, in the order a consumer would want them reported:
+      1. the file's date index is usable at all (file-level; fails every column);
+      2. the column is numeric;
+      3. it has any non-null values;
+      4. it has enough non-null history for one evaluable fold at ``horizon``.
+    """
+    required = min_history_rows(horizon)
+    idx = date_index_status(data_path, date_col)
+
+    df = pd.read_csv(data_path)
+    dates = pd.to_datetime(df[date_col], errors="coerce") if date_col in df.columns else None
+
+    out: Dict[str, Eligibility] = {}
+    for col in df.columns:
+        if col in NON_TARGET_COLUMNS:
+            continue
+        s = df[col]
+        e = Eligibility(target=col, eligible=False, n_required=required, dtype=str(s.dtype))
+
+        if not idx["ok"]:
+            e.code, e.reason = INELIGIBLE_UNUSABLE_DATE_INDEX, (
+                f"the file's date index is unusable, so no column in it can be forecast: "
+                f"{idx['reason']}")
+            out[col] = e
+            continue
+
+        numeric = pd.to_numeric(s, errors="coerce")
+        # A column that is not numeric at all -- as opposed to numeric with gaps -- is not a
+        # series. Distinguished by whether coercion destroyed values that were there.
+        if not pd.api.types.is_numeric_dtype(s) and numeric.notna().sum() == 0:
+            e.code, e.reason = INELIGIBLE_NOT_NUMERIC, (
+                f"{col!r} is {s.dtype} and none of its values parse as numbers, so it cannot be "
+                f"forecast as a series")
+            out[col] = e
+            continue
+
+        ok = numeric.notna()
+        e.n_usable = int(ok.sum())
+        if dates is not None and e.n_usable:
+            d = dates[ok].dropna()
+            if len(d):
+                e.first_date, e.last_date = str(d.min().date()), str(d.max().date())
+
+        if e.n_usable == 0:
+            e.code, e.reason = INELIGIBLE_ALL_NULL, (
+                f"{col!r} has no values at all in this file, so there is nothing to learn from")
+            out[col] = e
+            continue
+
+        if e.n_usable < required:
+            e.code, e.reason = INELIGIBLE_INSUFFICIENT_HISTORY, (
+                f"{col!r} has {e.n_usable:,} usable observations; {required:,} are needed at "
+                f"horizon {horizon} — about four years to train on, a {horizon}-day gap so no "
+                f"training answer falls inside the evaluation, and one complete six-month block "
+                f"left to score against. Below that a forecast could be produced but not "
+                f"evaluated, and an unevaluated number is not a forecast")
+            out[col] = e
+            continue
+
+        e.eligible = True
+        out[col] = e
+    return out
+
+
+def targets_available(data_path: Path, horizon: int = VALIDATED_HORIZON,
+                      include_ineligible: bool = False) -> List[str]:
+    """Forecast targets in the canonical file.
+
+    By default only the **eligible** ones: a column that cannot be evaluated should not be
+    offered, because offering it invites a number nobody can score. Pass
+    ``include_ineligible=True`` to get every candidate — a page that greys out the rejects and
+    shows ``target_eligibility()``'s reason beside each is more useful than one that hides them.
+
+    Eligibility is about the data. A target can be eligible here and still have no recipe (see
+    ``recipe_status``) or no family that supports its kind (see ``family_supports_target``).
+    """
+    elig = target_eligibility(data_path, horizon=horizon)
+    return [t for t, e in elig.items() if include_ineligible or e.eligible]
 
 
 def recipe_status(target: str) -> Dict:

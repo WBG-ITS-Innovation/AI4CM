@@ -1,0 +1,61 @@
+AI4CM Daily Forecast Summary
+========================================
+Run date:   2026-07-21
+Data file:  master_daily_clean_treasury.csv
+Latest data date: 2025-08-06 (349 day(s) before run date 2026-07-21)
+WARNING: data appears STALE (older than 3 day(s)) — forecasts may be based on out-of-date inputs.
+Target: Revenues | Cadence: Daily | Horizon: 5
+Families requested: A_STAT, B_ML, E_QUANTILE, C_DL
+
+[A_STAT]
+  Models run: ETS, Persistence (baseline)
+  Best model: ETS (MAE 42,549,097)
+  Skill vs persistence: 3.81%
+  Run status: FAILED_QUALITY
+  Leakage flag: none
+    - pipeline: n/a (not produced)
+    - summary check (origin_date >= target_date): none
+  Shift flag: none
+    - pipeline: n/a (not produced)
+    - summary check (detect_lagged_copy): none
+
+[B_ML]
+  Models run: ⚡ Persistence (baseline), Lasso, Ridge, RandomForest, ElasticNet, ExtraTrees, XGBoost, HistGBDT, LightGBM
+  Best model: Lasso (MAE 43,472,942)
+  Skill vs persistence: 28.71%
+  Run status: SUCCESS
+  Leakage flag: YES
+    - pipeline: leakage_warning=true (shuffled_to_normal_ratio=0.83)
+    - summary check (origin_date >= target_date): none
+  Shift flag: YES
+    - pipeline: Suspicious backward shift (best_shift=-10 < -h=-5)
+    - pipeline (cont.): model performance ≈ naive baseline (shift=-h): Model MAE=43,472,942 vs Naive MAE=43,507,476
+    - summary check (detect_lagged_copy): none
+
+[E_QUANTILE]
+  Models run: GBQuantile, ResidualRF
+  Best model: n/a (not produced)
+  Skill vs persistence: 55.40%
+  Run status: SUCCESS
+  Leakage flag: none
+    - pipeline: n/a (not produced)
+    - summary check (origin_date >= target_date): none
+  Shift flag: none
+    - pipeline: n/a (not produced)
+    - summary check (detect_lagged_copy): n/a (not produced)
+
+[C_DL]
+  Models run: DCNN, MLP, GRU, TRANSFORMER, LSTM
+  Best model: DCNN (MAE 73,425,360)
+  Skill vs persistence: n/a (not produced)
+  Run status: n/a (not produced)
+  Leakage flag: none
+    - pipeline: n/a (not produced)
+    - summary check (origin_date >= target_date): none
+  Shift flag: none
+    - pipeline: n/a (not produced)
+    - summary check (detect_lagged_copy): none
+
+----------------------------------------
+Overall: 4/4 families produced output.
+Flags raised: 1 leakage, 1 shift, data STALE.
