@@ -1,6 +1,6 @@
 # The Agent artifact contract
 
-**As the pipeline produces it on 2026-08-11.** Branch `model/excellence`.
+**As the pipeline produces it on 2026-08-12.** Branch `model/excellence`.
 
 The AI4CM Agent (separate repo, `feat/lab-door`) reads `SUMMARY.json`, the per-family
 `leaderboard.csv` / `predictions_long.csv` / `metrics_long.csv`, and
@@ -41,7 +41,7 @@ others, and the difference is whether a companion field exists.**
 |---|---|
 | `skill_pct` = `"n/a (not produced)"` | One marker for several causes: the family produced no output, its integrity report had no `skill_pct`, or the value was not numeric. A consumer cannot separate "this family does not compute skill" from "the computation failed" |
 | Any all-null CSV column (`RMSE`, `y_lo`/`y_hi`, `MAE_skill_vs_Ops`) | An empty cell asserts nothing. `y_lo`/`y_hi` are legitimately empty for models with no native intervals; `MAE_skill_vs_Ops` is empty because the ops baseline does not apply to stock targets — but both look identical to a failure |
-| `coverage_nominal` absent | Means the run predates the field. A consumer could tell from `schema_version`, except **no committed `SUMMARY.json` carries one** (§1) |
+| `coverage_nominal` absent | Means the run predates the field. A consumer can now tell from `schema_version` on `2026-08-04` onward; the two earlier runs still carry none (§1) |
 
 **Recommended pattern, and the one this project should converge on:** where a field may legitimately
 be absent, write a *companion field naming the reason*, as `alignment_checked` and
@@ -60,17 +60,43 @@ Written by `scripts/daily_summary.py`. One object.
 
 | Field | Type | Presence | If absent |
 |---|---|---|---|
-| `run_id` | string | **written by current code; absent on every committed artifact** | The run cannot be identified. Fall back to the directory name |
-| `schema_version` | int (`2`) | same as above | Assume version 1 and expect the fields marked "since v2" to be missing |
+| `run_id` | string | since v2 (`2026-08-04` onward; the two earlier runs predate it) | The run cannot be identified. Fall back to the directory name |
+| `schema_version` | int (`2`) | same as above | Assume version 1 and expect every field marked "since v2" to be missing |
 | `run_date` | string `YYYY-MM-DD` | always | Malformed — reject |
 | `target` | string | always | Malformed — reject |
 | `cadence` | string | always | Malformed — reject |
 | `horizon` | **string**, e.g. `"5"` | always | Malformed — reject. Note the type: it is *not* an int |
-| `data_file` | string — the input file's **bare name**, e.g. `"master_daily_clean_treasury.csv"` | **written by current code; absent on every committed artifact** | The run cannot say which dataset produced it. Do **not** substitute a plausible file; render "not recorded" |
+| `data_file` | string — the input file's **bare name**, e.g. `"master_daily_clean_treasury.csv"` | since v2 | The run cannot say which dataset produced it. Do **not** substitute a plausible file; render "not recorded" |
 | `families` | array of objects | always, non-empty | Malformed — reject |
 | `overall` | object | always | Recompute from `families`; it is derived and can contradict them |
 | `mode` | `"production"` \| `"backtest"` | always | Assume production |
 | `freshness` | object: `line` (string), `stale` (bool), `backtest` (bool) | always | Treat staleness as unknown |
+| `client_framing` | string — the composition sentence a client may be shown verbatim | since v2; absent ⇒ see the next row | Do **not** assemble your own from `model_composition`. Report "composition not recorded" |
+| `client_framing_unavailable_reason` | string | **only** when the composition could not be derived | Explains the absence above. Present means the model *catalogue* could not be read (e.g. a missing modelling library) — the run itself is unaffected |
+| `model_composition` | object (below) | with `client_framing` | Counts unavailable |
+
+`model_composition` carries the numbers the sentence was derived from, so a consumer can requote it
+or recompute without re-deriving the categories itself:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `counts` | `{category: int}` | Five categories: machine-learning models, deep-learning models, statistical models, quantile methods, reference baselines |
+| `members` | `{category: [name]}` | Every counted model named |
+| `champion_pool` | `[name]` | The models a **registry recipe** may promote as its `point_model` — what an official published forecast is selected from (currently the 13 machine-learning models) |
+| `champion_pool_category` | string | Which category that pool is |
+| `daily_best_model_families` | `[family]` | Every family this file writes a per-family `best_model` for. **The Agent ranks across these, not across `champion_pool`** — conflating the two is how a true sentence becomes a wrong one |
+| `promoted_by_registry` | `[name]` | Distinct models the live recipes actually promote. Three recipes currently name **two** models (Revenues and Expenditure share `LightGBM_L1`), so this is not a recipe count |
+| `promoted_outside_champion_pool` | `[name]` | Integrity cross-check. **Non-empty means the eligible pool a client was told about is wrong** |
+
+**Never sum `counts` into a headline number.** The entries are not one kind of thing: three are
+reference baselines and three are interval methods, and summing presents the ruler as a rival to the
+models measured against it. See `reports/gate_audit.md` §4.
+
+> **`client_framing` — the same gap as `data_file`, one layer up.** `model_reference.client_framing()`
+> and `composition()` existed, were tested, and were written by nothing, so no artifact carried the
+> composition and the Agent correctly reported "composition not recorded" on every run. A derived
+> sentence nobody publishes is not a contract field. Written 2026-08-12 together with the counts it
+> came from, and absent only with a companion reason (§0's pattern).
 
 > **`data_file` — why it is written rather than dropped (review C1).** It was absent from the
 > JSON while `SUMMARY.txt` printed `Data file: <name>` on line 4, so two artifacts of the same
@@ -82,11 +108,20 @@ Written by `scripts/daily_summary.py`. One object.
 > absolute path is deliberately excluded — it is machine-specific and does not belong in a
 > published interface.
 
-> **Known defect.** The three committed runs (`2026-07-29`, `2026-07-30`, `2026-08-04`) carry
-> **neither `run_id` nor `schema_version`**, despite `test_artifact_contract.py` asserting both.
-> That test greps the *writer's source*; it cannot see what is on disk. This is precisely why the
-> validator reads files. Reported as a WARNING (a historical artifact should still be readable) and
-> as an ERROR under `--strict`, which is what a new run is held to.
+> **Resolved 2026-08-12.** The three runs carried **neither `run_id` nor `schema_version`**, despite
+> `test_artifact_contract.py` asserting both — that test greps the *writer's source* and cannot see
+> what is on disk. `2026-08-04`'s `SUMMARY.json` has since been regenerated by the current writer and
+> now carries `run_id`, `schema_version`, `data_file`, `client_framing` and `model_composition`.
+> Every family verdict and the whole `overall` block are identical: it is the same run re-summarised
+> from the same family artifacts, not a new run. `2026-07-29` and `2026-07-30` still predate the
+> writer and remain readable with warnings.
+>
+> **`backend/forecast_runs/` was also entirely gitignored, so no run artifact existed in a clone at
+> all** — a bigger blocker than any single field, because a consumer had nothing to read. `SUMMARY.json`
+> and `SUMMARY.txt` are now tracked (they are aggregate-only: model names, MAEs, skill percentages,
+> gate verdicts, and the data file's name). Every row-level artifact stays ignored. Note the pattern
+> in `.gitignore`: the directory's **contents** are excluded, not the directory, because git never
+> descends into an excluded directory and the negations would otherwise do nothing.
 
 ### `families[]`
 
@@ -357,6 +392,77 @@ no logged `run_id` — the forward path writes no row to `experiments/log.csv`. 
 
 ---
 
+## 7b. What can be forecast — target eligibility and family capability
+
+Not part of a written artifact: two functions a consumer calls directly, added because the Agent was
+otherwise left inventing its own answers to "can this be forecast?".
+
+### `forecast_modes.target_eligibility(data_path, horizon=5)`
+
+`{column: Eligibility}` for all 41 candidate columns. `targets_available()` previously read one row
+and returned every column, so a length check was impossible by construction; it now returns the
+**eligible** ones by default, with `include_ineligible=True` for a page that greys out the rejects.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `eligible` | bool | Whether the column can be forecast **on the data** |
+| `code` | string or `null` | `null` when eligible; otherwise `not_numeric`, `all_null`, `insufficient_history`, `unusable_date_index`. **Branch on this, not on the prose** |
+| `reason` | string or `null` | Plain language a consumer may quote **verbatim**. Never assemble your own — an invented explanation shown to a treasury is worse than a blank |
+| `n_usable` / `n_required` | int | Non-null observations against the threshold |
+| `dtype`, `first_date`, `last_date` | string | What was measured |
+
+The threshold is derived, not chosen: `DEFAULT_MIN_TRAIN (1008) + horizon + DEFAULT_EVAL_BLOCK (126)`
+= **1,139** at h=5 — four years to train on, a horizon-sized embargo, and one complete six-month block
+left to score against. Below it a number can be produced but not evaluated, which here is the same as
+not having one.
+
+`unusable_date_index` is **file-level**: an unparseable or duplicated date makes every column in the
+file ineligible, because a horizon counted in index positions is ambiguous. `date_index_status()`
+reports it separately so a consumer says "the file is unusable" rather than listing 41 identical
+column failures.
+
+**Measured today: all 41 columns are eligible** — the canonical file is fully dense (3,867 usable rows
+everywhere, +2,728 above the threshold). The rejection paths are therefore exercised only by
+synthetic fixtures in `test_target_eligibility.py`; a check that never fires looks like it works.
+
+Eligibility is about the **data**. A target can be eligible and still have no recipe
+(`recipe_status`) and no family that supports its kind (below).
+
+### `family_capabilities.family_supports_target(family, target)`
+
+| Field | Meaning |
+|---|---|
+| `supported` | A code path exists for this **kind** of series |
+| `target_kind` | `"stock"` or `"flow"` |
+| `stock_method` | `"delta"` (models the change, reconstructs the level) or `"level"` (forecasts the level directly) |
+| `publishable` | `supported` **and** a registry recipe promotes this family for the target |
+| `code` | `null`, `unknown_family`, `kind_unsupported`, or `supported_but_not_published` |
+| `reason` / `evidence` / `notes` | Quotable prose, how the claim was established, and caveats |
+
+**Supported is not approved.** Currently only **B_ML** is `publishable` for `State budget balance`.
+
+**Correction, 2026-08-12.** `CHANGELOG.md` asserted under "Known gaps" that *"E_QUANTILE has no
+stock-target path, so State budget balance cannot yet be forecast by the family"*. **That is false
+and was measured to be false**: E_QUANTILE adds `y_lag_0`, models the delta and reconstructs the
+level, exactly as B_ML and C_DL do. Run end to end against DEV 2024 (TEST untouched): 262
+predictions, P50 MAE 168,565,455 against a persistence MAE of 242,653,025 — **skill 30.53%**,
+coverage 65.6%, gate **FAILED on coverage**. Its sibling bullet in the same block ("still on a
+calendar-day index") was also fixed long ago.
+
+So the honest statement is *"the path exists, has no recipe, and its one DEV run fails the coverage
+gate"* — which invites fixing the calibration, where *"unbuilt"* invited building it. The capability
+is now machine-readable because a claim recorded only in prose drifts: nothing fails when it goes
+stale, as that entry demonstrated.
+
+**One latent inconsistency, recorded rather than left to a rename.** There are four `is_stock`
+implementations. B_ML, C_DL and E_QUANTILE agree on `{"state budget balance", "balance", "t0"}`;
+`run_a_stat._is_stock` uses `{"state budget balance", "balance", "net", "stock"}`. For a column named
+`t0`, three families would model a delta and A_STAT a level. **None of the disputed names is a column
+in the canonical file**, so it is latent — and latent is exactly when nobody checks.
+`stock_alias_divergence()` returns the disagreement as data.
+
+---
+
 ## 8. What the validator checks
 
 | Class | Examples |
@@ -380,7 +486,7 @@ next A_STAT run will.
 
 Warnings:
 
-* `SUMMARY.json`: no `run_id`, no `schema_version`, no `data_file` (all three predate the writer)
+* `SUMMARY.json`: **clean** — `run_id`, `schema_version`, `data_file`, `client_framing` and `model_composition` all present since the 2026-08-12 regeneration
 * `a_stat/leaderboard.csv`: `RMSE` all-null *(the writer is fixed; this artifact predates it)*
 * `a_stat`, `b_ml`: the persistence baseline row has no rows in `predictions_long.csv`
 * `b_ml`: `⚡ Persistence (baseline)` — decoration in a join key

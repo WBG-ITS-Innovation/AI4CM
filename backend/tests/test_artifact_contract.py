@@ -123,6 +123,21 @@ def test_summary_json_carries_run_id_and_schema_version():
 
 # ── C8: the interval's advertised level is recorded as data ──────────────────
 
+def test_the_writer_emits_client_framing_and_the_composition_it_came_from():
+    """`client_framing()` existed and was tested while nothing wrote it.
+
+    A derived sentence nobody publishes is not a contract field: the Agent correctly reported
+    "composition not recorded" on every run. This asserts the WRITER; the round-trip through a real
+    file is asserted in test_daily_summary_composition.py.
+    """
+    src = (Path(BACKEND).parent / "scripts" / "daily_summary.py").read_text()
+    assert "_composition_fields()" in src
+    assert '"client_framing"' in src
+    assert '"model_composition"' in src
+    # Absence must be explained, not bare -- the pattern documented in the contract §0.
+    assert '"client_framing_unavailable_reason"' in src
+
+
 def test_c8_b_ml_captures_the_nominal_interval_level():
     """ConfigBML.nominal_pi configured the conformal interval and was written nowhere, so a
     consumer had y_lo/y_hi with no idea what coverage they claimed."""
