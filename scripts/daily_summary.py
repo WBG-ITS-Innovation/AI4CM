@@ -527,6 +527,13 @@ def main() -> int:
         "target": args.target,
         "cadence": args.cadence,
         "horizon": args.horizon,
+        # data_file: review C1. SUMMARY.txt has printed `Data file: <name>` since it was
+        # written; the JSON twin did not carry it, so two artifacts of the same run
+        # disagreed about whether the input was knowable, and a consumer that reached for
+        # `data_file` got None and rendered it. The name only -- the digest, row count and
+        # date range belong to provenance.json (contract 7), and duplicating them here
+        # would create a second place for them to drift.
+        "data_file": data_file.name,
         "families": [
             {
                 "name": s["name"],

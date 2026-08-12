@@ -66,10 +66,21 @@ Written by `scripts/daily_summary.py`. One object.
 | `target` | string | always | Malformed — reject |
 | `cadence` | string | always | Malformed — reject |
 | `horizon` | **string**, e.g. `"5"` | always | Malformed — reject. Note the type: it is *not* an int |
+| `data_file` | string — the input file's **bare name**, e.g. `"master_daily_clean_treasury.csv"` | **written by current code; absent on every committed artifact** | The run cannot say which dataset produced it. Do **not** substitute a plausible file; render "not recorded" |
 | `families` | array of objects | always, non-empty | Malformed — reject |
 | `overall` | object | always | Recompute from `families`; it is derived and can contradict them |
 | `mode` | `"production"` \| `"backtest"` | always | Assume production |
 | `freshness` | object: `line` (string), `stale` (bool), `backtest` (bool) | always | Treat staleness as unknown |
+
+> **`data_file` — why it is written rather than dropped (review C1).** It was absent from the
+> JSON while `SUMMARY.txt` printed `Data file: <name>` on line 4, so two artifacts of the same
+> run disagreed about whether the input was knowable, and a consumer reaching for it got `None`
+> and rendered the word. The writer already had the value — `daily_summary.py` takes
+> `--data-file` and uses it for the freshness check — so the field was one line away the whole
+> time. It carries the **bare name only**: the digest, row count and date range live in
+> `provenance.json` (§7), and a second copy here would be a second place for them to drift. The
+> absolute path is deliberately excluded — it is machine-specific and does not belong in a
+> published interface.
 
 > **Known defect.** The three committed runs (`2026-07-29`, `2026-07-30`, `2026-08-04`) carry
 > **neither `run_id` nor `schema_version`**, despite `test_artifact_contract.py` asserting both.
@@ -109,6 +120,20 @@ Written by `scripts/daily_summary.py`. One object.
 * **`gate_reasons` is the only place the four verdicts are distinguished** — leakage, no signal,
   persistence-like, and (since item 5) `intervals miscalibrated`. Do not infer the cause from
   `run_status`.
+* **`best_model` is a per-family best, not "the champion".** The word means two different things
+  in this project and they are not the same size:
+  * **The registry champion** — `registry/recipes.json` promotes one `point_model` per target,
+    selected from the **13 machine-learning models**. That is what an official published forward
+    forecast uses, and what "the champion-eligible pool is 13" refers to.
+  * **`families[].best_model`** — written here for **every** family that produced a leaderboard:
+    A_STAT, B_ML, C_DL and E_QUANTILE alike. A consumer that ranks families by `skill_pct` to
+    pick a winner is choosing across **four families**, not across the registry's 13.
+
+  Both are legitimate; conflating them is not. A consumer presenting a `families[].best_model`
+  must not call it the champion recipe, and must not imply it was selected from the pool the
+  registry selects from. `backend/model_reference.composition()` derives both, and
+  `test_model_composition.py` fails if a recipe ever promotes a model from outside the
+  machine-learning pool.
 
 ### `overall`
 
@@ -120,26 +145,49 @@ each from `families` and errors on any disagreement.
 
 ## 2. `<family>/leaderboard.csv`
 
-**There is no common schema. The three families write three different ones.**
+**There is no common schema. Four families write three different ones.**
 
-| Family | Columns |
-|---|---|
-| `a_stat` | `target, horizon, cadence, model, MAE, RMSE, rank` |
-| `b_ml` | `target, horizon, model, MAE, rank` |
-| `e_quantile` | `model, pinball_q10, pinball_q50, pinball_q90, coverage_p10_p90, MAE` |
+| Family | Path | Columns |
+|---|---|---|
+| `a_stat` | `a_stat/leaderboard.csv` | `target, horizon, cadence, model, MAE, RMSE, rank` |
+| `b_ml` | `b_ml/leaderboard.csv` | `target, horizon, model, MAE, rank` |
+| `c_dl` | **`c_dl/daily/leaderboard.csv`** | `target, horizon, model, MAE, rank` — **the same schema as `b_ml`** |
+| `e_quantile` | `e_quantile/leaderboard.csv` | `model, pinball_q10, pinball_q50, pinball_q90, coverage_p10_p90, MAE` |
 
 Only **`model`** is guaranteed. `rank` is absent from `e_quantile`; `target` and `horizon` are
 absent from it entirely, so an `e_quantile` leaderboard **cannot be keyed by target** — the target
 must come from `SUMMARY.json` or the directory.
 
+**`c_dl` — two things a consumer must know.** Its artifacts are **one level deeper**: everything
+is under `c_dl/<cadence>/`, e.g. `c_dl/daily/leaderboard.csv`, not `c_dl/leaderboard.csv`. Glob
+recursively or the family reads as absent. And beside the leaderboard sits a **differently-shaped
+file whose name also begins `leaderboard`**:
+
+```
+c_dl/daily/leaderboard.csv                 <- the leaderboard. b_ml's schema.
+c_dl/daily/leaderboard_<Target>_h<h>.csv   <- NOT a leaderboard. See below.
+```
+
+`leaderboard_<Target>_h<h>.csv` carries `model, MAE, target, horizon, cadence, RMSE, sMAPE, MAPE,
+R2, PI_coverage@90, PI_width@90, Monthly_TOL10_Accuracy, MAE_skill_vs_Ops` — that is the **wide
+metrics table** of §4, written per target and horizon, under a name that begins with the word
+"leaderboard". It has no `rank`. **Match on the exact filename `leaderboard.csv`; a prefix match
+picks up a metrics table and reads its columns as a ranking.**
+
 | Field | Type | Presence | If absent |
 |---|---|---|---|
 | `model` | string | always, non-null | Malformed — reject the file |
-| `MAE` | float | always | Treat as UNKNOWN |
-| `rank` | int, 0- or 1-based depending on family | conditional | Sort by MAE ascending |
+| `MAE` | float | `a_stat`, `b_ml`, `c_dl` always; **`e_quantile` from 2026-07-30 only** | Treat as UNKNOWN. The committed `2026-07-29` `e_quantile` leaderboard has no `MAE` column at all |
+| `rank` | int — **`a_stat` 0-based, `b_ml` 0-based, `c_dl` 1-based** | conditional | Sort by MAE ascending. Never compare a `rank` across families |
 | `RMSE` | float | `a_stat` only | Not computed for this family |
 | `pinball_q*` | float | `e_quantile` only | Not applicable |
 | `coverage_p10_p90` | float in [0, 1] | `e_quantile` only, and only when both interval quantiles were produced | See §0 |
+
+**Not unified, deliberately.** `c_dl`'s leaderboard already *is* `b_ml`'s schema, so there is
+nothing to unify in the columns. The remaining differences — the `daily/` nesting, the 1-based
+`rank`, and the `leaderboard_*` sibling — cannot be changed without rewriting three committed
+artifacts for cosmetic gain, which §8 declines to do for the same reason it declines to
+regenerate A_STAT. They are documented here instead, which is what a consumer actually needs.
 
 **Fixed in item 6:** A_STAT's leaderboard populated `target` / `horizon` / `cadence` on the
 *baseline* row only and left them blank on the winning model, because `lb` was built with
@@ -322,7 +370,7 @@ no logged `run_id` — the forward path writes no row to `experiments/log.csv`. 
 
 ### Current standing of the committed artifacts
 
-`backend/forecast_runs/2026-08-04` — measured, not assumed: **3 errors, 10 warnings**.
+`backend/forecast_runs/2026-08-04` — measured, not assumed: **3 errors, 11 warnings**.
 
 The three errors are all one defect: `a_stat/leaderboard.csv` has `target`, `horizon` and `cadence`
 populated on 1 of 2 rows. **The writer is fixed (§2); this artifact predates the fix**, and it was
@@ -332,7 +380,7 @@ next A_STAT run will.
 
 Warnings:
 
-* `SUMMARY.json`: no `run_id`, no `schema_version` (predates the writer)
+* `SUMMARY.json`: no `run_id`, no `schema_version`, no `data_file` (all three predate the writer)
 * `a_stat/leaderboard.csv`: `RMSE` all-null *(the writer is fixed; this artifact predates it)*
 * `a_stat`, `b_ml`: the persistence baseline row has no rows in `predictions_long.csv`
 * `b_ml`: `⚡ Persistence (baseline)` — decoration in a join key

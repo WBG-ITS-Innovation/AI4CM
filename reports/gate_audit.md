@@ -221,17 +221,41 @@ fire at once and must produce four separate lines.
 
 ## 4. Model counts — what to present to a client
 
-> **Superseded by item 6 (2026-08-11).** Finding 6 below was closed by making A_STAT enumerable:
-> `model_pool()` now returns **23** — 13 B_ML point models, 3 E_QUANTILE interval methods, and 7
-> A_STAT models (4 statistical forecasters plus 3 reference baselines). `DESCRIPTIONS` is now
+> **Superseded twice. Read the second note — the first is left as evidence.**
+>
+> **(a) Item 6 (2026-08-11).** Finding 6 below was closed by making A_STAT enumerable:
+> `model_pool()` returned **23** — 13 B_ML point models, 3 E_QUANTILE interval methods, and 7
+> A_STAT models (4 statistical forecasters plus 3 reference baselines). `DESCRIPTIONS` is
 > exactly the same set, pinned in both directions by
 > `test_every_description_is_reachable_and_every_pool_entry_described`.
 >
-> The recommendation is unchanged in substance and sharper in detail: **never present a single
-> headline number.** Say "13 machine-learning models and 4 statistical models compete on each
-> target; prediction intervals come from 3 quantile methods; 3 further entries are reference
-> baselines, not competitors." The champion-eligible pool for the three live recipes remains the
-> **13**. The section below is kept as written for the record.
+> The recommendation was: never present a single headline number. Say "13 machine-learning
+> models and 4 statistical models compete on each target; prediction intervals come from 3
+> quantile methods; 3 further entries are reference baselines, not competitors."
+>
+> **(b) 2026-08-12 — that sentence was already wrong when it was written, and stayed wrong for
+> a day because it was a string rather than a calculation.** The *same* item-6 change that
+> closed A_STAT also made **C_DL** enumerable, taking the pool from 23 to **28**. The sentence
+> was not updated, so it described 23 of 28 entries and silently omitted five deep-learning
+> models that run daily, publish a `best_model`, and can pass the quality gate. Nothing
+> detected it because nothing derived it.
+>
+> The counts are now computed by `backend/model_reference.composition()` and the sentence is
+> written by `client_framing()` from those counts, so a model added to any family changes the
+> sentence or fails `test_model_composition.py`. A pipeline with no declared client-facing
+> category raises rather than being quietly uncounted. The current derived sentence is:
+>
+> > 13 machine-learning models, 5 deep-learning models and 4 statistical models compete on each
+> > target; prediction intervals come from 3 quantile methods; 3 further entries are reference
+> > baselines, not competitors.
+>
+> **The champion-eligible pool is still 13, but the phrase needs its sense stated.** The
+> registry promotes one `point_model` per target from the 13 machine-learning models — that is
+> the pool an *official published forecast* is selected from. `SUMMARY.json` separately carries
+> a `best_model` for **all four** families, so a consumer ranking families is choosing across
+> four, not across the 13. See `docs/AGENT_ARTIFACT_CONTRACT.md` §1.
+>
+> The section below is kept as written for the record.
 
 ---
 

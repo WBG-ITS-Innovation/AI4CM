@@ -48,6 +48,8 @@ def _clean_summary() -> dict:
     return {
         "run_id": "2026-08-11", "schema_version": 2, "run_date": "2026-08-11",
         "target": "Revenues", "cadence": "Daily", "horizon": "5",
+        # review C1: a clean run says which dataset produced it. Bare name, not a path.
+        "data_file": "master_daily_clean_treasury.csv",
         "families": [
             {"name": "B_ML", "ok": True, "models": "Ridge, Lasso",
              "best_model": "Ridge (MAE 40,000,000)", "skill_pct": "20.00%",
