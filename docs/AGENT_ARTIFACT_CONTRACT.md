@@ -476,13 +476,35 @@ in the canonical file**, so it is latent — and latent is exactly when nobody c
 
 ### Current standing of the committed artifacts
 
-`backend/forecast_runs/2026-08-04` — measured, not assumed: **3 errors, 11 warnings**.
+`backend/forecast_runs/2026-08-04` — measured, not assumed: **3 errors, 7 warnings**.
 
-The three errors are all one defect: `a_stat/leaderboard.csv` has `target`, `horizon` and `cadence`
-populated on 1 of 2 rows. **The writer is fixed (§2); this artifact predates the fix**, and it was
-not regenerated because re-running the family would rewrite a committed artifact for cosmetic gain.
-So the honest position is: the committed A_STAT leaderboard would not pass today's contract, and the
-next A_STAT run will.
+`daily_summary.py` therefore exits **2** on this run.
+
+#### Verdict: pre-existing CSV defect, not a regression (2026-08-12)
+
+All three errors are one defect in one file: `a_stat/leaderboard.csv` has `target`, `horizon` and
+`cadence` populated on 1 of 2 rows, so the winning model row is unidentified. The evidence that this
+predates every recent change, rather than being caused by one:
+
+| Check | Result |
+|---|---|
+| Which artifact holds the errors | **`a_stat/leaderboard.csv`, all 3.** Zero errors mention `SUMMARY.json` |
+| When the CSV was written | `2026-08-04 15:33` |
+| When the writer bug was fixed | `03ad619`, `2026-08-11 12:01` — **seven days later** |
+| Errors before the 2026-08-12 SUMMARY regeneration | 3 |
+| Errors after it | 3, with **byte-identical messages** |
+| Warnings before → after | 10 → 7: three removed (`run_id`, `schema_version`, `data_file`), **none added** |
+| Does the fixed writer still produce it? | **No** — the same `metrics_long.csv` now yields fully populated identity columns *and* recovers the `RMSE` the on-disk CSV lost |
+
+So the regeneration strictly improved this run and is not implicated. **The writer is fixed (§2);
+this artifact predates the fix.** It was not regenerated because re-running the family would rewrite
+a committed artifact and move real numbers for cosmetic gain. The honest position: the committed
+A_STAT leaderboard would not pass today's contract, and the next A_STAT run will.
+
+Held as an assertion by
+`test_artifact_validation.py::test_the_remaining_errors_are_a_pre_existing_csv_defect_not_a_regression`,
+so this cannot later be mistaken for a regression, and regenerating the A_STAT family forces this
+note to be revisited.
 
 Warnings:
 
