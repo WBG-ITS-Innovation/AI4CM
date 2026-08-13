@@ -149,3 +149,87 @@ def verify_against_log(path: Optional[Path] = None) -> Dict:
             checked += 1
     return {"recipes": len(load_registry(path)["recipes"]),
             "metrics_checked": checked, "ok": not problems, "problems": problems}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CHAMPION POLICY — what a refit does and does not change
+#
+# P1(2). There is no champion reselection in this project and none is being built. What
+# was missing is that the *absence* was invisible: a client loading new data sees a run
+# complete, numbers move, and would reasonably assume the model was re-chosen for the new
+# period. It was not. Only the fitted parameters changed.
+#
+# That is a defensible design -- reselecting on client data would mean selecting on the
+# LIVE window, which `evaluation_windows.assert_selection_free` now forbids -- but it has
+# a consequence the registry already records and nothing surfaced: a champion chosen in
+# one regime may be the wrong choice in another. The Revenues recipe carries the measured
+# version of exactly that risk.
+#
+# So this is written as a field the Agent can read, sourced FROM the recipe rather than
+# retyped here. A caveat transcribed into a second place is a caveat that will disagree
+# with itself.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: What a run does when new data arrives.
+RESELECTION_NONE = "none"
+REFIT_ONLY = "refit_only"
+
+
+def champion_policy(path: Optional[Path] = None) -> Dict:
+    """Machine-readable statement of champion fixity, with the registry's own caveats.
+
+    Every field is derived from ``recipes.json``; nothing is hardcoded except the policy
+    names themselves. A consumer should render ``statement`` verbatim and must not infer
+    from a completed run that a champion was re-chosen for the period it covers.
+    """
+    reg = load_registry(path)
+    recipes = reg.get("recipes", [])
+
+    caveats: List[Dict] = []
+    for r in recipes:
+        cav = r.get("scaling_caveat")
+        if not cav:
+            continue
+        caveats.append({
+            "target": r["target"],
+            "recipe_id": r["id"],
+            "applies_to": r.get("params", {}).get("target_transform"),
+            "finding": cav.get("finding"),
+            "evidence": cav.get("evidence"),
+            "how_to_quote": cav.get("how_to_quote"),
+            "study": cav.get("study"),
+        })
+
+    return {
+        "reselection": RESELECTION_NONE,
+        "on_new_data": REFIT_ONLY,
+        "statement": (
+            "Champions are fixed. New data changes the fitted parameters of the recipe "
+            "already chosen for each target; it never changes which model, which features "
+            "or which target transform is used. Those were chosen once, on TRAIN and DEV, "
+            "and are recorded in registry/recipes.json. No run re-selects them."
+        ),
+        "why": (
+            "Re-selecting on data that arrived after the holdout was sealed would mean "
+            "choosing a model on the LIVE window, which is scored but never selected on "
+            "(evaluation_windows.assert_selection_free). Reselection would require a fresh "
+            "TRAIN/DEV pass, which is a deliberate exercise and not a side effect of "
+            "loading a file."
+        ),
+        "risk": (
+            "A champion chosen in one regime can be the wrong choice in another, and "
+            "nothing in a completed run flags that. The caveats below are the measured "
+            "instances the registry already records."
+        ),
+        "reselection_requires": [
+            "a TRAIN/DEV selection pass (never LIVE)",
+            "a hand-edited registry/recipes.json — nothing writes it",
+        ],
+        "caveats": caveats,
+        "recipes_fixed": [
+            {"target": r["target"], "recipe_id": r["id"], "point_model": r["point_model"],
+             "target_transform": r.get("params", {}).get("target_transform", "raw"),
+             "status": r.get("status"), "approved_by": r.get("approved_by")}
+            for r in recipes
+        ],
+    }

@@ -1062,6 +1062,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         
         # Compute integrity report — pick best *trained* model (skip baseline row)
         if glb is not None and len(glb) > 0:
+            # P1 (LIVE window): crowning a best model IS a selection, so the rows the
+            # leaderboard was built from must come only from selectable windows. Without
+            # this, a client whose file extends past the seal would produce folds over LIVE
+            # data and a champion chosen on it -- silently, because nothing else looks at
+            # which window an evaluation row belongs to. Raises rather than trimming: a
+            # quiet trim would change what was measured without saying so.
+            if "target_date" in pred_long.columns:
+                from evaluation_windows import assert_selection_free
+                assert_selection_free(
+                    pd.to_datetime(pred_long["target_date"], errors="coerce").dropna(),
+                    f"b_ml_pipeline.select_best_model({cfg.target!r}, h={cfg.horizon})")
             best_model, _excluded = select_best_model(glb, overfit_ratios)
             if _excluded:
                 print(f"[M-4] Excluded from best-model selection (val/train ratio > "

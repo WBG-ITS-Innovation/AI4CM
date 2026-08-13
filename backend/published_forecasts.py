@@ -70,6 +70,11 @@ SCORECARD_COLUMNS: Sequence[str] = (
     "p10", "p50", "p90", "y_true", "abs_error",
     "persistence_pred", "persistence_abs_error", "skill_vs_ruler_pct",
     "persistence_source",
+    # P1: which evaluation window the scored date falls in. A realized number from LIVE
+    # (arrived after the holdout was sealed) and one from TEST (the sealed holdout, one
+    # logged final read) are different claims, and the row should say which it is rather
+    # than leaving a consumer to infer it from the date.
+    "scored_in_window",
     "inside_interval", "publication_verdict", "point_model", "target_transform",
     "data_sha_at_issue", "git_sha_at_issue", "scored_at_data_sha",
 )
@@ -339,6 +344,8 @@ def score_published(data_path: Path,
             try:
                 got = score_one(row, truth_cache[target], horizon_steps)
                 base.update(got)
+                from evaluation_windows import window_for
+                base["scored_in_window"] = window_for(base["target_date"])
                 # One ruler, one implementation: the artifact's origin_value and the
                 # actuals at target_date - h business days are the same quantity. A
                 # divergence means the actuals were revised under an issued forecast,
