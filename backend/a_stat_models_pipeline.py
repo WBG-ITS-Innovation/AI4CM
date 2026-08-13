@@ -104,8 +104,9 @@ def ensure_dirs(root: str):
     for sub in ["plots", "artifacts"]:
         Path(root, sub).mkdir(parents=True, exist_ok=True)
 
-def is_stock(target: str) -> bool:
-    return target.strip().lower() in {"state budget balance", "balance", "t0"}
+# Copy 6 of 7. This module is unreferenced legacy (see the session records) but it is unified
+# anyway: a dead copy is still a copy that can be revived.
+from target_kinds import is_stock  # noqa: E402,F401
 
 def _cad_freq(cadence: str) -> str:
     return {"Daily": "B", "Weekly": "W-FRI", "Monthly": "ME"}.get(cadence, "B")

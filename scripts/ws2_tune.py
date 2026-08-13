@@ -19,7 +19,8 @@ import numpy as np, pandas as pd
 from b_ml_pipeline import (ConfigBML, to_business_index, calendar_exog, choose_recipe,
                            lag_window_features, is_stock, build_yearly_folds)
 from forecast_integrity import compute_persistence_baseline, signal_sentinel
-from evaluation_windows import seasonal_naive_scale, mase
+from evaluation_windows import (DEV, TRAIN, assert_selection_free, mase,
+                                seasonal_naive_scale)
 from provenance import describe_input, describe_code
 from experiment_log import log_run
 from preprocessing.fiscal_calendar import calendar_version
@@ -59,7 +60,11 @@ def design(target):
 
 def make_folds(target, window):
     s,X,y_t,y_true,tf,lvl,stock=design(target)
-    lo,hi=(None,"2023-12-31") if window=="train" else ("2024-01-01","2024-12-31")
+    # P1 follow-up: these bounds used to be date literals here, so a change to the split in
+    # evaluation_windows would silently not reach the tuner -- and this is a SELECTION path,
+    # the one place a stale window does the most damage. ws7_cqr calls this same function, so
+    # it inherited the literals rather than holding its own.
+    lo,hi=(None,TRAIN.end) if window=="train" else (DEV.start,DEV.end)
     folds=build_yearly_folds(s.index,4,None,eval_start=lo,eval_end=hi)
     out=[]
     for (tr_end,te_start,te_end) in folds:
@@ -67,6 +72,8 @@ def make_folds(target, window):
         ok=X.notna().all(axis=1)&y_t.notna()
         itr=X.index[mtr&ok]; ite=X.index[mte&ok]
         if len(itr)<200 or len(ite)==0: continue
+        # Tuning IS selection: every evaluation row must come from a selectable window.
+        assert_selection_free(ite, f"ws2_tune.make_folds({target!r}, {window!r}) evaluation rows")
         ytr=y_t.loc[itr].to_numpy(float); yte_true=y_true.loc[ite].to_numpy(float)
         origin=s.loc[ite].to_numpy(float)
         inv=None

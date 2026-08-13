@@ -386,12 +386,31 @@ def exploratory_run(target: str, model: str, data_path: Path,
 
 
 def publish_official(result, *, published_root: Optional[Path] = None,
-                     forward_dir: Optional[Path] = None) -> Path:
+                     forward_dir: Optional[Path] = None,
+                     issue_date: Optional[str] = None) -> Path:
     """Publish an OfficialResult. Refuses anything else.
 
     The type check is the boundary: an exploratory result cannot be published by passing a flag,
     because it is a different type with no publish path.
     """
+    # P2 follow-up: `withheld` means a documented alternative is more accurate, so publishing the
+    # numbers at all would invite a worse decision than not publishing them. That is a different
+    # claim from `withheld_as_forecast`, where the numbers remain the best central-tendency
+    # estimate and only the event claim is withheld -- those still publish, labelled.
+    if getattr(result, "is_official", False):
+        from registry import recipe_for
+        try:
+            verdict = recipe_for(result.target)["publication"]["verdict"]
+        except Exception:                          # noqa: BLE001 - absence is not a refusal
+            verdict = None
+        if verdict == "withheld":
+            raise NotOfficial(
+                f"Refusing to publish {result.target!r}: its current verdict is 'withheld', which "
+                f"means a documented trivial benchmark is more accurate than this model. "
+                f"Publishing the numbers would invite a worse decision than publishing nothing. "
+                f"('withheld_as_forecast' still publishes -- there the numbers are the best "
+                f"estimate available and only the event claim is withheld.)")
+
     if not getattr(result, "is_official", False):
         raise NotOfficial(
             "Refusing to publish an exploratory forecast. Exploratory runs are not gated, carry "
@@ -404,7 +423,7 @@ def publish_official(result, *, published_root: Optional[Path] = None,
 
     src = Path(forward_dir or DEFAULT_OUT)
     write_artifacts(src, result.forecasts, result.provenance, result.gates)
-    dest = publish(src, published_root=published_root)
+    dest = publish(src, issue_date=issue_date, published_root=published_root)
 
     # Retain what produced the numbers. The blobs are gitignored and the manifest is not -- see
     # estimator_store's module docstring for why this one published artifact is not tracked.

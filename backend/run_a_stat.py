@@ -22,8 +22,11 @@ from statsmodels.tsa.forecasting.theta import ThetaModel
 
 def _log(msg: str): print(time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg, flush=True)
 
-def _is_stock(name: str) -> bool:
-    return str(name).strip().lower() in {"state budget balance", "balance", "net", "stock"}
+# The implementation that diverged: it alone treated "net" and "stock" as stock targets and
+# "t0" as a flow, so a column named t0 would have been modelled as a level here and as a delta
+# in the other three families. Now one shared definition, whose alias set is the UNION of all
+# four -- see backend/target_kinds.py for why the union rather than a pick.
+from target_kinds import is_stock as _is_stock  # noqa: E402,F401
 
 def _resample(df: pd.DataFrame, target: str, cadence: str, date_col: str) -> pd.Series:
     df = df.copy()
@@ -409,6 +412,14 @@ def main():
     # *with* them, so the baseline row was identified and the model rows were not. A consumer
     # asking "which model won for target X" got NaN for the winner. RMSE was dropped the same way,
     # which is why it read as an all-null column despite being computed in metrics_long.
+    # NO selection guard here, deliberately. This family runs ONE model per invocation via
+    # TG_MODEL_FILTER and never chooses between models: the leaderboard ranks that model
+    # against the persistence baseline, which is a report, not a choice. A guard was added
+    # here in this session's first pass and immediately refused an ordinary run, because
+    # A_STAT legitimately evaluates over the reporting window. Ranking a model against a
+    # ruler is not selecting a model. (Separately: this path reads 2025 rows without going
+    # through require_test_access -- a pre-existing hole recorded in the session notes, not
+    # something a selection guard should paper over.)
     lb=(metr.groupby("model",as_index=False)[["MAE","RMSE"]].mean().sort_values("MAE")
            .assign(target=target, horizon=horizon, cadence=cadence)
            .assign(rank=lambda x: np.arange(1,len(x)+1)))

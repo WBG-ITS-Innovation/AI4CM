@@ -1,0 +1,57 @@
+{
+  "revenues-lgbm-l1-ws3-v1": {
+    "target": "Revenues",
+    "gates": {
+      "accuracy_vs_naive": {
+        "passed": true,
+        "name": "accuracy vs repeating the same weekday last week",
+        "metric": "MASE",
+        "measured": 0.757959,
+        "threshold": 1.0,
+        "margin_pct": 24.2,
+        "reason_plain": "This model is 24.2% more accurate than simply repeating what happened on the same weekday last week, so it is the better of the two estimates."
+      },
+      "signal": {
+        "passed": true,
+        "name": "signal (shuffled-target control)",
+        "measured": 1.2255,
+        "threshold": 1.15,
+        "threshold_source": "calibrated against a measured null distribution (n=360, false-positive rate 0.00%); see reports/sentinel_calibration.md",
+        "null_p99": 1.0943,
+        "inside_null_distribution": false,
+        "reason_plain": "Shuffling the historical answers made this model's error 1.23 times worse (we require 1.15 times). The inputs carry real information about what happens next.",
+        "corroboration": "Confirmed with two further instruments (a decision tree and a random forest) in reports/sentinel_probe_study.md; all three agree."
+      },
+      "leakage": {
+        "passed": true,
+        "name": "leakage",
+        "measured": false,
+        "threshold": "no future information in features",
+        "reason_plain": "No feature was found to carry information from after the forecast origin."
+      },
+      "persistence_mimicry": {
+        "passed": true,
+        "name": "persistence-mimicry (shift diagnostic)",
+        "measured": false,
+        "threshold": "predictions must not be a lagged copy",
+        "reason_plain": "The forecast does not simply replay a recent actual."
+      },
+      "coverage": {
+        "passed": null,
+        "name": "interval coverage",
+        "measured": null,
+        "threshold": null,
+        "reason_plain": "This model reports no prediction intervals, so their calibration was not measured. Point forecasts are unaffected."
+      },
+      "overfitting": {
+        "passed": true,
+        "name": "overfitting cap",
+        "measured": "< 3.0",
+        "threshold": 3.0,
+        "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+      }
+    },
+    "status": "candidate -- pre-tuning",
+    "approved_by": null
+  }
+}
