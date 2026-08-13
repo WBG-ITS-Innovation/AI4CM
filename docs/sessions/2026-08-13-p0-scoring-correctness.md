@@ -196,6 +196,51 @@ file identical to pre-mutation
 
 ---
 
+### 4.5 Independent reproduction on the diagnostic's own draw
+
+§4.2 used a fresh synthetic draw, so its per-target *before* figures differ from the diagnostic's.
+This run repeats the exercise with the **identical generator the diagnostic used** — seed 0, each
+column drawn from its own trailing-60-row mean and standard deviation, dates 2025-08-07 … 2025-08-13
+— so the before column reproduces the diagnostic to the decimal and the headline `-1449%` row is
+visible directly. The pre-fix comparator is monkeypatched in rather than the worktree reverted.
+
+```
+REALIZED SKILL vs PERSISTENCE -- same 15 forecasts, same synthetic actuals
+  scored 15 / pending 0   (wrong run: 15/0)
+
+target                     WRONG (fixed 5)     CORRECTED     correction
+Revenues                            -7.23%        31.27%        +38.50pp
+Expenditure                         74.34%        75.08%         +0.74pp
+State budget balance                -1.44%        -7.39%         -5.94pp
+
+target                    persistence_mae WRONG        CORRECTED    realized_mae (same)
+Revenues                             23,303,531       36,359,271             24,987,960
+Expenditure                          74,914,777       77,153,743             19,224,604
+State budget balance                184,518,075      174,303,536            187,180,179
+
+Revenues, per row -- the -1449% row is h=1:
+ horizon target_date  persistence_pred  skill_vs_ruler_pct  persistence_pred_fixed  skill_vs_ruler_pct_fixed     persistence_source
+       1  2025-08-07       82103398.35        -1449.481283             46490793.48                 55.162600 artifact: origin_value
+       2  2025-08-08      104560409.78           67.130516             46490793.48                 13.965310 artifact: origin_value
+       3  2025-08-11       73486528.68            8.164318             46490793.48                 40.014656 artifact: origin_value
+       4  2025-08-12       75125619.10         -212.901892             46490793.48                 43.037397 artifact: origin_value
+       5  2025-08-13       46490793.48          -72.908653             46490793.48                -72.908653 artifact: origin_value
+
+baseline_disagreements: []
+```
+
+The three figures the diagnostic reported — **−1449.48%, −212.90%, −72.91%** — reproduce exactly,
+and the first two become **+55.16%** and **+43.04%**. `-72.91%` at h=5 is unchanged, because h=5 was
+the one horizon the old comparator got right. Every row now reads `artifact: origin_value` and every
+row uses the same 46,490,793.48, which is what "one origin, one ruler" means. Per target, Revenues
+moves **−7.23% → +31.27%**, a 38.50-point correction that flips the sign.
+
+Two notes on reading this. `realized_mae` is unchanged in every row — the forecast did not move, only
+the yardstick. And `State budget balance` gets *worse* under the correct ruler (−1.44% → −7.39%);
+the correction is not a flattering adjustment, it is simply the right denominator.
+
+---
+
 ## 5. The diff, and one decision inside it
 
 `backend/published_forecasts.py`, +127 −15. Four changes:
@@ -297,3 +342,41 @@ should be quoted from the numbers above.
    `test_published_baseline_is_shared`, and the new
    `test_the_scored_ruler_equals_the_artifacts_origin_value`) and no single place that states
    it. Worth one short doc rather than a fourth test the next time this recurs.
+
+---
+
+## 10. Addendum: the 2026-08-12 reference artifact
+
+Committed in the same session, separately from the scoring fix because it is evidence rather than
+code.
+
+`backend/forecast_runs/2026-08-12/` is a real `mode: production` run over `State budget balance`
+(families A_STAT, B_ML, E_QUANTILE). It matters for three reasons:
+
+* It **carries all four fields** — `run_id: 2026-08-12`, `schema_version: 2`,
+  `data_file: master_daily_clean_treasury.csv`, `client_framing` present with the full
+  `model_composition` block. So the writer changes reach a genuinely fresh run, not only the
+  regenerated 2026-08-04 summary.
+* It **passes the artifact contract with 0 errors** (7 warnings, all previously catalogued: the
+  derived baseline row absent from `predictions_long`, the decorated join key, empty
+  `sMAPE`/`MAPE`). `2026-08-04` still carries 3 errors from a pre-fix a_stat leaderboard, so this
+  is the first contract-clean summary and the better thing to point a consumer at.
+* It **settles the a_stat regression question by demonstration.** Same writer, same columns,
+  different output, because this run was produced after the fix:
+
+```
+  2026-08-04: identity fully populated=False   RMSE populated=False
+  2026-08-12: identity fully populated=True    RMSE populated=True
+```
+
+Only `SUMMARY.json` and `SUMMARY.txt` are tracked; the row-level artifacts stay gitignored because
+they carry Treasury predictions. Two tests make the reference status enforceable rather than a claim
+in a commit message:
+
+* `test_the_reference_summary_is_contract_clean_and_carries_every_field` validates the summary
+  **under `strict=True`** and requires zero findings, plus each of the four fields and an empty
+  `promoted_outside_champion_pool`. It deliberately validates the summary alone, because that is
+  what a clone actually has.
+* `test_the_reference_a_stat_leaderboard_is_fully_identified` checks the identity columns and RMSE,
+  and **skips** where the row-level CSVs are absent — so it is informative on the machine that made
+  the run and silent everywhere else.
