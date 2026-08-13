@@ -574,3 +574,52 @@ def test_the_real_run_is_readable_and_its_findings_are_recorded():
     assert summary["data_file"] == "master_daily_clean_treasury.csv"
     assert "compete on each target" in summary["client_framing"]
     assert summary["model_composition"]["counts"]["machine-learning models"] == 13
+
+
+@pytest.mark.skipif(not REAL_RUN.exists(), reason="no committed run to validate")
+def test_the_remaining_errors_are_a_pre_existing_csv_defect_not_a_regression():
+    """The verdict on why `daily_summary` exits 2 on this run, held as an assertion.
+
+    Every remaining ERROR is on ``a_stat/leaderboard.csv`` -- a file written 2026-08-04, seven days
+    before the writer bug was fixed (03ad619, 2026-08-11). The 2026-08-12 SUMMARY.json regeneration
+    could not have caused them and did not: replaying the pre-regeneration shape yields the **same
+    three errors with the same messages**, and the regeneration only removed warnings.
+
+    Pinned so "the validator fails on this run" can never be mistaken for a regression introduced
+    by a later change, and so that regenerating the a_stat family forces this note to be revisited.
+    """
+    import shutil
+    import tempfile
+
+    rep = validate_run(REAL_RUN)
+
+    # 1. Every error is in the one CSV. Nothing the regeneration touched is implicated.
+    assert {f.artifact for f in rep.errors} == {"a_stat/leaderboard.csv"}, rep.summary()
+    assert not any("SUMMARY" in f.artifact for f in rep.errors), rep.summary()
+
+    # 2. Stripping the five regenerated keys reproduces the pre-regeneration artifact, and the
+    #    errors are unchanged -- so they pre-date it.
+    tmp = Path(tempfile.mkdtemp()) / REAL_RUN.name
+    shutil.copytree(REAL_RUN, tmp)
+    p = tmp / "SUMMARY.json"
+    d = json.loads(p.read_text())
+    for k in ("run_id", "schema_version", "data_file", "client_framing", "model_composition"):
+        d.pop(k, None)
+    p.write_text(json.dumps(d, indent=2))
+
+    before = validate_run(tmp)
+    assert [f.message for f in before.errors] == [f.message for f in rep.errors], (
+        "the regeneration changed the error set, so it is implicated after all")
+    assert len(before.warnings) > len(rep.warnings), (
+        "the regeneration should have removed warnings (run_id, schema_version, data_file)")
+
+    # 3. The writer is fixed: the same metrics_long now yields a fully-identified leaderboard.
+    import numpy as np
+    metr = pd.read_csv(REAL_RUN / "a_stat" / "metrics_long.csv")
+    lb = (metr.groupby("model", as_index=False)[["MAE", "RMSE"]].mean()
+          .assign(target="Revenues", horizon=5, cadence="Daily")
+          .assign(rank=lambda x: np.arange(1, len(x) + 1)))
+    assert all(lb[c].notna().all() for c in ("target", "horizon", "cadence")), (
+        "the fixed writer still leaves identity columns blank")
+    assert lb["RMSE"].notna().all(), (
+        "the fixed writer should also recover RMSE, which the on-disk CSV lost")
