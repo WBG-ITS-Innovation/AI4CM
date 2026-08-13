@@ -140,6 +140,60 @@ def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> 
     return reasons
 
 
+def _window_and_policy_fields(data_file) -> dict:
+    """Which window the run's data spans, and the champion-fixity statement.
+
+    P1. Two things a consumer could previously only guess. `windows` says where every
+    number came from -- the four-way split with its boundaries, plus which windows the
+    input file actually covers -- so "is this a holdout figure or a live one" is answerable
+    from the artifact. `champion_policy` says that a completed run did NOT re-choose a
+    model, which is the assumption a client would otherwise make on seeing numbers move.
+
+    Degrades with a stated reason rather than a bare omission, per the contract's §0
+    pattern.
+    """
+    out: dict = {}
+    try:
+        sys.path.insert(0, str(BACKEND_DIR))
+        from evaluation_windows import (LIVE_START, SELECTABLE_WINDOWS, TEST_END,
+                                        WINDOWS, window_for)
+
+        spans, latest = [], None
+        try:
+            dates = pd.to_datetime(pd.read_csv(data_file, usecols=["date"])["date"],
+                                   errors="coerce").dropna()
+            if len(dates):
+                latest = str(dates.max().date())
+                spans = sorted({window_for(d) for d in dates},
+                               key=lambda w: [x.name for x in WINDOWS].index(w))
+        except Exception:                          # noqa: BLE001 - the split is still worth stating
+            spans = []
+
+        out["windows"] = {
+            "definition": {w.name: {"start": w.start, "end": w.end, "purpose": w.purpose}
+                           for w in WINDOWS},
+            "selectable": sorted(SELECTABLE_WINDOWS),
+            "report_only": [w.name for w in WINDOWS if w.name not in SELECTABLE_WINDOWS],
+            "data_spans_windows": spans,
+            "latest_data_date": latest,
+            "test_sealed_through": TEST_END,
+            "live_begins": LIVE_START,
+            "note": ("Selection is permitted only on the selectable windows. LIVE is data "
+                     "that arrived after the holdout was sealed: it is scored against "
+                     "actuals and never used to choose a model, recipe, hyperparameter or "
+                     "threshold."),
+        }
+    except Exception as exc:                       # noqa: BLE001
+        out["windows_unavailable_reason"] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        from registry import champion_policy
+        out["champion_policy"] = champion_policy()
+    except Exception as exc:                       # noqa: BLE001
+        out["champion_policy_unavailable_reason"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
 def _composition_fields() -> dict:
     """The model-composition block for SUMMARY.json, or an explicit reason it is absent.
 
@@ -585,6 +639,8 @@ def main() -> int:
         # the categories itself. Never a single headline count: the entries are not one kind of
         # thing (see reports/gate_audit.md §4).
         **_composition_fields(),
+        # P1: where every number came from, and that champions were not re-chosen.
+        **_window_and_policy_fields(data_file),
         "families": [
             {
                 "name": s["name"],

@@ -10,12 +10,20 @@ have the same failure mode: if B_ML tunes on 2025 while A_STAT tunes on
 on the same window we later report as the final result, that result is no
 longer out-of-sample in any useful sense.
 
-The three-way split
--------------------
+The four-way split
+------------------
     TRAIN   2015-01-05 .. 2023-12-31    model fitting
     DEV     2024-01-01 .. 2024-12-31    all tuning, feature selection,
                                         threshold choices, model comparison
-    TEST    2025-01-01 .. (data end)    LOCKED — final reporting only
+    TEST    2025-01-01 .. 2025-08-06    LOCKED — final reporting only
+    LIVE    2025-08-07 .. (data end)    arrived after sealing — scored against
+                                        actuals, never used to choose
+
+TEST was open-ended until P1, which meant every row a client added after the
+holdout was sealed landed inside it.  Closing TEST at the extent it actually
+holds, and giving the remainder its own window, is what lets new data be scored
+without spending the one clean final read.  Selection is permitted only on
+TRAIN and DEV (``SELECTABLE_WINDOWS``); ``assert_selection_free`` enforces it.
 
 Discipline: every decision that could be made differently (hyperparameters,
 which features to keep, which models to ship, where to set a gate) is made
@@ -45,6 +53,41 @@ import pandas as pd
 TRAIN_START = "2015-01-05"
 DEV_START = "2024-01-01"
 TEST_START = "2025-01-01"
+
+# ---------------------------------------------------------------------------
+# The LIVE window
+# ---------------------------------------------------------------------------
+# TEST used to be open-ended (``end=None``), so every row a client added after the
+# holdout was sealed fell *inside* TEST. Scoring or comparing over that data therefore
+# required ``AI4CM_ALLOW_TEST_READ=1``, which would have ended the clean single final
+# read this project has protected since Phase 2 -- for data the holdout was never meant
+# to cover.
+#
+# So TEST is now CLOSED at the extent it actually holds, and everything after it is a
+# fourth window: LIVE.
+#
+#   TEST  2025-01-01 .. 2025-08-06   sealed holdout, one final read, never used to choose
+#   LIVE  2025-08-07 ..              arrived-after-sealing: SCORED, never used to choose
+#
+# The boundary is the canonical file's last date at sealing time. That is a fact about
+# what was sealed, not a preference, which is why it is a constant rather than something
+# derived from whatever file happens to be on disk -- a derived boundary would move every
+# time a client loaded data, and a moving boundary is not a seal.
+#
+# **The current canonical file ends 2025-08-06, so this reclassifies nothing.** Every
+# date that exists today keeps the window it already had; LIVE is empty until a client
+# loads new rows. ``test_live_window.py`` asserts that emptiness, so the change cannot
+# silently move an existing number.
+#
+# LIVE is readable without a gate -- scoring published forecasts against arrived actuals
+# is the whole point of it and is not a holdout consultation. What LIVE must never do is
+# inform a *choice*: a model, a recipe, a hyperparameter, a threshold. That is enforced
+# by ``assert_selection_free`` rather than documented, because the previous version of
+# this comment block was documentation and documentation is not enforcement.
+
+#: Last date the sealed holdout covers. LIVE begins the next calendar day.
+TEST_END = "2025-08-06"
+LIVE_START = "2025-08-07"
 
 # ---------------------------------------------------------------------------
 # Enforcement
@@ -108,6 +151,49 @@ def require_test_access(reason: str, caller: Optional[str] = None) -> None:
         pass   # never let logging failure mask the read itself
 
 
+class SelectionOnReportOnlyDataError(RuntimeError):
+    """A choice was about to be made using data that may only be reported on.
+
+    Distinct from :class:`TestWindowAccessError`, and deliberately not overridable by an
+    environment variable. TEST has a release procedure — one final read, logged — because
+    a holdout exists to be spent once. LIVE has none: data that arrived after sealing can
+    be *scored* freely and must never inform a choice, so there is nothing to release and
+    no flag to set.
+    """
+
+
+def assert_selection_free(dates: Iterable, context: str) -> None:
+    """Raise if any date could inform a choice but must not.
+
+    Call this from any path that *chooses* something — a model, a recipe, a
+    hyperparameter, a threshold, a champion. Selection is legitimate only on
+    ``SELECTABLE_WINDOWS`` (train, dev); TEST is report-only by seal and LIVE is
+    report-only by construction.
+
+    This is the structural half of the LIVE window. Without it "never selected on" would
+    be a sentence in a docstring, which is exactly what the TEST discipline was before
+    Phase 2 made it checkable.
+    """
+    idx = pd.DatetimeIndex(list(dates))
+    if len(idx) == 0:
+        return
+    found = {window_for(t) for t in idx}
+    offenders = sorted(found - SELECTABLE_WINDOWS)
+    if not offenders:
+        return
+
+    counts = {w: int(sum(1 for t in idx if window_for(t) == w)) for w in offenders}
+    examples = {w: str(min(t for t in idx if window_for(t) == w).date()) for w in offenders}
+    raise SelectionOnReportOnlyDataError(
+        f"{context}: refusing to select on report-only data. Rows fall in "
+        f"{', '.join(f'{w} (n={counts[w]}, from {examples[w]})' for w in offenders)}. "
+        f"Selection is permitted only on {sorted(SELECTABLE_WINDOWS)}: TEST is a sealed "
+        f"holdout with one logged final read, and LIVE is data that arrived after sealing "
+        f"— it is scored against actuals and never used to choose a model, recipe, "
+        f"hyperparameter or threshold. Restrict the input to 'train+dev' before choosing."
+    )
+
+
 def window_of(ts) -> str:
     """Alias of :func:`window_for`, kept for readability at call sites."""
     return window_for(ts)
@@ -116,8 +202,12 @@ def window_of(ts) -> str:
 def restrict(obj, window: str):
     """Return only the rows of a Series/DataFrame/DatetimeIndex inside ``window``.
 
-    ``window`` is 'train', 'dev', 'test', or 'train+dev' (the searchable region).
+    ``window`` is 'train', 'dev', 'test', 'live', or 'train+dev' (the searchable region).
     Reading 'test' goes through :func:`require_test_access`.
+
+    Reading 'live' is deliberately **ungated**: scoring a published forecast against
+    actuals that have since arrived is the purpose of that window, not a consultation of a
+    holdout. What LIVE may not do is inform a choice — see :func:`assert_selection_free`.
     """
     window = window.strip().lower()
     if window == "test":
@@ -200,6 +290,13 @@ def rolling_origin_folds(
     if window.strip().lower() == "test":
         require_test_access("rolling_origin_folds(window='test')",
                             caller="evaluation_windows.rolling_origin_folds")
+    if window.strip().lower() == "live":
+        # Folds exist to search. There is no legitimate reason to build one over LIVE, so
+        # this refuses at the entry point rather than relying on a later check.
+        raise SelectionOnReportOnlyDataError(
+            "rolling_origin_folds(window='live'): folds are a search structure and LIVE is "
+            "report-only. Score published forecasts against LIVE actuals instead; never "
+            "carve folds out of it.")
 
     idx = restrict(pd.DatetimeIndex(index), window)
     n = len(idx)
@@ -292,20 +389,27 @@ class Window:
 TRAIN = Window("train", TRAIN_START, "2023-12-31", "model fitting")
 DEV = Window("dev", DEV_START, "2024-12-31",
              "tuning, feature selection, thresholds, model comparison")
-TEST = Window("test", TEST_START, None,
+TEST = Window("test", TEST_START, TEST_END,
               "LOCKED holdout — final reporting only, never used to choose")
+LIVE = Window("live", LIVE_START, None,
+              "arrived after sealing — scored against actuals, never used to choose")
 
-WINDOWS = (TRAIN, DEV, TEST)
+WINDOWS = (TRAIN, DEV, TEST, LIVE)
+
+#: Windows a choice may legitimately be made on. Everything else is report-only.
+SELECTABLE_WINDOWS = frozenset({"train", "dev"})
 
 
 def window_for(ts) -> str:
-    """Return the window name a timestamp falls in ('train'/'dev'/'test')."""
+    """Return the window name a timestamp falls in ('train'/'dev'/'test'/'live')."""
     ts = pd.Timestamp(ts)
     if ts < pd.Timestamp(DEV_START):
         return "train"
     if ts < pd.Timestamp(TEST_START):
         return "dev"
-    return "test"
+    if ts <= pd.Timestamp(TEST_END):
+        return "test"
+    return "live"
 
 
 def eval_start_for(purpose: str) -> str:
@@ -313,14 +417,17 @@ def eval_start_for(purpose: str) -> str:
 
     purpose="tuning"  -> DEV_START   (choose things here)
     purpose="report"  -> TEST_START  (report from here, choose nothing)
+    purpose="score"   -> LIVE_START  (score arrived actuals; choose nothing, no gate)
     """
     p = purpose.strip().lower()
     if p in ("tuning", "tune", "dev", "development"):
         return DEV_START
     if p in ("report", "reporting", "final", "test", "holdout"):
         return TEST_START
+    if p in ("score", "scoring", "live", "realized"):
+        return LIVE_START
     raise ValueError(
-        f"purpose must be 'tuning' or 'report', got {purpose!r} — "
+        f"purpose must be 'tuning', 'report' or 'score', got {purpose!r} — "
         "being explicit here is what keeps the holdout clean."
     )
 

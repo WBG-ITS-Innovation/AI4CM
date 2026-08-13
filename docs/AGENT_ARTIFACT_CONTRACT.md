@@ -75,6 +75,45 @@ Written by `scripts/daily_summary.py`. One object.
 | `client_framing_unavailable_reason` | string | **only** when the composition could not be derived | Explains the absence above. Present means the model *catalogue* could not be read (e.g. a missing modelling library) — the run itself is unaffected |
 | `model_composition` | object (below) | with `client_framing` | Counts unavailable |
 
+| `windows` | object (below) | since P1 | The split is unknown; do **not** assume a number is out-of-sample |
+| `windows_unavailable_reason` | string | only when the split could not be read | Explains the absence above |
+| `champion_policy` | object (below) | since P1 | **Do not infer that a completed run re-chose a model.** It did not |
+| `champion_policy_unavailable_reason` | string | only when the registry could not be read | Explains the absence above |
+
+`windows` says where every number came from. Four windows, and **selection is permitted only on
+`train` and `dev`**:
+
+| Field | Meaning |
+|---|---|
+| `definition` | `{name: {start, end, purpose}}` for train / dev / test / **live** |
+| `selectable` | `["dev", "train"]` — the only windows a choice may be made on |
+| `report_only` | `["test", "live"]` — scored and reported, never used to choose |
+| `data_spans_windows` | which windows the input file actually covers, in order |
+| `latest_data_date`, `test_sealed_through`, `live_begins` | the boundaries as data |
+
+**LIVE is new and matters for a client refresh.** `TEST` used to be open-ended, so any row added
+after the holdout was sealed fell inside it and scoring needed `AI4CM_ALLOW_TEST_READ=1` — spending
+the one clean final read on data the holdout never covered. `TEST` is now closed at **2025-08-06**
+and everything after is `LIVE`: **scored freely, never selected on.** A consumer should read a `live`
+figure as realized out-of-sample accuracy, and a `test` figure as the sealed holdout.
+
+`champion_policy` states what a refit does and does not change:
+
+| Field | Meaning |
+|---|---|
+| `reselection` | `"none"` — no path reselects champions; nothing writes `recipes.json` |
+| `on_new_data` | `"refit_only"` — new data changes fitted parameters, never the model, features or transform |
+| `statement` | Render **verbatim**. Do not paraphrase it into "the model was retrained for this period" |
+| `why` | Reselecting would mean choosing on LIVE, which `assert_selection_free` forbids |
+| `risk` | A champion chosen in one regime can be wrong in another, and no run flags it |
+| `caveats[]` | The registry's own measured caveats, read from `recipes.json` — `target`, `applies_to`, `finding`, `evidence`, `how_to_quote`, `study` |
+| `recipes_fixed[]` | Each fixed recipe with its `point_model`, `target_transform`, `status`, `approved_by` |
+
+**The caveat a client refresh most needs:** Revenues' `ratio` transform advantage is
+**drift-dependent** — `+1.30%` at 13.5% level drift rising to `+24.14%` at 84.1%. So the champion
+selected under DEV's 81.7% drift may be the wrong choice for a flatter period, and nothing in a
+completed run says so. Quote `caveats[].how_to_quote`, not the headline skill alone.
+
 `model_composition` carries the numbers the sentence was derived from, so a consumer can requote it
 or recompute without re-deriving the categories itself:
 
@@ -389,6 +428,17 @@ Each entry: `fit_id`, `target`, `horizon`, `kind`, `file`, `sha256` (required), 
 **`selection_run_id` is not this fit's id.** It identifies the DEV run that *chose* the recipe
 (TRAIN ≤2023, scored on DEV 2024). The published fit uses all history through the issue date and has
 no logged `run_id` — the forward path writes no row to `experiments/log.csv`. Use `fit_id`.
+
+---
+
+### The scorecard's `scored_in_window`
+
+`forecasts/scorecard.csv` gained a column with the LIVE window: every realized row records which
+window its `target_date` falls in. A realized number from `live` (arrived after the holdout was
+sealed) and one from `test` (the sealed holdout, one logged final read) are **different claims**, and
+the row says which rather than leaving a consumer to infer it from the date. Values: `test` | `live`
+(a scored `train`/`dev` row would mean a published forecast for a date already in the training data,
+which `assert_forward_only` makes impossible).
 
 ---
 
