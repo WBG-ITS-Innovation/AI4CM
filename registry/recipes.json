@@ -55,34 +55,65 @@
         "sentinel_ratio": 1.2255,
         "ruler_note": "h=5 business-day persistence, the single shared ruler across all four families",
         "gates": {
+          "accuracy_vs_naive": {
+            "passed": true,
+            "name": "accuracy vs repeating the same weekday last week",
+            "metric": "MASE",
+            "measured": 0.757959,
+            "threshold": 1.0,
+            "margin_pct": 24.2,
+            "reason_plain": "This model is 24.2% more accurate than simply repeating what happened on the same weekday last week, so it is the better of the two estimates."
+          },
           "signal": {
-            "passed": false,
+            "passed": true,
             "name": "signal (shuffled-target control)",
             "measured": 1.2255,
-            "threshold": 1.5,
-            "reason_plain": "Shuffling the historical answers barely worsened this model's error (x1.23, we require x1.50). That means the inputs carry little information about what happens next, so the model is tracking the typical level rather than anticipating events.",
+            "threshold": 1.15,
+            "threshold_source": "calibrated against a measured null distribution (n=360, false-positive rate 0.00%); see reports/sentinel_calibration.md",
+            "null_p99": 1.0943,
+            "inside_null_distribution": false,
+            "reason_plain": "Shuffling the historical answers made this model's error 1.23 times worse (we require 1.15 times). The inputs carry real information about what happens next.",
             "corroboration": "Confirmed with two further instruments (a decision tree and a random forest) in reports/sentinel_probe_study.md; all three agree."
           },
-          "overfitting": {
+          "leakage": {
             "passed": true,
-            "name": "overfitting cap",
-            "measured": "< 3.0",
-            "threshold": 3.0,
-            "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+            "name": "leakage",
+            "measured": false,
+            "threshold": "no future information in features",
+            "reason_plain": "No feature was found to carry information from after the forecast origin."
           },
-          "vs_ruler": {
+          "persistence_mimicry": {
             "passed": true,
-            "name": "beats the simple benchmark",
-            "measured": "55.92%",
-            "threshold": "> 0%",
-            "reason_plain": "Errors are 55.9% smaller than simply repeating the value from five business days earlier."
+            "name": "persistence-mimicry (shift diagnostic)",
+            "measured": false,
+            "threshold": "predictions must not be a lagged copy",
+            "reason_plain": "The forecast does not simply replay a recent actual."
+          },
+          "coverage": {
+            "passed": null,
+            "name": "interval coverage",
+            "measured": null,
+            "threshold": null,
+            "reason_plain": "This model reports no prediction intervals, so their calibration was not measured. Point forecasts are unaffected."
+          },
+          "overfitting": {
+            "passed": null,
+            "name": "overfitting (DEV/TRAIN error ratio)",
+            "measured": null,
+            "threshold": 3.0,
+            "reason_plain": "The overfit ratio was not recorded."
           }
-        }
+        },
+        "skill_vs_ruler_note": "Reported, not gated (P2). On a flow this is weak evidence: a featureless TRAIN-mean constant scores 38.58% (Revenues) and 35.69% (Expenditure) against the same ruler. MASE is the binding accuracy gate."
       },
       "publication": {
-        "verdict": "withheld_as_forecast",
-        "reason_plain": "The numbers are shown and the error is 56% below the simple benchmark, but the signal check fails: this is a central-tendency estimate, not an event forecast. It should not be relied on to anticipate an unusual day.",
-        "named_fix": "Treasury's forward auction and redemption calendar -- the only candidate input that is knowable in advance and targets the specific days that move this line."
+        "verdict": "publishable",
+        "reason_plain": "Every check passed: this model is more accurate than simply repeating the same weekday last week, and shuffling the historical answers clearly worsens its error, so the inputs carry real information about what happens next.",
+        "named_fix": "Treasury's forward auction and redemption calendar -- the only candidate input that is knowable in advance and targets the specific days that move this line.",
+        "decided_by": null,
+        "failing_gates": [],
+        "superseded_verdict": "withheld_as_forecast",
+        "superseded_note": "Pre-P2 verdict was 'withheld_as_forecast', decided by an uncalibrated sentinel threshold of 1.5 with MASE computed and not gated. See reports/sentinel_calibration.md and docs/sessions/2026-08-13-p2-gates.md."
       },
       "ws4_note": "Target scaling chosen in WS4: ratio. Compared raw / asinh / ratio-to-trailing-level on five TRAIN folds, confirmed on 2024.",
       "scaling_caveat": {
@@ -134,27 +165,53 @@
         "sentinel_ratio": 1.0882,
         "ruler_note": "h=5 business-day persistence, the single shared ruler across all four families",
         "gates": {
+          "accuracy_vs_naive": {
+            "passed": false,
+            "name": "accuracy vs repeating the same weekday last week",
+            "metric": "MASE",
+            "measured": 1.103854,
+            "threshold": 1.0,
+            "margin_pct": 10.39,
+            "reason_plain": "Simply repeating what happened on the same weekday last week is 10.4% more accurate than this model. There is no reading under which this model's numbers are the best available estimate, so they are not published as a forecast."
+          },
           "signal": {
             "passed": false,
             "name": "signal (shuffled-target control)",
             "measured": 1.0882,
-            "threshold": 1.5,
-            "reason_plain": "Shuffling the historical answers barely worsened this model's error (x1.09, we require x1.50). That means the inputs carry little information about what happens next, so the model is tracking the typical level rather than anticipating events.",
+            "threshold": 1.15,
+            "threshold_source": "calibrated against a measured null distribution (n=360, false-positive rate 0.00%); see reports/sentinel_calibration.md",
+            "null_p99": 1.0943,
+            "inside_null_distribution": true,
+            "reason_plain": "Shuffling the historical answers barely worsened this model's error (1.09 times, where we require 1.15 times). That reading sits INSIDE the range that deliberately uninformative inputs produce on this data, so it is not distinguishable from no information at all. The model is tracking the typical level rather than anticipating events.",
             "corroboration": "Confirmed with two further instruments (a decision tree and a random forest) in reports/sentinel_probe_study.md; all three agree."
           },
-          "overfitting": {
+          "leakage": {
             "passed": true,
-            "name": "overfitting cap",
-            "measured": "< 3.0",
-            "threshold": 3.0,
-            "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
+            "name": "leakage",
+            "measured": false,
+            "threshold": "no future information in features",
+            "reason_plain": "No feature was found to carry information from after the forecast origin."
           },
-          "vs_ruler": {
+          "persistence_mimicry": {
             "passed": true,
-            "name": "beats the simple benchmark",
-            "measured": "29.42%",
-            "threshold": "> 0%",
-            "reason_plain": "Errors are 29.4% smaller than simply repeating the value from five business days earlier."
+            "name": "persistence-mimicry (shift diagnostic)",
+            "measured": false,
+            "threshold": "predictions must not be a lagged copy",
+            "reason_plain": "The forecast does not simply replay a recent actual."
+          },
+          "coverage": {
+            "passed": null,
+            "name": "interval coverage",
+            "measured": null,
+            "threshold": null,
+            "reason_plain": "This model reports no prediction intervals, so their calibration was not measured. Point forecasts are unaffected."
+          },
+          "overfitting": {
+            "passed": null,
+            "name": "overfitting (DEV/TRAIN error ratio)",
+            "measured": null,
+            "threshold": 3.0,
+            "reason_plain": "The overfit ratio was not recorded."
           }
         },
         "not_the_dev_best": {
@@ -165,12 +222,20 @@
           "gap_pct": 1.01,
           "why_promoted_anyway": "Selection was made on five TRAIN-internal folds, where this recipe is clearly ahead (35,069,403 vs 37,093,156 MAE). DEV is a single confirmation fold and the 1.0% gap there is within its noise. Recorded rather than hidden: on this target the promoted recipe is not the single best DEV number, and per-target selection in WS7 must keep squared-error candidates in the pool.",
           "why_promoted_plain": "The choice was made on five separate year-long tests, where the model we published was clearly ahead. The 2024 figure above comes from a single year, and a one percent gap over one year is well within normal variation. We record this openly because on this budget line the published model is not the single best 2024 number."
-        }
+        },
+        "skill_vs_ruler_note": "Reported, not gated (P2). On a flow this is weak evidence: a featureless TRAIN-mean constant scores 38.58% (Revenues) and 35.69% (Expenditure) against the same ruler. MASE is the binding accuracy gate."
       },
       "publication": {
-        "verdict": "withheld_as_forecast",
-        "reason_plain": "Same as Revenues: errors are 29% below the simple benchmark, but the signal check fails, so this is a central-tendency estimate rather than an event forecast.",
-        "named_fix": "Treasury's forward auction and redemption calendar; also the public-sector salary and pension payment dates, which we could not source publicly."
+        "verdict": "withheld",
+        "reason_plain": "Simply repeating what happened on the same weekday last week is 10.4% more accurate than this model. There is no reading under which this model's numbers are the best available estimate, so they are not published as a forecast. Shuffling the historical answers barely worsened this model's error (1.09 times, where we require 1.15 times). That reading sits INSIDE the range that deliberately uninformative inputs produce on this data, so it is not distinguishable from no information at all. The model is tracking the typical level rather than anticipating events.",
+        "named_fix": "Treasury's forward commitment and payment-run calendar. Shuffling the historical answers barely changes this model's error, and that reading sits inside the range deliberately uninformative inputs produce, so better inputs are needed before any claim is possible.",
+        "decided_by": "accuracy_vs_naive",
+        "failing_gates": [
+          "accuracy_vs_naive",
+          "signal"
+        ],
+        "superseded_verdict": "withheld_as_forecast",
+        "superseded_note": "Pre-P2 verdict was 'withheld_as_forecast', decided by an uncalibrated sentinel threshold of 1.5 with MASE computed and not gated. See reports/sentinel_calibration.md and docs/sessions/2026-08-13-p2-gates.md."
       },
       "ws4_note": "Target scaling chosen in WS4: raw. Compared raw / asinh / ratio-to-trailing-level on five TRAIN folds, confirmed on 2024."
     },
@@ -213,35 +278,79 @@
         "sentinel_ratio": 7.0058,
         "ruler_note": "h=5 business-day persistence, the single shared ruler across all four families",
         "gates": {
+          "accuracy_vs_naive": {
+            "passed": false,
+            "name": "accuracy vs repeating the same weekday last week",
+            "metric": "MASE",
+            "measured": 1.57832,
+            "threshold": 1.0,
+            "margin_pct": 57.83,
+            "reason_plain": "Simply repeating what happened on the same weekday last week is 57.8% more accurate than this model. There is no reading under which this model's numbers are the best available estimate, so they are not published as a forecast."
+          },
           "signal": {
             "passed": true,
             "name": "signal (shuffled-target control)",
             "measured": 7.0058,
-            "threshold": 1.5,
-            "reason_plain": "Shuffling the historical answers made the error 7.0 times worse, so the inputs genuinely inform this target."
+            "threshold": 1.15,
+            "threshold_source": "calibrated against a measured null distribution (n=360, false-positive rate 0.00%); see reports/sentinel_calibration.md",
+            "null_p99": 1.0943,
+            "inside_null_distribution": false,
+            "reason_plain": "Shuffling the historical answers made this model's error 7.01 times worse (we require 1.15 times). The inputs carry real information about what happens next."
+          },
+          "leakage": {
+            "passed": true,
+            "name": "leakage",
+            "measured": false,
+            "threshold": "no future information in features",
+            "reason_plain": "No feature was found to carry information from after the forecast origin."
+          },
+          "persistence_mimicry": {
+            "passed": true,
+            "name": "persistence-mimicry (shift diagnostic)",
+            "measured": false,
+            "threshold": "predictions must not be a lagged copy",
+            "reason_plain": "The forecast does not simply replay a recent actual."
+          },
+          "coverage": {
+            "passed": null,
+            "name": "interval coverage",
+            "measured": null,
+            "threshold": null,
+            "reason_plain": "This model reports no prediction intervals, so their calibration was not measured. Point forecasts are unaffected."
           },
           "overfitting": {
-            "passed": true,
-            "name": "overfitting cap",
-            "measured": "< 3.0",
+            "passed": null,
+            "name": "overfitting (DEV/TRAIN error ratio)",
+            "measured": null,
             "threshold": 3.0,
-            "reason_plain": "The model is not much better on data it trained on than on data it did not, so it has not memorised the history."
-          },
-          "vs_ruler": {
-            "passed": true,
-            "name": "beats the simple benchmark",
-            "measured": "20.01%",
-            "threshold": "> 0%",
-            "reason_plain": "Errors are 20.0% smaller than simply repeating the value from five business days earlier."
+            "reason_plain": "The overfit ratio was not recorded."
           }
-        }
+        },
+        "skill_vs_ruler_note": "Reported, not gated (P2). On a flow this is weak evidence: a featureless TRAIN-mean constant scores 38.58% (Revenues) and 35.69% (Expenditure) against the same ruler. MASE is the binding accuracy gate."
       },
       "publication": {
-        "verdict": "publishable",
-        "reason_plain": "All checks pass. The signal check is strongly positive (shuffling the answers made the error 7 times worse), so this model is genuinely using its inputs, and errors are 20% below the simple benchmark.",
-        "named_fix": null
+        "verdict": "withheld",
+        "reason_plain": "Simply repeating what happened on the same weekday last week is 57.8% more accurate than this model. There is no reading under which this model's numbers are the best available estimate, so they are not published as a forecast.",
+        "named_fix": "A model that is more accurate than simply repeating what happened on the same weekday last week. The inputs for this line do carry real information; the accuracy does not yet clear that benchmark.",
+        "decided_by": "accuracy_vs_naive",
+        "failing_gates": [
+          "accuracy_vs_naive"
+        ],
+        "superseded_verdict": "publishable",
+        "superseded_note": "Pre-P2 verdict was 'publishable', decided by an uncalibrated sentinel threshold of 1.5 with MASE computed and not gated. See reports/sentinel_calibration.md and docs/sessions/2026-08-13-p2-gates.md."
       },
       "ws4_note": "Target scaling chosen in WS4: raw. Compared raw / asinh / ratio-to-trailing-level on five TRAIN folds, confirmed on 2024."
     }
-  ]
+  ],
+  "gate_policy": {
+    "decided_by": "backend/publication_gates.py",
+    "note": "Gate verdicts and the publication decision are DERIVED, not hand-written. This block and every dev_credentials.gates entry is the output of publication_gates.decide() on the logged measurements; test_publication_gates.py asserts they agree.",
+    "mase_max": 1.0,
+    "mase_rationale": "MASE is a ratio against a TRAIN-only seasonal-naive benchmark, so 1.0 is the definitional break-even rather than a chosen constant. Above it, a documented trivial alternative is more accurate.",
+    "sentinel_min": 1.15,
+    "sentinel_min_superseded": 1.5,
+    "sentinel_rationale": "Calibrated against a measured null distribution: 360 draws, false-positive rate 0.00% at 1.15 and 0.56% at 1.10, null max 1.1164. The old 1.50 also had FPR 0.00% and therefore bought no extra protection while rejecting real readings.",
+    "vs_ruler_gated": false,
+    "vs_ruler_rationale": "Demoted to a reported diagnostic. Its threshold was '> 0%', which a featureless constant clears by 38.58% on Revenues; and it cannot be raised to a fixed number because the same constant scores -299.43% on the stock target."
+  }
 }

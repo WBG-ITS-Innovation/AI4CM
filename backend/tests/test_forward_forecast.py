@@ -164,22 +164,52 @@ def test_registry_champions_are_loadable_and_honest():
     assert out["metrics_checked"] >= 9
 
 
-def test_flow_targets_are_withheld_as_forecast_with_a_reason():
-    """The signal gate fails on both flows; the registry must say so, in words.
+def test_a_failing_gate_is_never_smoothed_into_a_pass():
+    """The honesty property the demo turns on, stated independently of which target passes.
 
-    This is the honesty property the demo turns on: a failing gate is never smoothed into
-    a pass, and the reason is written for a non-technical reader.
+    Rewritten in P2. It previously asserted the specific verdicts of the day — both flows
+    `withheld_as_forecast`, the stock target `publishable` — which made it a second copy of the
+    registry rather than a check on it. All three of those verdicts changed when MASE became a
+    gate and the sentinel threshold was calibrated, so the *property* is what belongs here:
+    whatever the verdicts are, a failure is stated plainly and a fix is named. The verdicts
+    themselves are pinned once, in `test_publication_gates.py`.
     """
-    from registry import recipe_for
+    from registry import load_registry
 
-    for target in ("Revenues", "Expenditure"):
-        r = recipe_for(target)
-        assert r["publication"]["verdict"] == "withheld_as_forecast"
-        reason = r["publication"]["reason_plain"]
-        assert "central-tendency" in reason or "central tendency" in reason
-        assert r["dev_credentials"]["gates"]["signal"]["passed"] is False
-        assert r["publication"]["named_fix"], "a withheld model must name the fix"
+    for r in load_registry()["recipes"]:
+        pub = r["publication"]
+        gates = r["dev_credentials"]["gates"]
+        failing = [n for n, g in gates.items() if g.get("passed") is False]
 
-    stock = recipe_for("State budget balance")
-    assert stock["publication"]["verdict"] == "publishable"
-    assert stock["dev_credentials"]["gates"]["signal"]["passed"] is True
+        if pub["verdict"] == "publishable":
+            assert not failing, (
+                f"{r['target']} is publishable with failing gates {failing}")
+            continue
+
+        assert failing, f"{r['target']} is withheld but no gate failed"
+        assert pub["reason_plain"], f"{r['target']} is withheld without a reason"
+        assert pub["named_fix"], "a withheld model must name the fix"
+        assert pub["decided_by"] in failing, (
+            f"{r['target']}: decided_by {pub['decided_by']!r} is not among the failures")
+        # Every failing gate must contribute its own words, not just the deciding one.
+        for name in failing:
+            assert gates[name]["reason_plain"], f"{r['target']}/{name} failed silently"
+
+
+def test_the_reader_facing_reasons_carry_no_jargon():
+    """These strings reach a Treasury reader, so they may not carry acronyms or model names.
+
+    An earlier P2 draft wrote "MASE 1.104" into `reason_plain` and the existing prose tests in
+    `test_insights.py` / `test_treasury_report.py` caught it. This asserts it at the source.
+    """
+    from registry import load_registry
+
+    banned = ("MASE", "RMSE", "MAE", "sentinel", "LightGBM", "HistGBDT", "GBQuantile",
+              "quantile", "P10", "P90", "DEV", "conformal")
+    for r in load_registry()["recipes"]:
+        texts = [r["publication"]["reason_plain"]]
+        texts += [g["reason_plain"] for g in r["dev_credentials"]["gates"].values()
+                  if g.get("passed") is False]
+        for t in texts:
+            found = [b for b in banned if b in t]
+            assert not found, f"{r['target']}: jargon in reader-facing prose: {found} in {t[:90]!r}"

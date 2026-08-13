@@ -195,21 +195,50 @@ def build_narrative(forecasts: Sequence[Dict], registry: Dict,
         f"budget and not a view beyond one week."
     )
 
-    signal_finding = (
-        "**The most important thing on this page.** For revenues and expenditure, the system "
-        "reports a typical level rather than a genuine forecast of individual days. This is "
-        "not a shortcoming we are working around quietly: it is a measured result. We test "
-        "each model by shuffling the historical answers and refitting — if the inputs really "
-        "carried information, destroying the link would badly damage the model. For these two "
-        "lines it barely does. We repeated the test with three different statistical methods "
-        "and all three agree.\n\n"
-        "The single most valuable thing that would change this is a **forward calendar of "
-        "domestic debt auctions and redemptions** from the Treasury. The days these models "
-        "cannot anticipate are overwhelmingly debt-operation days, and those are not on a "
-        "fixed date in the month, so no amount of modelling reaches them. We already hold the "
-        "historical debt figures and tested them: they do not help, because knowing what "
-        "happened yesterday does not tell you what is scheduled next week."
-    )
+    # P2: this paragraph used to hardcode "for revenues and expenditure", which became false
+    # the moment the gate thresholds were corrected and Revenues turned publishable. It now
+    # names whichever lines are actually withheld, read from the registry -- a headline claim
+    # about which targets are usable must not be a literal in reader-facing prose.
+    withheld_names = [r["target"].lower() for r in registry["recipes"]
+                      if r["publication"]["verdict"] != "publishable"]
+    usable_names = [r["target"].lower() for r in registry["recipes"]
+                    if r["publication"]["verdict"] == "publishable"]
+
+    def _join(names):
+        if not names:
+            return "none"
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+    if withheld_names:
+        signal_finding = (
+            f"**The most important thing on this page.** For {_join(withheld_names)}, the "
+            f"system reports a typical level rather than a genuine forecast of individual "
+            f"days. This is not a shortcoming we are working around quietly: it is a measured "
+            f"result. Each model is tested two ways. First, by shuffling the historical "
+            f"answers and refitting — if the inputs really carried information, destroying the "
+            f"link would badly damage the model; for some lines it barely does. We repeated that "
+            f"test with three different statistical methods and all three agree, and we now "
+            f"know how large the effect is on inputs deliberately stripped of information, "
+            f"so the comparison is measured rather than assumed. Second, against simply "
+            f"repeating what happened on the same weekday last week: a model that cannot beat "
+            f"that is not published as a forecast, however good it looks against a weaker "
+            f"benchmark."
+            + (f"\n\n{_join(usable_names).capitalize()} clears both tests and is published as "
+               f"a forecast." if usable_names else "")
+            + "\n\nThe single most valuable thing that would change the withheld lines is a "
+              "**forward calendar of domestic debt auctions and redemptions** from the "
+              "Treasury. The days these models cannot anticipate are overwhelmingly "
+              "debt-operation days, and those are not on a fixed date in the month, so no "
+              "amount of modelling reaches them. We already hold the historical debt figures "
+              "and tested them: they do not help, because knowing what happened yesterday does "
+              "not tell you what is scheduled next week."
+        )
+    else:
+        signal_finding = (
+            "**The most important thing on this page.** Every line on this page clears both "
+            "tests: shuffling the historical answers clearly damages each model, and each is "
+            "more accurate than simply repeating what happened on the same weekday last week."
+        )
 
     limitations = [
         "Figures are validated on 2024. The final independent check against 2025 has not "
