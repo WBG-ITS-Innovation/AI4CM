@@ -623,3 +623,49 @@ def test_the_remaining_errors_are_a_pre_existing_csv_defect_not_a_regression():
         "the fixed writer still leaves identity columns blank")
     assert lb["RMSE"].notna().all(), (
         "the fixed writer should also recover RMSE, which the on-disk CSV lost")
+
+
+# ── the reference artifact ────────────────────────────────────────────────────
+
+REFERENCE_RUN = BACKEND / "forecast_runs" / "2026-08-12"
+
+
+@pytest.mark.skipif(not (REFERENCE_RUN / "SUMMARY.json").exists(),
+                    reason="no reference run committed")
+def test_the_reference_summary_is_contract_clean_and_carries_every_field():
+    """`2026-08-12` is the reference artifact: the first summary with no contract errors.
+
+    Only `SUMMARY.json` and `SUMMARY.txt` are tracked -- the row-level artifacts stay ignored
+    because they carry Treasury predictions -- so this validates the summary alone rather than the
+    whole run. That is what a clone actually has, which is the point of having a reference at all.
+
+    Committed after `2026-08-04` needed its summary regenerated and still fails on a pre-fix a_stat
+    leaderboard. This one was produced entirely by the current writers, so it is what a consumer
+    should be pointed at.
+    """
+    rep = ValidationReport()
+    validate_summary(REFERENCE_RUN / "SUMMARY.json", rep, strict=True)
+    assert rep.ok, rep.summary()
+    assert rep.findings == [], rep.summary()
+
+    d = json.loads((REFERENCE_RUN / "SUMMARY.json").read_text())
+    assert d["run_id"] == "2026-08-12"
+    assert d["schema_version"] == 2
+    assert d["data_file"] == "master_daily_clean_treasury.csv"
+    assert "compete on each target" in d["client_framing"]
+    assert d["model_composition"]["counts"]["machine-learning models"] == 13
+    assert d["model_composition"]["promoted_outside_champion_pool"] == []
+
+
+@pytest.mark.skipif(not (REFERENCE_RUN / "a_stat" / "leaderboard.csv").exists(),
+                    reason="row-level artifacts are gitignored; present only where the run was made")
+def test_the_reference_a_stat_leaderboard_is_fully_identified():
+    """The writer fix, demonstrated on a run made after it rather than argued from a diff.
+
+    `2026-08-04` has identity columns on 1 of 2 rows and an all-null RMSE. This run, same writer,
+    same columns, has both -- which is what settles "pre-existing defect, not a regression".
+    """
+    d = pd.read_csv(REFERENCE_RUN / "a_stat" / "leaderboard.csv")
+    for col in ("target", "horizon", "cadence"):
+        assert d[col].notna().all(), f"{col} is not populated on every row"
+    assert d["RMSE"].notna().any(), "RMSE is all-null again"
