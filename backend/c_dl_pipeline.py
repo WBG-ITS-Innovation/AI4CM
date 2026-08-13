@@ -118,8 +118,8 @@ def ensure_dirs(root: str):
     for sub in ["plots","artifacts"]:
         os.makedirs(os.path.join(root, sub), exist_ok=True)
 
-def is_stock(name: str) -> bool:
-    return name.strip().lower() in {"state budget balance","balance","t0"}
+# One definition for all four families -- see backend/target_kinds.py.
+from target_kinds import is_stock  # noqa: E402,F401
 
 def load_holidays(holidays_csv: Optional[str], idx: pd.DatetimeIndex) -> pd.Series:
     if not holidays_csv or not os.path.exists(holidays_csv):

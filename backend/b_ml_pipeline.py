@@ -169,8 +169,10 @@ def ensure_dirs(root: Path):
     (root / "artifacts").mkdir(parents=True, exist_ok=True)
 
 
-def is_stock(target: str) -> bool:
-    return target.strip().lower() in {"state budget balance", "balance", "t0"}
+# One definition for all four families (backend/target_kinds.py). Four divergent copies used
+# to exist; A_STAT's set differed, so a column named "t0" would have been modelled as a delta
+# here and as a level there.
+from target_kinds import is_stock  # noqa: E402,F401
 
 
 def to_business_index(df: pd.DataFrame, date_col: str, target: str) -> pd.Series:

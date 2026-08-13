@@ -108,7 +108,7 @@ def target_kind(target: str) -> str:
     """``KIND_STOCK`` or ``KIND_FLOW``, per the shared ``is_stock`` definition."""
     import sys
     sys.path.insert(0, str(BACKEND))
-    from b_ml_pipeline import is_stock
+    from target_kinds import is_stock          # the one shared definition
 
     return KIND_STOCK if is_stock(target) else KIND_FLOW
 
@@ -154,16 +154,18 @@ def family_supports_target(family: str, target: str) -> Dict:
 
 
 def stock_alias_divergence() -> Dict:
-    """Where the four families disagree about which names are stock targets.
+    """Whether the families still agree about which names are stock targets.
 
-    ``e_quantile_daily_pipeline.is_stock`` documents itself as "byte-identical to
-    b_ml_pipeline.is_stock and c_dl_pipeline.is_stock", which is true of those three.
-    ``run_a_stat._is_stock`` is a fourth implementation with a **different alias set**, so for a
-    column named ``t0`` three families would model a delta and A_STAT would model a level.
+    **Resolved.** There were seven copies of this question -- the four family pipelines plus
+    ``ensemble_postprocess``, the legacy ``a_stat_models_pipeline`` and a ``TARGET_STOCK`` set in
+    ``make_weekly_from_daily_stat`` -- and ``run_a_stat`` diverged: it alone treated ``net`` and
+    ``stock`` as stock and ``t0`` as a flow, so a column named ``t0`` would have been modelled as a
+    level there and as a delta everywhere else. All seven now import
+    ``target_kinds.is_stock``, whose alias set is the UNION of what they used to hold.
 
-    Currently **latent**: none of the disputed names is a column in the canonical file. It becomes
-    live the moment one is added or a column is renamed, which is exactly when nobody would think
-    to check. Reported as data so a test can hold it.
+    This function stays as the **regression guard**: it probes the four family entry points
+    independently, so re-introducing a local copy shows up as a disagreement rather than being
+    discovered by a client. ``agree`` should now always be True.
     """
     import sys
     sys.path.insert(0, str(BACKEND))
@@ -183,8 +185,11 @@ def stock_alias_divergence() -> Dict:
         "agree": not disputed,
         "disputed": disputed,
         "n_implementations": len(impls),
-        "note": ("A_STAT uses a separate alias set ({'net', 'stock'} instead of {'t0'}). Latent "
-                 "while none of the disputed names is a column in the canonical file."),
+        "resolved": True,
+        "one_definition": "backend/target_kinds.py",
+        "note": ("Unified: all seven former copies import target_kinds.is_stock, whose alias set is "
+                 "the union of what they held. A_STAT was the divergent one ({'net', 'stock'} "
+                 "instead of {'t0'}). This check remains as a regression guard."),
     }
 
 

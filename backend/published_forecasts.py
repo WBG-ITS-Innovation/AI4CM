@@ -406,3 +406,142 @@ def summarize_scorecard(df: pd.DataFrame) -> Dict[str, Dict]:
             "issues_covered": int(valid["issue_date"].nunique()),
         }
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RECONCILING A PUBLISHED VERDICT WITH TODAY'S
+#
+# A published issue is immutable: `gates.json` records the gate outcomes **at issue time**,
+# and rewriting it would destroy the only record of what was actually said on that date.
+# But the gates themselves changed in P2 -- MASE became binding, the sentinel threshold was
+# calibrated 1.50 -> 1.15, and `vs_ruler` stopped deciding -- so every verdict moved.
+#
+# That leaves a consumer with two true statements and no way to relate them. The published
+# 2025-08-06 issue holds a stock-target forecast that was publishable then and is withheld
+# now, and a Revenues forecast that was withheld then and is publishable now. Neither file
+# is wrong; they answer different questions.
+#
+# So: reconcile rather than rewrite. This reports both verdicts side by side with the gate
+# that changed between them, for the Forecast page and the Agent to read.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Verdict a recipe would have received from a set of recorded gate outcomes, under the gate
+#: set in force BEFORE P2 (no accuracy gate; signal decided). Derived from what the artifact
+#: itself records, not from memory of the policy.
+def _verdict_from_recorded_gates(gates: Dict) -> str:
+    """Reconstruct the issue-time verdict from the `passed` flags the artifact stores.
+
+    `gates.json` records each gate's outcome but never recorded the publication verdict, so
+    this derives it the way the pre-P2 policy did: a failed signal gate withheld the claim
+    while leaving the numbers usable; anything else passing was publishable.
+    """
+    if any(g.get("passed") is False for n, g in gates.items()
+           if n in ("leakage",)):
+        return "withheld"
+    if gates.get("signal", {}).get("passed") is False:
+        return "withheld_as_forecast"
+    if any(g.get("passed") is False for g in gates.values()):
+        return "withheld_as_forecast"
+    return "publishable"
+
+
+def reconcile_verdicts(published_root: Optional[Path] = None,
+                       registry: Optional[Dict] = None) -> List[Dict]:
+    """Verdict-at-issue vs verdict-today for every published target, and why it changed.
+
+    Reads only: the issue's own `gates.json` for what was said then, and the registry for what
+    is said now. Never modifies a published issue.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    if registry is None:
+        from registry import load_registry
+        registry = load_registry()
+    by_recipe = {r["id"]: r for r in registry["recipes"]}
+
+    out: List[Dict] = []
+    for d in list_published(published_root):
+        gp = d / "gates.json"
+        if not gp.exists():
+            continue
+        issued = json.loads(gp.read_text())
+        for recipe_id, entry in issued.items():
+            gates_then = entry.get("gates", {}) or {}
+            then = _verdict_from_recorded_gates(gates_then)
+
+            current = by_recipe.get(recipe_id)
+            if current is None:
+                out.append({
+                    "issue_date": d.name, "target": entry.get("target"),
+                    "recipe_id": recipe_id, "verdict_at_issue": then,
+                    "verdict_today": None, "changed": None,
+                    "why": (f"Recipe {recipe_id!r} is no longer in the registry, so there is no "
+                            f"current verdict to compare against."),
+                })
+                continue
+
+            now = current["publication"]["verdict"]
+            gates_now = current["dev_credentials"]["gates"]
+
+            # Which gates differ, and how. Compared by name, so a gate that did not exist at
+            # issue time (accuracy_vs_naive) reads as "added" rather than as a silent change.
+            deltas = []
+            for name in sorted(set(gates_then) | set(gates_now)):
+                a, b = gates_then.get(name), gates_now.get(name)
+                if a is None:
+                    deltas.append({"gate": name, "change": "added",
+                                   "passed_now": b.get("passed"),
+                                   "measured": b.get("measured"),
+                                   "threshold_now": b.get("threshold")})
+                elif b is None:
+                    deltas.append({"gate": name, "change": "removed",
+                                   "passed_at_issue": a.get("passed"),
+                                   "threshold_at_issue": a.get("threshold")})
+                elif a.get("passed") != b.get("passed") or a.get("threshold") != b.get("threshold"):
+                    deltas.append({"gate": name, "change": "rethresholded",
+                                   "passed_at_issue": a.get("passed"),
+                                   "passed_now": b.get("passed"),
+                                   "threshold_at_issue": a.get("threshold"),
+                                   "threshold_now": b.get("threshold"),
+                                   "measured": b.get("measured")})
+
+            out.append({
+                "issue_date": d.name,
+                "target": entry.get("target"),
+                "recipe_id": recipe_id,
+                "verdict_at_issue": then,
+                "verdict_today": now,
+                "changed": then != now,
+                "gate_changes": deltas,
+                "reason_today": current["publication"].get("reason_plain"),
+                "why": _why_changed(entry.get("target"), then, now, deltas),
+                "note": ("The published issue is immutable and its gates.json correctly records "
+                         "what was decided on the issue date. This comparison is not a "
+                         "correction to it."),
+            })
+    return out
+
+
+def _why_changed(target: Optional[str], then: str, now: str,
+                 deltas: List[Dict]) -> str:
+    """One sentence a reader can act on."""
+    if then == now:
+        return (f"Unchanged: {target} was {then} at issue and is {now} today.")
+
+    # Only the gates that actually drove the change. Listing every added gate -- including the
+    # three that pass -- buried the one that mattered.
+    bits = []
+    for d in deltas:
+        if d["change"] == "added" and d.get("passed_now") is False:
+            bits.append(f"a new gate it fails was added ({d['gate']}, measured "
+                        f"{d.get('measured')} against a limit of {d.get('threshold_now')})")
+        elif (d["change"] == "rethresholded"
+              and d.get("passed_at_issue") is not d.get("passed_now")):
+            bits.append(f"{d['gate']} was re-thresholded from {d['threshold_at_issue']} to "
+                        f"{d['threshold_now']}, which flipped its outcome from "
+                        f"{d.get('passed_at_issue')} to {d.get('passed_now')} on an unchanged "
+                        f"measurement of {d.get('measured')}")
+    detail = "; ".join(bits) if bits else "the publication policy changed"
+    return (f"{target} was {then} at issue and is {now} today because {detail}. The forecast "
+            f"numbers in the published issue have not changed -- only the verdict attached to "
+            f"them.")

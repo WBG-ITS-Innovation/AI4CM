@@ -7,7 +7,9 @@ import matplotlib.pyplot as plt
 # --- CONFIG ---
 RUN_DIR = r".\outputs\statistical"        # <-- point this to the folder that contains predictions_long.csv
 WEEKLY_OUT = os.path.join(RUN_DIR, "weekly")
-TARGET_STOCK = {"state budget balance","balance","t0"}  # case-insensitive
+# Copy 7 of 7. Was its own alias set; now the shared one so a weekly rollup cannot disagree
+# with the daily run it summarises. See backend/target_kinds.py.
+from target_kinds import STOCK_ALIASES as TARGET_STOCK  # noqa: E402
 
 os.makedirs(os.path.join(WEEKLY_OUT,"plots"), exist_ok=True)
 

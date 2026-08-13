@@ -173,12 +173,26 @@ def assert_selection_free(dates: Iterable, context: str) -> None:
     This is the structural half of the LIVE window. Without it "never selected on" would
     be a sentence in a docstring, which is exactly what the TEST discipline was before
     Phase 2 made it checkable.
+
+    **LIVE and TEST are not treated identically, and that asymmetry is the point.** LIVE is
+    refused unconditionally: there is no release procedure because there is nothing to
+    release. TEST is refused *unless* the holdout has been explicitly opened via
+    :func:`require_test_access` -- because a sanctioned final read is a real, logged
+    operation, and every family's evaluation path doubles as its reporting path. Refusing
+    TEST here regardless would make the one permitted read impossible: it was added in P1
+    and immediately broke A_STAT's ordinary reporting run, which legitimately evaluates over
+    2025. So this defers to the gate that already governs TEST rather than inventing a
+    second, stricter rule for it.
     """
     idx = pd.DatetimeIndex(list(dates))
     if len(idx) == 0:
         return
     found = {window_for(t) for t in idx}
     offenders = sorted(found - SELECTABLE_WINDOWS)
+    if "test" in offenders and is_test_read_allowed():
+        # The holdout is open, and opening it is itself logged. Reporting from TEST is what
+        # that release is for; LIVE below is still refused.
+        offenders.remove("test")
     if not offenders:
         return
 

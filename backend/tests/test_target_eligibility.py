@@ -268,33 +268,83 @@ def test_an_unknown_family_is_refused_by_name():
     assert "not a model family" in r["reason"]
 
 
-def test_the_four_is_stock_implementations_disagree_and_it_is_recorded():
-    """A latent divergence, pinned rather than left to be discovered by a rename.
+def test_the_is_stock_implementations_now_agree():
+    """Was `..._disagree_and_it_is_recorded`. The divergence is closed, so this inverts.
 
-    E_QUANTILE's docstring claims byte-identity with B_ML and C_DL, which holds for those three.
-    A_STAT is a fourth implementation with a different alias set. None of the disputed names is a
-    column in the canonical file, so this is latent -- and latent is exactly when nobody checks.
+    There were SEVEN copies of this question, not the four family pipelines alone: also
+    `ensemble_postprocess`, the legacy `a_stat_models_pipeline`, and a `TARGET_STOCK` set in
+    `make_weekly_from_daily_stat`. `run_a_stat` was the divergent one -- it alone treated "net"
+    and "stock" as stock and "t0" as a flow, so a column named `t0` would have been modelled as a
+    level there and as a delta everywhere else.
+
+    All seven now import `target_kinds.is_stock`. This test stays as the regression guard: it
+    probes the four family entry points independently, so a re-introduced local copy shows up
+    here rather than being discovered by a client.
     """
     from family_capabilities import stock_alias_divergence
 
     d = stock_alias_divergence()
-    assert d["agree"] is False, "if these now agree, the divergence was fixed -- update this test"
-    assert set(d["disputed"]) == {"t0", "net", "stock"}
-    assert d["disputed"]["t0"]["A_STAT"] is False
-    assert d["disputed"]["t0"]["B_ML"] is True
-    assert d["disputed"]["net"]["A_STAT"] is True
-    assert d["disputed"]["net"]["B_ML"] is False
+    assert d["agree"] is True, f"a divergence is back: {d['disputed']}"
+    assert d["disputed"] == {}
+    assert d["resolved"] is True
+    assert d["one_definition"] == "backend/target_kinds.py"
+
+
+def test_all_four_families_share_one_is_stock_object():
+    """Not merely equal behaviour -- the same function, so they cannot drift."""
+    from b_ml_pipeline import is_stock as b
+    from c_dl_pipeline import is_stock as c
+    from e_quantile_daily_pipeline import is_stock as e
+    from run_a_stat import _is_stock as a
+    from target_kinds import is_stock as canonical
+
+    assert b is c is e is a is canonical
+
+
+def test_the_alias_set_is_the_union_of_what_the_copies_held():
+    """The union, because the two mistakes are unequal.
+
+    Treating a stock as a flow zero-fills gaps in a level series and models the level directly
+    where a delta was intended -- an order-of-magnitude error. Treating a flow as a stock is
+    wrong but visible. When the mistakes are unequal, take the union.
+    """
+    from target_kinds import STOCK_ALIASES
+
+    assert STOCK_ALIASES == {"state budget balance", "balance", "t0", "net", "stock"}
+    # The three that only ever appeared in one family's set are all still stock.
+    from target_kinds import is_stock
+    for name in ("t0", "net", "stock"):
+        assert is_stock(name) is True
+
+
+def test_no_module_keeps_its_own_alias_set():
+    """A literal alias set anywhere outside target_kinds is a copy waiting to drift."""
+    offenders = []
+    for p in sorted(BACKEND.glob("*.py")):
+        if p.name in ("target_kinds.py", "family_capabilities.py"):
+            continue          # the definition, and the regression reporter
+        txt = p.read_text(errors="ignore")
+        if '"state budget balance"' in txt or "'state budget balance'" in txt:
+            offenders.append(p.name)
+    assert offenders == [], f"these still hold their own alias set: {offenders}"
 
 
 @pytest.mark.skipif(not DATA.exists(), reason="canonical data not present")
-def test_the_divergence_is_latent_because_no_disputed_name_is_a_column():
-    from family_capabilities import stock_alias_divergence
+def test_unifying_reclassifies_nothing_that_exists_today():
+    """The union widened the set; nothing in the canonical file moved because of it.
+
+    Only "State budget balance" appears in the file. If a client ever loads a column named
+    `t0`, `net` or `stock`, this fails and the reclassification becomes a deliberate discovery.
+    """
+    from target_kinds import STOCK_ALIASES, is_stock
 
     cols = {c.strip().lower() for c in pd.read_csv(DATA, nrows=1).columns}
-    disputed = set(stock_alias_divergence()["disputed"])
-    assert not (disputed & cols), (
-        f"a disputed stock alias is now a real column {disputed & cols} -- the families would "
-        f"model it differently. This is no longer latent.")
+    widened = STOCK_ALIASES - {"state budget balance", "balance"}
+    assert not (widened & cols), (
+        f"a newly-unioned alias is now a real column {widened & cols} -- its treatment just "
+        f"changed. Confirm that is intended.")
+    assert is_stock("State budget balance") is True
+    assert sum(1 for c in cols if is_stock(c)) == 1, "exactly one stock column is expected"
 
 
 def test_the_changelog_no_longer_asserts_the_stale_claim():

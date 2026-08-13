@@ -244,11 +244,19 @@ def test_registry_published_and_forward_agree_on_recipe_id_and_transform():
     pub = {r["target"]: r for r in man["recipes"]}
     fc = pd.read_csv(latest / "forecast.csv")
 
-    assert set(reg) == set(champs) == set(pub), (
-        f"target sets differ: registry={sorted(reg)} forward={sorted(champs)} "
-        f"published={sorted(pub)}"
-    )
-    for target, r in reg.items():
+    # P2: a published issue no longer necessarily covers every registry target. `withheld` means
+    # a trivial benchmark is more accurate, and `publish_official` refuses those -- so an issue
+    # contains exactly the targets whose verdict permits publication, which is a SUBSET of the
+    # registry. Asserting equality here was asserting the pre-P2 policy.
+    assert set(reg) == set(champs), (
+        f"registry and forward champions differ: registry={sorted(reg)} forward={sorted(champs)}")
+    assert set(pub) <= set(reg), (
+        f"published targets are not a subset of the registry: published={sorted(pub)}")
+    publishable = {t for t, r in reg.items() if r["publication"]["verdict"] != "withheld"}
+    assert set(pub) <= publishable, (
+        f"a withheld target was published: {sorted(set(pub) - publishable)}")
+
+    for target, r in {t: reg[t] for t in pub}.items():
         want_id = r["id"]
         want_tf = r["params"].get("target_transform", "raw")
         assert champs[target].recipe_id == want_id

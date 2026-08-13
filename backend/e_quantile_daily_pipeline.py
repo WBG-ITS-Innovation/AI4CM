@@ -125,13 +125,10 @@ def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
     indices.reverse()   # earliest fold first
     return indices
 
-def is_stock(target: str) -> bool:
-    """Level (stock) targets vs flow targets.
-
-    Kept byte-identical to b_ml_pipeline.is_stock and c_dl_pipeline.is_stock so the
-    three families cannot disagree about what kind of series they are modelling.
-    """
-    return str(target).strip().lower() in {"state budget balance", "balance", "t0"}
+# Level (stock) vs flow. This used to be a fourth copy whose docstring claimed byte-identity
+# with b_ml and c_dl -- true of those three, and silent about run_a_stat, which used a
+# different alias set. One definition now: backend/target_kinds.py.
+from target_kinds import is_stock  # noqa: E402,F401
 
 
 def to_business_index(df: pd.DataFrame, target: str) -> pd.DataFrame:
@@ -828,6 +825,13 @@ def run_pipeline(CONFIG: Config) -> None:
             # calibrated intervals are the point of this family, so a model
             # with broken coverage cannot be "best" merely on median MAE.
             # If no model passes, fall back to lowest MAE (and the gate fails).
+            # P1 follow-up: choosing a best model is a selection, so the rows it is chosen
+            # from must sit in a selectable window. Previously unguarded here.
+            if "target_date" in valid_all.columns:
+                from evaluation_windows import assert_selection_free
+                assert_selection_free(
+                    pd.to_datetime(valid_all["target_date"], errors="coerce").dropna(),
+                    f"e_quantile.best_model({CONFIG.target!r}, h={CONFIG.horizon})")
             passing = [m for m in per_model if per_model[m]["gate_passed"]]
             pool = passing if passing else list(per_model)
             best_model = min(pool, key=lambda m: per_model[m]["mae_p50"])
