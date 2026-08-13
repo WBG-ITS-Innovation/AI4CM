@@ -19,6 +19,13 @@ Two halves:
     the **same unified persistence ruler** the rest of the project uses, and interval hit
     rate. Writes ``forecasts/scorecard.csv``.
 
+    Two rules hold that number honest, both added after the 2026-08-13 diagnostic found it
+    wrong in two independent ways (see docs/sessions/2026-08-13-p0-scoring-correctness.md):
+    the ruler is **read** from the published artifact's ``origin_value`` rather than
+    recomputed here, and truth is read from the **raw** actuals rather than the zero-filled
+    modelling series, so a day the data does not carry stays pending instead of being scored
+    as an observation of zero.
+
 --------------------------------------------------------------------------------
 WHY THIS IS NOT A HOLDOUT READ
 --------------------------------------------------------------------------------
@@ -62,9 +69,19 @@ SCORECARD_COLUMNS: Sequence[str] = (
     "issue_date", "target", "recipe_id", "horizon", "target_date",
     "p10", "p50", "p90", "y_true", "abs_error",
     "persistence_pred", "persistence_abs_error", "skill_vs_ruler_pct",
+    "persistence_source",
     "inside_interval", "publication_verdict", "point_model", "target_transform",
     "data_sha_at_issue", "git_sha_at_issue", "scored_at_data_sha",
 )
+
+#: How close the recomputed ruler must sit to the artifact's own `origin_value`.
+#: They are the same quantity by definition, so this is a float-round-trip
+#: tolerance, not a margin: on the live issue the two agree exactly (0.000000 on
+#: all three targets). Sized for a float64 through CSV text and nothing more --
+#: at rtol 1e-6 this would have accepted a 46-lari divergence on a 46.5M figure,
+#: which is a margin of acceptable disagreement, and there is no such thing here.
+BASELINE_RTOL = 1e-9
+BASELINE_ATOL = 0.01         # one tetri
 
 
 class TruthNotAvailable(RuntimeError):
@@ -137,35 +154,101 @@ def list_published(published_root: Optional[Path] = None) -> List[Path]:
 # ── scoring ───────────────────────────────────────────────────────────────────
 
 def _truth_series(data_path: Path, target: str) -> pd.Series:
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from b_ml_pipeline import to_business_index
-    return to_business_index(pd.read_csv(data_path), "date", target)
+    """Actuals **as recorded**, on the business-day index, with gaps left as gaps.
+
+    Deliberately NOT ``b_ml_pipeline.to_business_index``, which is the *modelling*
+    series: it fills a missing flow day with ``0.0`` and forward-fills a missing
+    stock day. Both are right for fitting a model, which needs a dense index, and
+    both are catastrophic here. A zero-filled gap is scored as a real observation
+    of zero: the diagnostic removed 2025-08-11 from the actuals and the scorer
+    reported ``y_true = 0.00`` with a fabricated absolute error of 77.6M instead of
+    reporting the date as pending. ``TruthNotAvailable`` could never fire for a flow
+    inside the data range, because after the fill every business day is finite.
+
+    So: reindex, never fill. A day the file does not carry is NaN, and NaN reaches
+    ``score_one`` as "truth has not arrived" — which is what it is. Carrying
+    yesterday's balance forward would be a modelling assumption, not an observation,
+    so stocks are not forward-filled here either.
+    """
+    df = pd.read_csv(data_path)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = (df.dropna(subset=["date"])
+            .sort_values("date")
+            .drop_duplicates(subset=["date"]))
+    s = df.set_index("date")[target].astype(float)
+    bidx = pd.date_range(s.index.min().normalize(), s.index.max().normalize(), freq="B")
+    s = s.reindex(bidx)
+    s.index.freq = "B"
+    return s
+
+
+def _persistence_for(row: Dict, truth: pd.Series, td: pd.Timestamp,
+                     horizon_steps: int) -> tuple[float, str, float]:
+    """The h-step ruler for one published row: read it, recompute only as a fallback.
+
+    ``ŷ(t+h) = y(t)`` is the project's single ruler, and ``forward_forecast.csv``
+    already carries it per row as ``origin_value`` — ``forward_forecast.py`` documents
+    that column as exactly this quantity and the Forecast page plots it as the
+    benchmark. So the scorer reads it.
+
+    It used to recompute it, from ``truth.iloc[pos - horizon_steps]`` with
+    ``horizon_steps`` fixed at 5 for every row while ``row["horizon"]`` sat unread two
+    lines away. A published issue has ONE origin, so the ruler is the same number for
+    all five horizons; the scorer instead used five different values and only h=5 was
+    right. 12 of 15 realized skills and all three per-target aggregates were wrong.
+
+    The recomputation survives as a fallback for rows with no ``origin_value``, and is
+    returned alongside so callers can cross-check the two. They are the same quantity,
+    so a divergence means the actuals were revised under an already-issued forecast, or
+    the artifact is wrong. ``score_published`` reports those rows; it does not drop
+    them, because the number that was *published* is the ruler that was committed to,
+    and a data revision should not silently erase a track record.
+    """
+    pos = truth.index.get_loc(td)
+    h = int(row["horizon"]) if row.get("horizon") is not None else horizon_steps
+
+    recomputed = np.nan
+    if pos - h >= 0:
+        cand = truth.iloc[pos - h]
+        if np.isfinite(cand):
+            recomputed = float(cand)
+
+    raw_origin = row.get("origin_value")
+    published = np.nan
+    if raw_origin is not None:
+        try:
+            candidate = float(raw_origin)
+        except (TypeError, ValueError):
+            candidate = np.nan          # a malformed column is not a ruler
+        if np.isfinite(candidate):
+            published = candidate
+
+    if not np.isfinite(published):
+        return recomputed, "recomputed: truth[target_date - h business days]", recomputed
+    return published, "artifact: origin_value", recomputed
 
 
 def score_one(row: Dict, truth: pd.Series, horizon_steps: int = 5) -> Dict:
     """Score a single published prediction. Raises if its truth is not yet available.
 
-    The persistence comparator is built the same way as everywhere else in the project:
-    ``y(target_date - h business days)``, taken from the same business-day index. Using a
-    different comparator here would make published skill incomparable with DEV skill.
+    The persistence comparator is the same one the rest of the project uses,
+    ``ŷ(t+h) = y(t)`` — and it is READ from the published artifact rather than rebuilt
+    here. See ``_persistence_for``. ``horizon_steps`` remains only as the last-resort
+    step count for a row that carries neither ``origin_value`` nor ``horizon``.
     """
     td = pd.Timestamp(row["target_date"]).normalize()
     if td not in truth.index or not np.isfinite(truth.get(td, np.nan)):
+        arrived = truth.dropna()
+        ends = arrived.index.max().date() if len(arrived) else "never"
         raise TruthNotAvailable(
             f"{row['target']} {td.date()}: truth is not in the canonical dataset yet "
-            f"(data ends {truth.dropna().index.max().date()}). A published forecast is "
+            f"(data ends {ends}). A published forecast is "
             f"scored only once reality has arrived -- never by reaching into data we do "
             f"not have."
         )
     y = float(truth.loc[td])
 
-    pos = truth.index.get_loc(td)
-    pers = np.nan
-    if pos - horizon_steps >= 0:
-        cand = truth.iloc[pos - horizon_steps]
-        if np.isfinite(cand):
-            pers = float(cand)
+    pers, source, recomputed = _persistence_for(row, truth, td, horizon_steps)
 
     ae = abs(y - float(row["p50"]))
     pae = abs(y - pers) if np.isfinite(pers) else np.nan
@@ -176,8 +259,25 @@ def score_one(row: Dict, truth: pd.Series, horizon_steps: int = 5) -> Dict:
         "persistence_pred": pers,
         "persistence_abs_error": pae,
         "skill_vs_ruler_pct": skill,
+        "persistence_source": source,
+        # Not a scorecard column: the cross-check value, for callers that want to
+        # verify the artifact's ruler against the actuals. See score_published.
+        "persistence_recomputed": recomputed,
         "inside_interval": bool(float(row["p10"]) <= y <= float(row["p90"])),
     }
+
+
+def baseline_agrees(published: float, recomputed: float) -> bool:
+    """Do the two routes to the h-step ruler agree?
+
+    ``origin_value`` and ``y(target_date - h business days)`` are the same quantity,
+    and on the live issue they agree exactly — 0.000000 on all three targets. So this
+    is a float-round-trip tolerance, not a margin of acceptable disagreement.
+    """
+    if not (np.isfinite(published) and np.isfinite(recomputed)):
+        return True          # nothing to compare is not a disagreement
+    return bool(np.isclose(published, recomputed,
+                           rtol=BASELINE_RTOL, atol=BASELINE_ATOL))
 
 
 def score_published(data_path: Path,
@@ -192,6 +292,7 @@ def score_published(data_path: Path,
     data_path = Path(data_path)
     scored: List[Dict] = []
     pending: List[Dict] = []
+    disputed: List[Dict] = []
     truth_cache: Dict[str, pd.Series] = {}
 
     from provenance import sha256_of
@@ -236,7 +337,24 @@ def score_published(data_path: Path,
                 "scored_at_data_sha": current_sha,
             }
             try:
-                base.update(score_one(row, truth_cache[target], horizon_steps))
+                got = score_one(row, truth_cache[target], horizon_steps)
+                base.update(got)
+                # One ruler, one implementation: the artifact's origin_value and the
+                # actuals at target_date - h business days are the same quantity. A
+                # divergence means the actuals were revised under an issued forecast,
+                # or the artifact is wrong. Reported rather than swallowed -- and the
+                # row still scores against what was published, because that is the
+                # comparator the forecast was committed against.
+                if not baseline_agrees(got["persistence_pred"],
+                                       got["persistence_recomputed"]):
+                    disputed.append({
+                        "target": target, "horizon": base["horizon"],
+                        "target_date": base["target_date"],
+                        "artifact_origin_value": got["persistence_pred"],
+                        "recomputed_from_actuals": got["persistence_recomputed"],
+                        "delta": abs(got["persistence_pred"]
+                                     - got["persistence_recomputed"]),
+                    })
                 scored.append(base)
             except TruthNotAvailable:
                 pending.append(base)
@@ -254,6 +372,7 @@ def score_published(data_path: Path,
         "scorecard": str(out),
         "summary": summarize_scorecard(df),
         "pending_dates": sorted({(p["target"], p["target_date"]) for p in pending}),
+        "baseline_disagreements": disputed,
     }
 
 
