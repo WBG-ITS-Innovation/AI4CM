@@ -22,6 +22,9 @@ from statsmodels.tsa.forecasting.theta import ThetaModel
 
 def _log(msg: str): print(time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg, flush=True)
 
+from evaluation_windows import (PURPOSE_REPORT, require_test_access,  # noqa: E402
+                                window_for as _window_for)
+
 # The implementation that diverged: it alone treated "net" and "stock" as stock targets and
 # "t0" as a flow, so a column named t0 would have been modelled as a level here and as a delta
 # in the other three families. Now one shared definition, whose alias set is the UNION of all
@@ -351,6 +354,26 @@ def main():
             te_end = idx[-1]; te_start = idx[-max(horizon, 2)]
             tr_end = idx[-(max(horizon, 2) + 1)]
             folds_list = [(tr_end, te_start, te_end)]
+
+    # ── The holdout read, recorded ────────────────────────────────────────────
+    # A_STAT folds over every full year, so its evaluation reaches 2025 -- the sealed holdout --
+    # on an ordinary run. That is legitimate: this module's own discipline says "TEST is run at
+    # the end of a milestone to report what would have happened", and reporting is not choosing.
+    # What was wrong is that it happened through NEITHER path: no gate, and no log entry, so the
+    # holdout was being read on every daily run with nothing recording it.
+    #
+    # purpose="report" therefore records without raising. No selection guard is added here,
+    # because this family makes no selection: it runs one model per invocation via
+    # TG_MODEL_FILTER and its leaderboard ranks that model against the persistence baseline.
+    _eval_dates = [t for (_tr, ts, te) in folds_list
+                   for t in idx[(idx >= ts) & (idx <= te)]]
+    _test_dates = [t for t in _eval_dates if _window_for(t) == "test"]
+    if _test_dates:
+        require_test_access(
+            f"A_STAT reporting evaluation for {target!r} at h={horizon} covers "
+            f"{len(_test_dates)} holdout target date(s) from {min(_test_dates).date()} to "
+            f"{max(_test_dates).date()}",
+            caller="run_a_stat.main", purpose=PURPOSE_REPORT)
 
     # ── Rolling-origin, h-step-ahead evaluation (C-3) ──
     # For every target date t in the fold's test window we refit the model on
