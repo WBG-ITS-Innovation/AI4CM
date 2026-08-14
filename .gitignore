@@ -68,3 +68,18 @@ forecasts/published/*/estimators/*
 # test_access.log is a local ledger of holdout reads -- it must not be rewritable by a
 # checkout, so it stays untracked and §0a of reports/HANDOFF.md is the durable record.
 experiments/test_access.log
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOCAL-ONLY VAULT FOR REAL CLIENT DATA AND THE REAL AUDIT TRAIL
+#
+# The sanitization (docs/sessions/2026-08-13-sanitize-and-synthesize.md) replaced the real
+# Georgian Treasury dataset with a synthetic one so the repo carries no client data. The real
+# files -- and, importantly, the REAL experiments/log.csv with its 153 genuine run records --
+# are moved here rather than deleted, because the log is provenance: it is the evidence behind
+# every measured claim in reports/ and docs/, and destroying it would make those claims
+# unverifiable.
+#
+# Nothing in here may ever be committed. It is deliberately a single top-level directory so the
+# rule is one line and impossible to misread.
+private_vault/
+data/
