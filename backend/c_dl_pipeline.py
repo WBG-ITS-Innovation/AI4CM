@@ -397,6 +397,19 @@ def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int,
     if cutoff is not None:
         print(f"[DL] eval_start={cutoff.date()} pinned: {len(folds)} fold(s) kept, "
               f"{dropped} dropped for starting before it")
+
+    # The same hole A_STAT had. C_DL's runners default eval_start to TEST_START -- it reports on
+    # the holdout by design -- and that read went through neither the gate nor the log. Reporting
+    # is legitimate (it is what the holdout is for), so this records rather than refuses. No
+    # selection guard: fold construction chooses nothing.
+    from evaluation_windows import PURPOSE_REPORT, require_test_access, window_for
+    test_dates = [t for (_te, ts, tend) in folds
+                  for t in idx[(idx >= ts) & (idx <= tend)] if window_for(t) == "test"]
+    if test_dates:
+        require_test_access(
+            f"C_DL reporting evaluation covers {len(test_dates)} holdout target date(s) from "
+            f"{min(test_dates).date()} to {max(test_dates).date()}",
+            caller="c_dl_pipeline.yearly_folds", purpose=PURPOSE_REPORT)
     return folds
 
 def _last_window_fallback_masks(label_idx: np.ndarray, horizon: int) -> List[Tuple[np.ndarray, np.ndarray]]:

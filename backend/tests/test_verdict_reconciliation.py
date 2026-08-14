@@ -157,3 +157,69 @@ def test_publishing_a_withheld_recipe_is_refused():
     with pytest.raises(NotOfficial, match="verdict is 'withheld'"):
         from forecast_modes import publish_official
         publish_official(res)
+
+
+# ── the holdout read is recorded, not silent ─────────────────────────────────
+
+def test_the_two_read_purposes_are_distinct():
+    """Reporting over the holdout is what it is FOR; consulting it to choose is not.
+
+    The module's own discipline draws this line -- "TEST is run at the end of a milestone to
+    report what would have happened... Each time TEST is consulted **to make a choice**, it stops
+    being a clean holdout" -- and the code did not, so a reporting read went through neither the
+    gate nor the log.
+    """
+    from evaluation_windows import PURPOSE_REPORT, PURPOSE_SELECTION
+
+    assert PURPOSE_SELECTION == "selection" and PURPOSE_REPORT == "report"
+
+
+def test_a_reporting_read_is_logged_without_raising(tmp_path, monkeypatch):
+    import evaluation_windows as ew
+
+    log = tmp_path / "access.log"
+    monkeypatch.setattr(ew, "TEST_ACCESS_LOG", log)
+    ew.require_test_access("covering 156 holdout dates", caller="unit",
+                           purpose=ew.PURPOSE_REPORT)
+
+    entry = json.loads(log.read_text().strip())
+    assert entry["purpose"] == "report"
+    assert entry["caller"] == "unit"
+    assert "156 holdout dates" in entry["reason"]
+
+
+def test_a_selection_read_still_raises_when_the_holdout_is_closed(tmp_path, monkeypatch):
+    import evaluation_windows as ew
+
+    monkeypatch.setattr(ew, "TEST_ACCESS_LOG", tmp_path / "access.log")
+    monkeypatch.delenv(ew.TEST_ACCESS_ENV, raising=False)
+    with pytest.raises(ew.TestWindowAccessError):
+        ew.require_test_access("choosing a model", caller="unit")
+
+
+def test_an_unknown_purpose_is_refused(tmp_path, monkeypatch):
+    import evaluation_windows as ew
+
+    monkeypatch.setattr(ew, "TEST_ACCESS_LOG", tmp_path / "access.log")
+    with pytest.raises(ValueError, match="purpose must be"):
+        ew.require_test_access("something", purpose="whatever")
+
+
+@pytest.mark.parametrize("module,fn,caller", [
+    ("run_a_stat", "main", "run_a_stat.main"),
+    ("c_dl_pipeline", "build_yearly_folds", "c_dl_pipeline.yearly_folds"),
+])
+def test_the_families_that_report_over_the_holdout_record_the_read(module, fn, caller):
+    """A_STAT folds over every full year; C_DL's runners default eval_start to TEST_START.
+
+    Both reached 2025 with no gate and no log entry. Neither gets a *selection* guard, because
+    neither is choosing at that point -- A_STAT runs one model per invocation, and building folds
+    chooses nothing.
+    """
+    import importlib
+
+    src = Path(importlib.import_module(module).__file__).read_text()
+    assert "PURPOSE_REPORT" in src, f"{module} does not record its holdout read"
+    assert caller in src, f"{module} does not identify itself in the log entry"
+    assert "assert_selection_free" not in src, (
+        f"{module} makes no selection at this point and must not carry a selection guard")

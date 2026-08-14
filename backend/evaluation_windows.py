@@ -113,17 +113,50 @@ def is_test_read_allowed() -> bool:
     return os.environ.get(TEST_ACCESS_ENV, "").strip().lower() in {"1", "true", "yes"}
 
 
-def require_test_access(reason: str, caller: Optional[str] = None) -> None:
-    """Gate and loudly log any read of the locked TEST window.
+#: Why a TEST read is happening. The distinction is the module's own, from the paragraph at the
+#: top: *"TEST is run at the end of a milestone to report what would have happened, and is never
+#: used to choose anything. Each time TEST is consulted **to make a choice**, it stops being a
+#: clean holdout."*
+#:
+#: So there are two different acts, and conflating them was the hole this closes:
+#:
+#: ``PURPOSE_SELECTION`` — a read that could inform a choice. Raises unless the holdout has been
+#:   deliberately released. The count of these should stay at zero.
+#: ``PURPOSE_REPORT``    — evaluating over the holdout to state what would have happened. This is
+#:   what the holdout is *for*, so it never raises — but it is logged, because "how many times did
+#:   we look at it" must have a factual answer rather than a recollection.
+#:
+#: Before this, reporting reads went through neither path: A_STAT folded over 2025 with no gate and
+#: no log entry, and C_DL defaults to ``eval_start=TEST_START`` with the same silence. The holdout
+#: was being read on every daily run and nothing recorded it.
+PURPOSE_SELECTION = "selection"
+PURPOSE_REPORT = "report"
+
+
+def require_test_access(reason: str, caller: Optional[str] = None,
+                        purpose: str = PURPOSE_SELECTION) -> None:
+    """Gate and log any read of the locked TEST window.
 
     Phase 2's rule is that TEST is untouched until explicitly released.  A quiet
     boolean would be too easy to flip, so this raises by default and, when
     permitted, writes a banner to stderr *and* appends to
     ``experiments/test_access.log``.  The count of consultations should stay at
     zero during model search; if it does not, the log says exactly when and why.
+
+    ``purpose=PURPOSE_REPORT`` records the read without raising -- see the note above the
+    purpose constants for why the two are not the same act.
     """
     if not reason or not reason.strip():
         raise ValueError("A TEST read requires a stated reason.")
+
+    purpose = str(purpose).strip().lower()
+    if purpose not in (PURPOSE_SELECTION, PURPOSE_REPORT):
+        raise ValueError(f"purpose must be {PURPOSE_SELECTION!r} or {PURPOSE_REPORT!r}, "
+                         f"got {purpose!r} -- being explicit is the point of this call.")
+
+    if purpose == PURPOSE_REPORT:
+        _log_test_read(reason, caller, purpose)
+        return
 
     if not is_test_read_allowed():
         raise TestWindowAccessError(
@@ -134,15 +167,23 @@ def require_test_access(reason: str, caller: Optional[str] = None) -> None:
             f"{TEST_ACCESS_LOG}."
         )
 
+    _log_test_read(reason, caller, PURPOSE_SELECTION)
+
+
+def _log_test_read(reason: str, caller: Optional[str], purpose: str) -> None:
+    """Append one holdout read to the log, and announce a selection read on stderr."""
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "purpose": purpose,
         "reason": reason,
         "caller": caller or "unspecified",
         "argv": " ".join(sys.argv[:4]),
     }
-    banner = "!" * 78
-    print(f"\n{banner}\n!! TEST WINDOW READ ({TEST_START} onward): {reason}\n"
-          f"!! logged to {TEST_ACCESS_LOG}\n{banner}\n", file=sys.stderr, flush=True)
+    if purpose == PURPOSE_SELECTION:
+        # A selection read is the expensive one, so it is impossible to miss.
+        banner = "!" * 78
+        print(f"\n{banner}\n!! TEST WINDOW READ ({TEST_START} onward): {reason}\n"
+              f"!! logged to {TEST_ACCESS_LOG}\n{banner}\n", file=sys.stderr, flush=True)
     try:
         TEST_ACCESS_LOG.parent.mkdir(parents=True, exist_ok=True)
         with TEST_ACCESS_LOG.open("a", encoding="utf-8") as fh:

@@ -54,7 +54,18 @@ def load_all() -> Optional[Dict]:
         art = ins.load_forward_artifacts()
         reg = load_registry()
         narr = ins.build_narrative_text(art["forecasts"], reg, art["provenance"])
+
+        # Verdict-at-issue vs verdict-today for every published issue. A published issue is
+        # immutable, so when the gates change the two legitimately differ -- and a reader of an
+        # old issue would otherwise see only the verdict it was issued under.
+        try:
+            from published_forecasts import reconcile_verdicts
+            reconciliation = reconcile_verdicts()
+        except Exception:                       # noqa: BLE001 - never block the page on this
+            reconciliation = []
+
         return {
+            "reconciliation": reconciliation,
             "forecasts": pd.DataFrame(art["forecasts"]),
             "provenance": art["provenance"],
             "registry": reg,
@@ -140,6 +151,14 @@ for target in fc["target"].unique():
     # Verdict banner — never hidden.
     if publishable:
         st.success(f"**Usable as a forecast.** {pub['reason_plain']}")
+    elif pub["verdict"] == "withheld":
+        # P2 made these two mean different things, and the page used to render both as
+        # "shown as a guide to the typical level". That is wrong for `withheld`: it means a
+        # documented trivial benchmark is MORE accurate, so the numbers are not a guide to
+        # anything and presenting them as one would invite a worse decision.
+        st.error(
+            f"**WITHHELD — do not use these numbers.**\n\n{pub['reason_plain']}"
+        )
     else:
         st.error(
             f"**WITHHELD as a forecast — shown as a guide to the typical level.**\n\n"
@@ -430,6 +449,58 @@ if _modes_ok:
                     "High": _f["p90"].map(m)}), hide_index=True, use_container_width=True)
                 st.caption(f"{UNIT_LABEL.capitalize()}. Exploratory — not written to "
                            f"`forecasts/published/`, not exportable as official.")
+
+st.divider()
+
+# ── Verdict reconciliation: what an old issue said, and what it would say now ──
+#
+# A published issue is immutable: its gates.json records the verdict at issue time, and
+# rewriting it would destroy the only record of what was actually said on that date. But the
+# gates themselves changed in P2 -- MASE became binding, the signal threshold was calibrated
+# 1.50 -> 1.15, and vs_ruler stopped deciding -- so verdicts moved underneath issues already
+# published. A reader of the 2025-08-06 issue would otherwise see only the verdict it was
+# issued under, with nothing saying it no longer holds.
+#
+# Both statements are true; they answer different questions. So show both, never overwrite.
+st.markdown(section_header("Verdict history",
+                          "What each published issue said then, and what it would say now"),
+            unsafe_allow_html=True)
+
+_rec = data.get("reconciliation") or []
+if not _rec:
+    st.caption("No published issue to reconcile yet.")
+else:
+    _changed = [r for r in _rec if r.get("changed")]
+    if _changed:
+        st.warning(
+            f"**{len(_changed)} published verdict(s) would differ today.** The forecast numbers "
+            f"in those issues have not changed — only the verdict attached to them, because the "
+            f"publication gates were corrected. The published files are left exactly as issued."
+        )
+    else:
+        st.success("Every published verdict still holds under the current gates.")
+
+    for _issue in sorted({r["issue_date"] for r in _rec}, reverse=True):
+        _rows = [r for r in _rec if r["issue_date"] == _issue]
+        _n_changed = sum(1 for r in _rows if r.get("changed"))
+        _label = (f"Issue {_issue} — {_n_changed} of {len(_rows)} verdict(s) changed"
+                  if _n_changed else f"Issue {_issue} — unchanged")
+        with st.expander(_label, expanded=bool(_n_changed)):
+            for r in _rows:
+                _then, _now = r["verdict_at_issue"], r["verdict_today"]
+                if r.get("changed"):
+                    st.markdown(
+                        f"**{r['target']}** &nbsp; `{_then}` &nbsp;→&nbsp; `{_now}`",
+                        unsafe_allow_html=True)
+                    # The one actionable sentence: it names only the gates that drove the
+                    # change, not every gate that differs.
+                    st.caption(r["why"])
+                else:
+                    st.markdown(f"**{r['target']}** &nbsp; `{_then}` &nbsp;(unchanged)",
+                                unsafe_allow_html=True)
+            st.caption("The published issue is immutable and its gates.json correctly records "
+                       "what was decided on the issue date. This is a comparison, not a "
+                       "correction to it.")
 
 st.divider()
 
