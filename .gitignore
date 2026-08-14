@@ -83,3 +83,6 @@ experiments/test_access.log
 # rule is one line and impossible to misread.
 private_vault/
 data/
+.env
+backend/outputs/
+*.log
