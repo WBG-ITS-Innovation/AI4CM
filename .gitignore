@@ -31,42 +31,58 @@ backend/forecast_runs/**
 # correct in the writer while absent from every artifact was the blocker, not the code.
 #
 # Safe to track because these two are AGGREGATE ONLY: model names, MAEs, skill percentages, gate
-# verdicts and the data file's NAME. No row-level predictions, no Treasury series. That is the same
-# class as forecasts/published/, which is tracked for the same reason. The row-level artifacts
-# (predictions_long.csv, leaderboard.csv, metrics_long.csv) stay ignored.
+# verdicts and the data file's NAME. No row-level predictions, no Treasury series. The row-level
+# artifacts (predictions_long.csv, leaderboard.csv, metrics_long.csv) stay ignored -- as does
+# forecasts/published/, which used to be cited here as the same class and is not: see below.
 !backend/forecast_runs/*/SUMMARY.json
 !backend/forecast_runs/*/SUMMARY.txt
 
 # OS cruft
 .DS_Store
 Thumbs.db
-# Published forecasts ARE tracked -- forecasts/published/ is the only record of what was
-# actually said, and a scorecard nobody can audit is worthless. Working forward artifacts
-# under backend/forecast_runs/ stay ignored; those are regenerable, a published forecast is
-# not.
-!forecasts/published/
+# Published forecasts are NO LONGER tracked. This reverses the rule that stood here until the
+# 2026-08-14 sanitization, and the reversal is deliberate, so the old reasoning is kept:
+#
+#   "Published forecasts ARE tracked -- forecasts/published/ is the only record of what was
+#    actually said, and a scorecard nobody can audit is worthless."
+#
+# That argument was about auditability and it is still correct. What it missed is WHAT an issue
+# contains. forecast.csv carries row-level Treasury figures -- origin_value and the P10/P50/P90
+# path for every target-date -- so it is client data, not the aggregate class that
+# backend/forecast_runs/*/SUMMARY.json belongs to. The estimator carve-out below already
+# conceded exactly this for the blobs; the concession was simply too narrow, because the numbers
+# it protects are also sitting in the CSV next to it.
+#
+# The durable record moves to private_vault/published/, which holds every issue. Losing the
+# in-clone record is a real cost and it is the smaller one: an auditor with vault access can
+# still reconcile every verdict, and no clone of a World Bank repository carries Treasury rows.
+forecasts/published/
+#
+# scorecard.csv stays tracked -- it is header-only until truth arrives. NOTE: its row schema
+# includes p10/p50/p90 and y_true, so the first scored row makes it client data too. Revisit
+# this line before the data file moves past the earliest published target date.
 !forecasts/scorecard.csv
 
-# ...with ONE deliberate exception: the persisted estimator blobs. This diverges from the rule
-# directly above, and the reason is not disk (measured: 10.45 MB per issue). A fitted estimator
-# embeds client data -- the full training target and trailing-level series, plus tree split
-# thresholds and leaf values that are functions of the training data and CANNOT be scrubbed at
-# all. Committing one would place raw Treasury figures permanently in every clone of a World Bank
-# repository, unremovable without rewriting history.
+# Phase 2 experiments, also no longer tracked. The previous rule, kept because it names a real
+# consequence that is now unavoidable:
 #
-# The manifest IS tracked, and carries a SHA-256 per blob. So a clone can still prove which
-# estimator produced a published number and detect a substituted one; what it cannot do is run it.
-# forecast.csv IS the claim and must survive a clone; an estimator only re-derives it.
-# See backend/estimator_store.py.
-forecasts/published/*/estimators/*
-!forecasts/published/*/estimators/manifest.json
-
-# Phase 2 experiments. The append-only log AND its per-run detail JSONs are tracked:
-# verify_log_integrity() requires a JSON for every row, so ignoring runs/ would make a
-# fresh clone fail its own integrity check and "reproducible from a logged run" a claim
-# with nothing behind it. They are small and text.
+#   "The append-only log AND its per-run detail JSONs are tracked: verify_log_integrity()
+#    requires a JSON for every row, so ignoring runs/ would make a fresh clone fail its own
+#    integrity check and 'reproducible from a logged run' a claim with nothing behind it."
+#
+# Still true, and accepted: the 153 genuine run records are measurements OF client data and were
+# moved to private_vault/experiments/ by the sanitization. A clone cannot verify the log because
+# a clone does not have the log. It is either that or ship the measurements, and shipping them is
+# not available. The vault copy is what verify_log_integrity() runs against.
+#
+# These two were left untracked-but-not-ignored after the restore, which is the worst of both:
+# `git add -A` would have committed them. Named explicitly so it cannot.
+experiments/log.csv
+experiments/runs/
+#
 # test_access.log is a local ledger of holdout reads -- it must not be rewritable by a
 # checkout, so it stays untracked and §0a of reports/HANDOFF.md is the durable record.
+# (Also covered by the *.log rule at the foot of this file; kept for the reason.)
 experiments/test_access.log
 
 # ══════════════════════════════════════════════════════════════════════════════
