@@ -540,8 +540,17 @@ def test_the_cli_returns_zero_on_a_clean_artifact(run_dir):
 
 REAL_RUN = BACKEND / "forecast_runs" / "2026-08-04"
 
+#: Both tests below call ``validate_run(REAL_RUN)``, which reads the row-level artifacts -- and
+#: those are gitignored, so they exist only where the run was made. Gating on ``REAL_RUN.exists()``
+#: was right only while the whole directory was absent. Now that SUMMARY.json is tracked again the
+#: directory exists in every clone, so a directory check would let these run against artifacts that
+#: are not there and fail for a reason that is not a defect. Gate on what is actually read, the way
+#: the reference-run test below already does.
+REAL_RUN_ROWS = REAL_RUN / "a_stat" / "leaderboard.csv"
+_NO_ROWS = "row-level artifacts are gitignored; present only where the run was made"
 
-@pytest.mark.skipif(not REAL_RUN.exists(), reason="no committed run to validate")
+
+@pytest.mark.skipif(not REAL_RUN_ROWS.exists(), reason=_NO_ROWS)
 def test_the_real_run_is_readable_and_its_findings_are_recorded():
     """Documents where the shipped artifacts actually stand.
 
@@ -576,7 +585,7 @@ def test_the_real_run_is_readable_and_its_findings_are_recorded():
     assert summary["model_composition"]["counts"]["machine-learning models"] == 13
 
 
-@pytest.mark.skipif(not REAL_RUN.exists(), reason="no committed run to validate")
+@pytest.mark.skipif(not REAL_RUN_ROWS.exists(), reason=_NO_ROWS)
 def test_the_remaining_errors_are_a_pre_existing_csv_defect_not_a_regression():
     """The verdict on why `daily_summary` exits 2 on this run, held as an assertion.
 
