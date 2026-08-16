@@ -136,6 +136,88 @@ def test_all_targets_are_offered_not_only_the_three():
         assert calendar_flag not in ts
 
 
+# ── publishing must not vandalise the shared working artifact ─────────────────
+
+def _official(target: str, origin: str = "2025-08-06"):
+    """A minimal OfficialResult that publish_official will accept and write out."""
+    from forecast_modes import OfficialResult
+
+    dates = pd.bdate_range(pd.Timestamp(origin) + pd.Timedelta(days=1), periods=5)
+    fc = pd.DataFrame({
+        "target": target, "horizon": range(1, 6), "origin_date": origin,
+        "origin_value": 1.0, "target_date": [str(d.date()) for d in dates],
+        "p10": 1.0, "p50": 2.0, "p90": 3.0,
+    })
+    return OfficialResult(target=target, recipe_id=f"{target}-v1", model="LightGBM_L1",
+                          horizon=5, forecasts=fc, provenance={"recipes": []},
+                          gates={f"{target}-v1": {"target": target, "gates": {}}})
+
+
+def test_publishing_one_target_leaves_the_other_targets_forward_run_intact(tmp_path,
+                                                                           monkeypatch):
+    """Publishing wrote straight to the SHARED forward directory, destroying two of three targets.
+
+    That directory is read by the treasury report, the insights narrative and the Forecast page,
+    none of which publish anything. Publishing Revenues deleted the Expenditure and
+    State-budget-balance numbers they were displaying. It surfaced as three unrelated-looking
+    test failures in the 2026-08-15 session, which is the expensive way to find it.
+    """
+    import forecast_modes as fm
+    import forward_forecast as ff
+
+    shared = tmp_path / "forward" / "latest"
+    shared.mkdir(parents=True)
+    ff.write_artifacts(shared, pd.concat([_official(t).forecasts for t in
+                                          ("Revenues", "Expenditure", "State budget balance")],
+                                         ignore_index=True), {"recipes": []}, {})
+    monkeypatch.setattr(ff, "DEFAULT_OUT", shared)
+    before = (shared / "forward_forecast.csv").read_bytes()
+
+    dest = fm.publish_official(_official("Revenues"), issue_date="2026-01-02",
+                               published_root=tmp_path / "published")
+
+    after = pd.read_csv(shared / "forward_forecast.csv")
+    assert set(after["target"]) == {"Revenues", "Expenditure", "State budget balance"}, (
+        "publishing one target destroyed the others in the shared forward run")
+    assert (shared / "forward_forecast.csv").read_bytes() == before, (
+        "the shared forward artifact was rewritten by a publish")
+
+    # ...and the issue itself still carries only the target that was published.
+    assert set(pd.read_csv(dest / "forecast.csv")["target"]) == {"Revenues"}
+
+
+def test_the_staging_directory_is_cleaned_up_on_success(tmp_path, monkeypatch):
+    """Per-issue staging must not accumulate a directory per target per issue forever."""
+    import forecast_modes as fm
+    import forward_forecast as ff
+
+    shared = tmp_path / "forward" / "latest"
+    shared.mkdir(parents=True)
+    monkeypatch.setattr(ff, "DEFAULT_OUT", shared)
+
+    fm.publish_official(_official("Revenues"), issue_date="2026-01-02",
+                        published_root=tmp_path / "published")
+
+    staging = shared.parent / "staging"
+    assert not staging.exists() or not any(staging.iterdir()), (
+        f"staging left behind: {list(staging.rglob('*')) if staging.exists() else None}")
+
+
+def test_an_explicit_forward_dir_is_still_honoured(tmp_path, monkeypatch):
+    """The parameter exists so a caller can stage somewhere it chooses; staging must not steal it."""
+    import forecast_modes as fm
+    import forward_forecast as ff
+
+    monkeypatch.setattr(ff, "DEFAULT_OUT", tmp_path / "forward" / "latest")
+    mine = tmp_path / "mine"
+
+    fm.publish_official(_official("Revenues"), issue_date="2026-01-02",
+                        forward_dir=mine, published_root=tmp_path / "published")
+
+    assert (mine / "forward_forecast.csv").exists(), (
+        "an explicitly supplied forward_dir was ignored")
+
+
 # ── re-issue never overwrites ─────────────────────────────────────────────────
 
 def test_next_issue_date_avoids_an_existing_issue(tmp_path):
