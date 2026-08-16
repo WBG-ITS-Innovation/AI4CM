@@ -90,11 +90,12 @@ def _publish_and_retain(forecasts: pd.DataFrame, prov: dict, sink: list) -> Path
     """
     from estimator_store import (DEFAULT_KEEP_LAST, issues_with_unscored_horizons,
                                  prune_estimators, save_estimators)
-    from published_forecasts import PUBLISHED_ROOT, publish
+    from published_forecasts import PUBLISHED_ROOT, publish, retain_to_vault
 
     dest = publish(DEFAULT_OUT)
     origin = pd.DatetimeIndex(pd.to_datetime(forecasts["origin_date"]).unique())
     mpath = save_estimators(dest, sink, keep_index=origin, provenance=prov)
+    retain_to_vault(dest)          # blobs landed after publish() mirrored; idempotent re-sync
     total = json.loads(mpath.read_text())["total_bytes"]
     print(f"[forward] retained {len(sink)} estimators, {total / 1024 / 1024:.2f} MB "
           f"(blobs gitignored; manifest tracked -- see backend/estimator_store.py)")

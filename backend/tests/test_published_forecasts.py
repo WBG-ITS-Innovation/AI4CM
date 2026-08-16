@@ -16,12 +16,15 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
+import published_forecasts as pf  # noqa: E402
 from published_forecasts import (  # noqa: E402
     NOMINAL_COVERAGE,
     SCORECARD_COLUMNS,
     TruthNotAvailable,
     list_published,
     publish,
+    refresh_vault_manifest,
+    retain_to_vault,
     score_one,
     score_published,
     summarize_scorecard,
@@ -204,6 +207,119 @@ def test_published_forecast_has_no_truth_column(tmp_path):
     dest = publish(fwd, published_root=tmp_path / "pub")
     cols = set(pd.read_csv(dest / "forecast.csv").columns)
     assert not ({"y_true", "actual", "abs_error"} & cols)
+
+
+# ── retention happens as part of publishing, not after it ─────────────────────
+
+def test_publishing_writes_the_issue_and_its_vault_copy_together(tmp_path):
+    """Retention used to be a manual `cp` and was therefore sometimes not done at all.
+
+    The 2026-08-16 issue was published and retained nothing; a test caught it, not an auditor.
+    Publishing now writes both locations, so forgetting is not one of the available outcomes.
+    """
+    fwd = _forward_dir(tmp_path, ["2023-07-03", "2023-07-04"])
+    pub, vault = tmp_path / "pub", tmp_path / "vault" / "published"
+
+    dest = publish(fwd, published_root=pub, vault_root=vault)
+
+    mirrored = vault / dest.name
+    assert mirrored.is_dir(), "publishing wrote the repo copy but retained nothing"
+    for name in ("forecast.csv", "gates.json", "provenance.json", "manifest.json"):
+        assert (mirrored / name).read_bytes() == (dest / name).read_bytes(), name
+
+
+def test_the_vault_inventory_is_regenerated_by_the_write_that_invalidates_it(tmp_path):
+    """A hand-maintained inventory drifts, and this one had: 700 recorded, 725 present."""
+    fwd = _forward_dir(tmp_path, ["2023-07-03"])
+    vault = tmp_path / "vault" / "published"
+    dest = publish(fwd, published_root=tmp_path / "pub", vault_root=vault)
+
+    man = json.loads((vault.parent / "MANIFEST.json").read_text())
+    listed = {f["path"] for f in man["files"]}
+    on_disk = {p.relative_to(vault.parent).as_posix()
+               for p in vault.parent.rglob("*") if p.is_file()} - {"MANIFEST.json"}
+
+    assert listed == on_disk, "the inventory does not match what is on disk"
+    assert man["n_files"] == len(listed) and man["n_files"] > 0
+    assert f"published/{dest.name}/forecast.csv" in listed
+    assert man["total_bytes"] == sum(f["bytes"] for f in man["files"])
+    assert "NEVER commit" in man["what"]
+
+
+def test_a_failed_vault_write_leaves_no_published_issue_behind(tmp_path, monkeypatch):
+    """Both or neither. A publish that retained nothing must not report success.
+
+    The repo copy is gitignored, so an issue that exists only there survives until the next
+    clean checkout -- which is indistinguishable from never having published it, except that
+    the caller was told it worked.
+    """
+    fwd = _forward_dir(tmp_path, ["2023-07-03"])
+    pub, vault = tmp_path / "pub", tmp_path / "vault" / "published"
+
+    def boom(*_a, **_k):
+        raise OSError("vault unwritable")
+
+    monkeypatch.setattr(pf, "retain_to_vault", boom)
+    with pytest.raises(OSError, match="vault unwritable"):
+        publish(fwd, published_root=pub, vault_root=vault)
+
+    assert not (pub / "2023-06-30").exists(), (
+        "the repo copy survived a failed retention -- published but not retained")
+
+
+def test_rollback_never_destroys_an_issue_it_did_not_create(tmp_path, monkeypatch):
+    """The rollback must not turn a failed overwrite into data loss.
+
+    Removing a directory that was already there would delete a prior published issue in order
+    to report an error, which is a worse outcome than the error.
+    """
+    fwd = _forward_dir(tmp_path, ["2023-07-03"])
+    pub, vault = tmp_path / "pub", tmp_path / "vault" / "published"
+    publish(fwd, published_root=pub, vault_root=vault)
+    assert (pub / "2023-06-30" / "forecast.csv").exists()
+
+    monkeypatch.setattr(pf, "retain_to_vault",
+                        lambda *_a, **_k: (_ for _ in ()).throw(OSError("vault unwritable")))
+    with pytest.raises(OSError):
+        publish(fwd, published_root=pub, vault_root=vault, overwrite=True)
+
+    assert (pub / "2023-06-30" / "forecast.csv").exists(), (
+        "rollback deleted a pre-existing issue")
+
+
+def test_publishing_into_a_temp_root_does_not_touch_the_real_vault(tmp_path):
+    """The default must not be "always the real vault", or every test would write into it."""
+    fwd = _forward_dir(tmp_path, ["2023-07-03"])
+    before = sorted(p.name for p in pf.VAULT_PUBLISHED.iterdir()) \
+        if pf.VAULT_PUBLISHED.exists() else []
+
+    publish(fwd, published_root=tmp_path / "pub")          # no vault_root given
+
+    after = sorted(p.name for p in pf.VAULT_PUBLISHED.iterdir()) \
+        if pf.VAULT_PUBLISHED.exists() else []
+    assert before == after, "publishing to a temp root wrote into the real vault"
+
+
+def test_retaining_twice_replaces_rather_than_accumulates(tmp_path):
+    """The estimator blobs land after publish() mirrors, so the re-sync must be idempotent."""
+    fwd = _forward_dir(tmp_path, ["2023-07-03"])
+    pub, vault = tmp_path / "pub", tmp_path / "vault" / "published"
+    dest = publish(fwd, published_root=pub, vault_root=vault)
+
+    (dest / "estimators").mkdir()
+    (dest / "estimators" / "manifest.json").write_text('{"blobs": 1}')
+    retain_to_vault(dest, vault)
+    assert (vault / dest.name / "estimators" / "manifest.json").exists(), (
+        "the re-sync did not pick up files written after the first mirror")
+
+    (dest / "estimators" / "manifest.json").unlink()
+    retain_to_vault(dest, vault)
+    assert not (vault / dest.name / "estimators" / "manifest.json").exists(), (
+        "the vault copy is a mirror, not an accumulation")
+
+    man = json.loads((vault.parent / "MANIFEST.json").read_text())
+    assert not any("estimators" in f["path"] for f in man["files"]), (
+        "the inventory still lists a file the mirror removed")
 
 
 VAULT = BACKEND.parent / "private_vault" / "published"

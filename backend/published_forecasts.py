@@ -62,6 +62,27 @@ REPO = Path(__file__).resolve().parent.parent
 PUBLISHED_ROOT = REPO / "forecasts" / "published"
 SCORECARD = REPO / "forecasts" / "scorecard.csv"
 
+#: The durable record. Since 2026-08-15 ``forecasts/published/`` is gitignored -- forecast.csv
+#: carries row-level Treasury figures -- so the repo copy does not survive a clone and the vault
+#: is what an auditor reads. Retention used to be a manual ``cp`` after publishing, which is a
+#: guarantee that depends on someone remembering: the 2026-08-16 issue was published and retained
+#: nothing, and a test caught it rather than an auditor.
+VAULT = REPO / "private_vault"
+VAULT_PUBLISHED = VAULT / "published"
+
+#: Top-level vault files that describe the vault rather than living in it.
+_MANIFEST_EXCLUDED = {"MANIFEST.json", "README.md"}
+
+_VAULT_WHAT = ("The real Georgian Treasury data and the real experiments audit trail, moved out "
+               "of the repository during sanitization. NEVER commit. NEVER change repo "
+               "visibility while this data is reachable from any tracked path.")
+
+#: Distinguishes "caller said nothing about the vault" from "caller said: no vault". Retention
+#: must default ON for the production path and OFF when a caller redirects ``published_root`` at
+#: a temp directory -- otherwise every test that publishes into ``tmp_path`` would write into the
+#: real vault. A plain ``None`` default cannot express both.
+_VAULT_FROM_ROOT = object()
+
 #: Nominal interval width, for hit-rate reporting.
 NOMINAL_COVERAGE = 0.80
 
@@ -93,15 +114,85 @@ class TruthNotAvailable(RuntimeError):
     """Raised when a published date is scored before its truth exists."""
 
 
+# ── retention to the vault ────────────────────────────────────────────────────
+
+def refresh_vault_manifest(vault: Optional[Path] = None) -> Path:
+    """Rewrite ``MANIFEST.json`` from what is actually on disk.
+
+    Regenerated on every vault write rather than maintained by hand, because a hand-maintained
+    inventory drifts silently and this one had: it recorded 700 files while 725 were present,
+    the difference being an entire published issue. An inventory that is wrong is worse than
+    none, since it reads as a check that passed.
+    """
+    from provenance import sha256_of
+
+    vault = Path(vault or VAULT)
+    entries: List[Dict] = []
+    total = 0
+    for p in sorted(vault.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(vault).as_posix()
+        if rel in _MANIFEST_EXCLUDED or any(part.startswith(".") for part in Path(rel).parts):
+            continue
+        size = p.stat().st_size
+        entries.append({"path": rel, "bytes": size, "sha256": sha256_of(p)})
+        total += size
+
+    path = vault / "MANIFEST.json"
+    path.write_text(json.dumps({
+        "created_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+        "what": _VAULT_WHAT,
+        "n_files": len(entries),
+        "total_bytes": total,
+        "files": entries,
+    }, indent=2), encoding="utf-8")
+    return path
+
+
+def retain_to_vault(issue_dir: Path, vault_published: Optional[Path] = None) -> Path:
+    """Mirror a published issue into the vault and refresh the inventory.
+
+    Idempotent: re-running replaces the vault copy, so a re-sync after the estimator blobs land
+    costs nothing and cannot half-apply.
+    """
+    issue_dir = Path(issue_dir)
+    root = Path(vault_published or VAULT_PUBLISHED)
+    root.mkdir(parents=True, exist_ok=True)
+
+    dest = root / issue_dir.name
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(issue_dir, dest)
+    refresh_vault_manifest(root.parent)
+    return dest
+
+
 # ── publishing ────────────────────────────────────────────────────────────────
 
 def publish(forward_dir: Path, issue_date: Optional[str] = None,
-            published_root: Optional[Path] = None, overwrite: bool = False) -> Path:
-    """Retain a forward run as an immutable published forecast.
+            published_root: Optional[Path] = None, overwrite: bool = False,
+            vault_root=_VAULT_FROM_ROOT) -> Path:
+    """Retain a forward run as an immutable published forecast, in both locations.
 
     ``issue_date`` defaults to the origin date of the run, which is the honest label: it is
     the last date whose data informed the forecast.
+
+    **Both or neither.** The repo copy is gitignored, so publishing without retaining to the
+    vault produces a forecast that exists only until the working tree is cleaned. If the vault
+    write fails, a newly created issue directory is removed and the error propagates, so the
+    caller never sees a success that retained nothing. The one case that cannot be rolled back
+    is ``overwrite=True`` over an existing issue: by then the previous artifacts are already
+    replaced. That is acceptable because overwriting a published issue is itself the guarded,
+    deliberate act -- the guarantee is written for the ordinary path, where the issue is new.
+
+    ``vault_root`` defaults to the real vault when publishing to the default root, and to *no
+    retention* when the caller redirects ``published_root`` -- otherwise a test publishing into
+    ``tmp_path`` would write into the real vault. Pass it explicitly to retain anywhere else.
     """
+    if vault_root is _VAULT_FROM_ROOT:
+        vault_root = VAULT_PUBLISHED if published_root is None else None
+
     forward_dir = Path(forward_dir)
     fc_path = forward_dir / "forward_forecast.csv"
     if not fc_path.exists():
@@ -118,6 +209,9 @@ def publish(forward_dir: Path, issue_date: Optional[str] = None,
             f"{dest} already exists. A published forecast is the only record of what was "
             f"actually said, so rewriting it requires overwrite=True."
         )
+    # Captured before mkdir: only a directory this call brought into existence may be rolled
+    # back. Removing one that was already there would destroy a prior issue to report an error.
+    dest_is_new = not dest.exists()
     dest.mkdir(parents=True, exist_ok=True)
 
     fc.to_csv(dest / "forecast.csv", index=False)
@@ -146,6 +240,14 @@ def publish(forward_dir: Path, issue_date: Optional[str] = None,
                  "backend/published_forecasts.score_published() once truth arrives."),
     }
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    if vault_root is not None:
+        try:
+            retain_to_vault(dest, vault_root)
+        except Exception:
+            if dest_is_new:
+                shutil.rmtree(dest, ignore_errors=True)
+            raise
     return dest
 
 
