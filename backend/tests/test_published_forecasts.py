@@ -206,16 +206,43 @@ def test_published_forecast_has_no_truth_column(tmp_path):
     assert not ({"y_true", "actual", "abs_error"} & cols)
 
 
-def test_the_real_published_run_is_tracked_by_git():
-    """Retention is pointless if the directory is gitignored -- which it was."""
+VAULT = BACKEND.parent / "private_vault" / "published"
+
+
+def test_the_published_record_is_retained_somewhere_durable():
+    """Retention is pointless if the record does not survive. Only the location changed.
+
+    Until 2026-08-15 this asserted the opposite -- `assert out.returncode != 0`, the published
+    directory must NOT be gitignored -- because the original defect was that it was, so nothing
+    recorded what had been said. That concern is still correct and this test still exists to
+    enforce it. What changed is where the record lives: forecast.csv carries row-level Treasury
+    figures (origin_value and the full P10/P50/P90 path), so it left the repository for
+    private_vault/published/. Checking survival is therefore checking the vault; otherwise
+    "the vault is the durable record" is a claim with nothing behind it.
+    """
     import subprocess
 
-    if not list_published():
+    issues = list_published()
+    if not issues:
         pytest.skip("nothing published yet")
-    d = list_published()[0] / "forecast.csv"
-    out = subprocess.run(["git", "check-ignore", str(d)],
-                         capture_output=True, text=True, cwd=str(BACKEND.parent))
-    assert out.returncode != 0, f"{d} is gitignored; the published record would not survive"
+
+    for d in issues:
+        # Both halves of the policy, pinned together: ignored HERE and present THERE. If
+        # someone re-tracks the repo copy, that is a policy change and should fail here.
+        out = subprocess.run(["git", "check-ignore", str(d / "forecast.csv")],
+                             capture_output=True, text=True, cwd=str(BACKEND.parent))
+        assert out.returncode == 0, (
+            f"{d.name}/forecast.csv is tracked; it carries row-level Treasury figures")
+
+        vaulted = VAULT / d.name
+        assert vaulted.is_dir(), (
+            f"issue {d.name} has no copy in private_vault/published/ -- publishing it retained "
+            f"nothing durable. publish() writes only to forecasts/published/, so the vault copy "
+            f"is currently a manual step.")
+        for name in ("forecast.csv", "gates.json"):
+            assert (vaulted / name).read_bytes() == (d / name).read_bytes(), (
+                f"{d.name}/{name} differs from its vault copy; one of the two has been edited "
+                f"and a published issue is supposed to be immutable")
 
 
 # ── registry / published / forward must agree on the recipe ───────────────────

@@ -469,28 +469,49 @@ def test_describe_environment_includes_joblib():
     assert describe_environment()["packages"]["joblib"]
 
 
-def test_gitignore_excludes_the_blobs_but_tracks_the_manifest():
-    """The one deliberate divergence from the published-forecast retention rule."""
+def test_gitignore_excludes_the_whole_published_issue_blobs_included():
+    """The blob rule was the narrow case; on 2026-08-15 it became the general one.
+
+    This used to assert a split -- blobs ignored, manifest and forecast.csv tracked -- because
+    the estimator was treated as the one artifact too dangerous to commit. The split did not
+    survive contact with what forecast.csv actually holds (origin_value and the full P10/P50/P90
+    path), so the whole issue directory is ignored now. The blob assertion is unchanged and must
+    stay: if the published-forecast rule is ever revisited, the blobs still cannot be tracked.
+    """
     def ignored(rel: str) -> bool:
         return subprocess.run(["git", "check-ignore", "-q", rel],
                               cwd=REPO).returncode == 0
 
     assert ignored("forecasts/published/2025-08-06/estimators/revenues/h5_point.joblib"), (
         "estimator blobs must be gitignored -- they embed Treasury training data")
-    assert not ignored("forecasts/published/2025-08-06/estimators/manifest.json"), (
-        "the manifest must be tracked, or a clone cannot audit what was published")
-    assert not ignored("forecasts/published/2025-08-06/forecast.csv")
+    assert ignored("forecasts/published/2025-08-06/estimators/manifest.json")
+    assert ignored("forecasts/published/2025-08-06/forecast.csv"), (
+        "forecast.csv carries row-level Treasury figures and must not be tracked")
+
+    # The rule must not have been widened into the aggregate artifacts, which are the only
+    # thing a clone can still read.
+    assert not ignored("forecasts/scorecard.csv")
+    assert not ignored("registry/recipes.json")
 
 
-def test_the_divergence_from_the_csv_rule_is_documented_where_it_is_made():
-    """Both the code and the ignore file must say why this one artifact is untracked."""
+def test_why_the_blobs_can_never_be_tracked_is_documented_where_the_rule_is_made():
+    """Both the code and the ignore file must carry the reason, not just the rule.
+
+    The reason outlives the rule it was written for: it is the argument that would have to be
+    defeated before an estimator could ever be committed, and it survives the 2026-08-15 change
+    that absorbed the blob carve-out into a broader one.
+    """
     src = (BACKEND / "estimator_store.py").read_text()
     assert "cannot be scrubbed" in src
     assert "World Bank" in src
 
     ig = (REPO / ".gitignore").read_text()
-    section = ig.split("!forecasts/scorecard.csv", 1)[1]
-    assert "diverges" in section and "estimators" in section
+    section = ig.split("forecasts/published/\n", 1)[0]
+    assert "CANNOT be scrubbed" in section, (
+        "the blob reasoning must sit with the rule that now covers it")
+    assert "World Bank" in section
+    assert "must stay ignored on their own merits" in section, (
+        "the ignore file must say the blob rule stands independently of the CSV rule")
 
 
 def test_the_production_runner_only_publishes_when_asked():
