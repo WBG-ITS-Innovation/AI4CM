@@ -416,14 +416,34 @@ def publish_official(result, *, published_root: Optional[Path] = None,
             "Refusing to publish an exploratory forecast. Exploratory runs are not gated, carry "
             "no recipe credentials, and must never enter forecasts/published/ or the scorecard.")
 
+    import shutil
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from estimator_store import _slug          # same target->path rule the blobs already use
     from forward_forecast import DEFAULT_OUT, write_artifacts
     from published_forecasts import publish
 
-    src = Path(forward_dir or DEFAULT_OUT)
+    # Staged per target, NEVER in the shared working directory. This used to write straight to
+    # DEFAULT_OUT, so publishing one target overwrote the run holding all three -- and the
+    # forward artifact is read by the treasury report, the insights narrative and the Forecast
+    # page, none of which are publishing anything. Publishing Revenues silently deleted the
+    # Expenditure and State-budget-balance numbers those surfaces were displaying, which cost
+    # three test failures in the 2026-08-15 session before the cause was found.
+    #
+    # Keyed on issue date AND target because a single issue is published one target at a time;
+    # a shared staging directory would just move the same collision one level down.
+    src = Path(forward_dir) if forward_dir else (
+        DEFAULT_OUT.parent / "staging" / f"{issue_date or 'origin'}--{_slug(result.target)}")
+    staged_here = forward_dir is None
+    if staged_here and src.exists():
+        shutil.rmtree(src)
+
     write_artifacts(src, result.forecasts, result.provenance, result.gates)
     dest = publish(src, issue_date=issue_date, published_root=published_root)
+    if staged_here:
+        # Removed only on success. A failed publish leaves the staging directory in place,
+        # because that is exactly when someone needs to look at what was about to go out.
+        shutil.rmtree(src, ignore_errors=True)
 
     # Retain what produced the numbers. Nothing under a published issue is tracked any more --
     # see estimator_store's module docstring, and the .gitignore section that absorbed it.
