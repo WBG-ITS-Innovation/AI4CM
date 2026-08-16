@@ -71,24 +71,45 @@ def describe_input(data_path: str | Path, date_col: str = "date") -> Dict[str, A
     return info
 
 
-def _git(*args: str) -> Optional[str]:
+def _git(*args: str, allow_empty: bool = False,
+         cwd: Optional[Path] = None) -> Optional[str]:
+    """Run a git command; ``None`` means "could not be answered".
+
+    ``allow_empty`` exists because for one caller -- ``git status --porcelain`` -- empty
+    output IS the answer, and the default conflates it with failure. Every other caller here
+    asks a question whose empty answer is meaningless (a SHA, a branch name), so the default
+    stays as it was.
+    """
     try:
-        out = subprocess.run(("git", *args), capture_output=True, text=True,
-                             timeout=10, cwd=str(Path(__file__).resolve().parent))
-        return out.stdout.strip() or None if out.returncode == 0 else None
+        out = subprocess.run(("git", *args), capture_output=True, text=True, timeout=10,
+                             cwd=str(cwd or Path(__file__).resolve().parent))
     except Exception:                   # noqa: BLE001
         return None
+    if out.returncode != 0:
+        return None
+    text = out.stdout.strip()
+    return text if (text or allow_empty) else None
 
 
-def describe_code() -> Dict[str, Any]:
-    """Git SHA, dirty flag and branch, so a run maps to a state of the repo."""
-    sha = _git("rev-parse", "HEAD")
-    dirty = _git("status", "--porcelain")
+def describe_code(repo: Optional[Path] = None) -> Dict[str, Any]:
+    """Git SHA, dirty flag and branch, so a run maps to a state of the repo.
+
+    ``git_dirty`` is tri-state: ``True`` dirty / ``False`` clean / ``None`` not answerable
+    (no git, not a repo). Until 2026-08-15 the third state swallowed the second: ``_git``
+    returned ``None`` for an empty stdout, so a CLEAN tree read as "unknown" and ``False``
+    was unreachable. The bug survived because the only test asserted the keys existed rather
+    than what they said, and because the dirty path -- the one that actually gets exercised
+    during development -- was correct throughout.
+
+    ``repo`` overrides the working directory, so the three states can be driven against real
+    throwaway repositories in a test rather than mocked.
+    """
+    dirty = _git("status", "--porcelain", allow_empty=True, cwd=repo)
     return {
-        "git_sha": sha,
-        "git_branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
+        "git_sha": _git("rev-parse", "HEAD", cwd=repo),
+        "git_branch": _git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo),
         # A dirty tree means the SHA alone does not identify what ran.
-        "git_dirty": bool(dirty) if dirty is not None else None,
+        "git_dirty": None if dirty is None else bool(dirty),
         "git_dirty_files": len(dirty.splitlines()) if dirty else 0,
     }
 
