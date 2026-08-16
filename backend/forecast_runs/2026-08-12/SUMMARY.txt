@@ -1,0 +1,51 @@
+AI4CM Daily Forecast Summary
+========================================
+Run date:   2026-08-12
+Data file:  master_daily_clean_treasury.csv
+Latest data date: 2025-08-06 (371 day(s) before run date 2026-08-12)
+WARNING: data appears STALE (older than 3 day(s)) — forecasts may be based on out-of-date inputs.
+Target: State budget balance | Cadence: Daily | Horizon: 5
+Families requested: A_STAT, B_ML, E_QUANTILE
+
+[A_STAT]
+  Models run: Persistence (baseline), ETS
+  Best model: WITHHELD — run_status=FAILED_QUALITY; forecast is persistence-like (shift diagnostic), not usable; ETS (MAE 189,930,654) for diagnosis only
+  Skill vs persistence: -0.00%
+  Run status: FAILED_QUALITY
+  Quality gate: FAILED (run_status=FAILED_QUALITY; forecast is persistence-like (shift diagnostic))
+  Leakage flag: none
+    - pipeline: n/a (not produced)
+    - summary check (origin_date >= target_date): none
+  Shift flag: YES
+    - pipeline: n/a (not produced)
+    - summary check (detect_lagged_copy): Model 'ETS': predictions align best with y shifted by +3 (corr 0.91 vs 0.77 at shift 0), and do not beat the lag-1 baseline (MAE 189930654.06 vs 69200046.84) — likely a lagged copy (persistence only).
+
+[B_ML]
+  Models run: ⚡ Persistence (baseline), XGBoost_L1, CatBoost_L1, CatBoost_Quantile, HistGBDT_L1, LightGBM_L1, Lasso, Ridge, ElasticNet, ExtraTrees, RandomForest, XGBoost, HistGBDT, LightGBM
+  Best model: WITHHELD — forecast is persistence-like (shift diagnostic), not usable; Lasso (MAE 177,659,924) for diagnosis only
+  Skill vs persistence: 6.46%
+  Run status: SUCCESS
+  Quality gate: FAILED (forecast is persistence-like (shift diagnostic))
+  Leakage flag: none
+    - pipeline: none
+    - summary check (origin_date >= target_date): none
+  Shift flag: YES
+    - pipeline: Persistence-like (best_shift≈-h=-5, compare vs persistence baseline)
+    - summary check (detect_lagged_copy): Model 'CatBoost_L1': predictions align best with y shifted by +3 (corr 0.90 vs 0.80 at shift 0), and do not beat the lag-1 baseline (MAE 163156924.58 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'CatBoost_Quantile': predictions align best with y shifted by +3 (corr 0.90 vs 0.80 at shift 0), and do not beat the lag-1 baseline (MAE 163156924.58 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'ElasticNet': predictions align best with y shifted by +3 (corr 0.91 vs 0.77 at shift 0), and do not beat the lag-1 baseline (MAE 183208870.97 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'ExtraTrees': predictions align best with y shifted by +3 (corr 0.89 vs 0.76 at shift 0), and do not beat the lag-1 baseline (MAE 185006935.89 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'HistGBDT': predictions align best with y shifted by +3 (corr 0.84 vs 0.71 at shift 0), and do not beat the lag-1 baseline (MAE 208544787.36 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'HistGBDT_L1': predictions align best with y shifted by +3 (corr 0.91 vs 0.78 at shift 0), and do not beat the lag-1 baseline (MAE 173314893.90 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'Lasso': predictions align best with y shifted by +3 (corr 0.90 vs 0.77 at shift 0), and do not beat the lag-1 baseline (MAE 177659923.87 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'LightGBM': predictions align best with y shifted by +3 (corr 0.82 vs 0.69 at shift 0), and do not beat the lag-1 baseline (MAE 221161054.84 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'LightGBM_L1': predictions align best with y shifted by +3 (corr 0.90 vs 0.78 at shift 0), and do not beat the lag-1 baseline (MAE 174269387.00 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'RandomForest': predictions align best with y shifted by +3 (corr 0.87 vs 0.73 at shift 0), and do not beat the lag-1 baseline (MAE 201809243.60 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'Ridge': predictions align best with y shifted by +3 (corr 0.90 vs 0.77 at shift 0), and do not beat the lag-1 baseline (MAE 177777087.58 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'XGBoost': predictions align best with y shifted by +3 (corr 0.86 vs 0.73 at shift 0), and do not beat the lag-1 baseline (MAE 208204590.29 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'XGBoost_L1': predictions align best with y shifted by +3 (corr 0.91 vs 0.80 at shift 0), and do not beat the lag-1 baseline (MAE 162834620.04 vs 69200046.84) — likely a lagged copy (persistence only).
+
+[E_QUANTILE]
+  Models run: ResidualRF, LGBMQuantile, GBQuantile
+  Best model: WITHHELD — forecast is persistence-like (shift diagnostic), not usable; GBQuantile (MAE 139,106,957) for diagnosis only
+  Skill vs persistence: 26.76%
+  Run status: SUCCESS
+  Quality gate: FAILED (forecast is persistence-like (shift diagnostic))
+  Leakage flag: none
+    - pipeline: n/a (not produced)
+    - summary check (origin_date >= target_date): none
+  Shift flag: YES
+    - pipeline: Persistence-like (best_shift≈-h=-5, compare vs persistence baseline)
+    - summary check (detect_lagged_copy): Model 'GBQuantile': predictions align best with y shifted by +3 (corr 0.91 vs 0.85 at shift 0), and do not beat the lag-1 baseline (MAE 139106956.86 vs 69200046.84) — likely a lagged copy (persistence only).; Model 'LGBMQuantile': predictions align best with y shifted by +3 (corr 0.91 vs 0.85 at shift 0), and do not beat the lag-1 baseline (MAE 137973357.45 vs 69200046.84) — likely a lagged copy (persistence only).
+
+----------------------------------------
+Overall: 3/3 families produced output.
+Flags raised: 0 leakage, 3 shift, 3 quality, data STALE.
