@@ -425,13 +425,19 @@ def publish_official(result, *, published_root: Optional[Path] = None,
     write_artifacts(src, result.forecasts, result.provenance, result.gates)
     dest = publish(src, issue_date=issue_date, published_root=published_root)
 
-    # Retain what produced the numbers. The blobs are gitignored and the manifest is not -- see
-    # estimator_store's module docstring for why this one published artifact is not tracked.
+    # Retain what produced the numbers. Nothing under a published issue is tracked any more --
+    # see estimator_store's module docstring, and the .gitignore section that absorbed it.
     if getattr(result, "estimators", None):
         from estimator_store import save_estimators
+        from published_forecasts import retain_to_vault
         origin = pd.DatetimeIndex(pd.to_datetime(result.forecasts["origin_date"]).unique())
         save_estimators(dest, result.estimators, keep_index=origin,
                         provenance=result.provenance)
+        # The blobs land AFTER publish() mirrored the issue, so the vault copy is a directory
+        # short until this re-sync. retain_to_vault is idempotent, so this is a cheap repeat
+        # rather than a second, differently-shaped write path.
+        if published_root is None:
+            retain_to_vault(dest)
     return dest
 
 
