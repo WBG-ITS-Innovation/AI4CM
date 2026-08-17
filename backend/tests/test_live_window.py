@@ -356,3 +356,116 @@ def test_a_scored_live_row_is_labelled_live(tmp_path):
     sc = pd.read_csv(tmp_path / "sc.csv")
     assert sc["scored_in_window"].tolist() == ["live"], sc["scored_in_window"].tolist()
     assert sc["persistence_source"].tolist() == ["artifact: origin_value"]
+
+
+# ── B_ML's holdout read reaches the ledger ───────────────────────────────────
+#
+# The last of the four families to be wired up. A_STAT and C_DL were done in P1, E_QUANTILE on
+# 2026-08-17; B_ML was the remaining gap (docs/sessions/2026-08-17-interval-calibration.md §7
+# item 5) and it was not theoretical. Measured before the fix: `experiments/test_access.log`
+# held 148 entries -- 16 naming A_STAT, 121 naming C_DL, 9 naming E_QUANTILE and **zero**
+# naming B_ML -- while both logged B_ML runs had evaluated target dates 2025-01-01..2025-08-06,
+# the sealed window end to end.
+
+def _b_ml_synthetic_csv(tmp_path, seed=0):
+    """A flow series spanning TRAIN through the holdout's last day."""
+    idx = pd.bdate_range("2015-01-05", TEST_END)
+    rng = np.random.default_rng(seed)
+    csv = tmp_path / "b_ml_synthetic.csv"
+    pd.DataFrame({"date": idx,
+                  "Revenues": 1e8 + np.cumsum(rng.normal(0, 1e6, len(idx)))}).to_csv(csv,
+                                                                                     index=False)
+    return csv
+
+
+def test_the_default_b_ml_fold_geometry_lands_squarely_on_the_holdout():
+    """Why the ledger call is needed at all, asserted on the fold builder rather than described.
+
+    The daily runner passes ``{"folds":1,"min_train_years":4}`` with no ``eval_start``, and
+    ``folds_override`` keeps the LAST fold. On this index that fold is train<=2024-12-31 /
+    test 2025-01-01..2025-08-06 -- nothing but the sealed holdout.
+    """
+    from b_ml_pipeline import build_yearly_folds
+
+    idx = pd.bdate_range("2015-01-05", TEST_END)
+    folds = build_yearly_folds(idx, 4, 1)                    # exactly the daily runner's config
+    assert len(folds) == 1
+    _train_end, test_start, test_end = folds[0]
+    assert {window_for(t) for t in idx[(idx >= test_start) & (idx <= test_end)]} == {"test"}, (
+        "the default daily fold should be entirely holdout -- if this changes, the ledger call's "
+        "justification changes with it")
+
+
+def test_b_ml_logs_its_holdout_read_as_a_report(tmp_path, monkeypatch):
+    """The read is announced, and announced as a *report* rather than a selection.
+
+    Reporting on the holdout is what the holdout is for, so ``require_test_access`` records and
+    returns. Crowning a champion from those same rows is a selection and is refused separately --
+    which is why this run is expected to raise. The ledger call happens at fold construction,
+    well before that point, and that ordering is the property under test: the read is announced
+    when it starts, not after it has finished.
+    """
+    import evaluation_windows as ew
+    from b_ml_pipeline import ConfigBML, run_pipeline_ml
+
+    calls = []
+
+    def spy(reason, caller=None, purpose=ew.PURPOSE_SELECTION):
+        calls.append({"reason": reason, "caller": caller, "purpose": purpose})
+
+    monkeypatch.setattr(ew, "require_test_access", spy)
+
+    cfg = ConfigBML(data_path=str(_b_ml_synthetic_csv(tmp_path)), date_col="date",
+                    target="Revenues", cadence="Daily", horizon=5, variant="uni",
+                    model_filter="Ridge", out_root=str(tmp_path / "out"),
+                    folds=1, min_train_years=4)
+    with pytest.raises(SelectionOnReportOnlyDataError):
+        run_pipeline_ml(cfg)
+
+    assert calls, "B_ML evaluated the holdout and the ledger was not told"
+    assert any(c["purpose"] == ew.PURPOSE_REPORT for c in calls), (
+        "a reporting read must be logged as a report, not as a selection")
+    assert any("B_ML" in (c["reason"] or "") for c in calls), (
+        "the entry must name the family, so the ledger can be counted per family")
+    assert any(c["caller"] == "b_ml_pipeline.run_pipeline_ml" for c in calls)
+    reason = next(c["reason"] for c in calls if c["purpose"] == ew.PURPOSE_REPORT)
+    assert "2025-01-01" in reason and str(TEST_END) in reason, (
+        f"the entry must say which dates were read; got {reason!r}")
+
+
+def test_a_dev_pinned_b_ml_run_does_not_claim_a_holdout_read(tmp_path, monkeypatch):
+    """No false positives. A run bounded to DEV touches no holdout row, so the ledger stays quiet.
+
+    This is the half that keeps the ledger meaningful: a call on every run regardless of window
+    would make "how often was the holdout consulted" unanswerable again, just noisily this time.
+    """
+    import evaluation_windows as ew
+    from b_ml_pipeline import ConfigBML, run_pipeline_ml
+
+    calls = []
+    monkeypatch.setattr(ew, "require_test_access",
+                        lambda reason, caller=None, purpose=ew.PURPOSE_SELECTION:
+                        calls.append(purpose))
+
+    cfg = ConfigBML(data_path=str(_b_ml_synthetic_csv(tmp_path, seed=3)), date_col="date",
+                    target="Revenues", cadence="Daily", horizon=5, variant="uni",
+                    model_filter="Ridge", out_root=str(tmp_path / "out"),
+                    folds=1, min_train_years=4,
+                    eval_start=DEV.start, eval_end=DEV.end)
+    run_pipeline_ml(cfg)       # crowning on DEV rows is legitimate, so this completes
+
+    assert not calls, f"a DEV-only run must not record a holdout read; got {calls}"
+
+
+def test_a_selection_purpose_read_of_the_holdout_still_raises():
+    """The ledger call B_ML makes is a report. The selection door stays shut and stays loud."""
+    from evaluation_windows import PURPOSE_REPORT, PURPOSE_SELECTION, require_test_access
+
+    # A report records and returns, whatever the environment says.
+    require_test_access("unit check: reporting read", caller="test_live_window",
+                        purpose=PURPOSE_REPORT)
+
+    # A selection read raises unless the holdout has been deliberately released.
+    with pytest.raises(HoldoutAccessError):
+        require_test_access("unit check: selection read", caller="test_live_window",
+                            purpose=PURPOSE_SELECTION)
