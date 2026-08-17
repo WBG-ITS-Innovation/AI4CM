@@ -7,6 +7,38 @@ are the ones a cash buffer exists for, so an average that hides them is the wron
 on.
 
 --------------------------------------------------------------------------------
+THOSE FIGURES WERE MEASURED WRONG. WHAT "LARGEST" MAY BE DEFINED BY
+--------------------------------------------------------------------------------
+The numbers in the paragraph above bucketed days by the **realised actual**, ``|y|``. That
+conditions coverage on the outcome, and it depresses coverage mechanically — for a *correct*
+band, not only a broken one. Measured control, in ``test_conformal.py`` so it cannot rot: draw
+actuals from a known distribution, set the band to that distribution's exact 10th and 90th
+percentiles so its true coverage is 80% **by construction**, then score it both ways.
+
+    perfect 80% band            overall   top decile by |y|   top decile by |forecast|
+    constant noise                79.9%              69.0%                      79.7%
+    noise varies by day           80.0%          **37.8%**                      79.5%
+
+A flawless band reads 37.8%. Conditioning on ``|y|`` selects the days whose actual landed in
+its own upper tail — days *defined* by having exceeded the forecast — so nothing can score
+1-alpha there. On the sealed window the same reversal shows up on real bands: re-scoring the
+identical intervals by a forecast-time-knowable magnitude moved median top-decile coverage from
+**43.8% to 87.5%**, and the big-day misses were one-sided (one lower-edge miss in 31
+model-target cells; all the rest burst through the top), which is the signature of
+outcome-selection rather than of a band that is too narrow.
+
+So the bucketing basis must be **knowable at the moment the band is issued**: the predicted
+level, the predicted change, or trailing volatility. It may never be the actual. Passing the
+actual is not a judgement call the caller gets to make — ``conditional_coverage_gate`` raises
+``OutcomeConditionedCoverageError`` rather than return a number that looks like a defect.
+
+This matters beyond tidiness: the broken metric already drove a real decision. WS7 deferred the
+trailing-volatility work on the strength of "Expenditure largest third 9.6%"
+(``reports/ws7_selection_and_cqr.md``), and widening bands until that figure reached 80% would
+have inflated them without limit, because on outcome-selected days the achievable ceiling is
+far below nominal.
+
+--------------------------------------------------------------------------------
 CQR — WHAT IT DOES AND WHAT IT ASSUMES
 --------------------------------------------------------------------------------
 Split-conformal quantile regression (Romano, Patterson & Candès 2019). Fit the quantile models on
@@ -62,6 +94,43 @@ TERCILES = ("smallest third", "middle third", "largest third")
 #: in *every* bucket on a 262-row window would be gated on noise. 60% is the level below which a
 #: band stops being usable for planning at all -- it fails more often than two days in five.
 CONDITIONAL_FLOOR = 0.60
+
+
+class OutcomeConditionedCoverageError(RuntimeError):
+    """Coverage was about to be bucketed by a quantity known only after the fact.
+
+    Deliberately not overridable. There is no flag, because there is no legitimate reading of
+    "coverage on the largest days" in which "largest" means *largest as it turned out*: the
+    band is issued before the actual exists, so a bucket the actual defines is not a bucket
+    anyone can act on. See the control experiment in the module docstring for the size of the
+    distortion (a provably perfect band reads 37.8%).
+    """
+
+
+def _refuse_outcome_basis(y: np.ndarray, basis: np.ndarray, param: str) -> None:
+    """Raise if ``basis`` is the actual, or its absolute value, in disguise.
+
+    A cheap elementwise identity check, not a statistical test -- it catches the mistake that
+    was actually made (``magnitude=y`` and ``magnitude=np.abs(y)`` at every call site in
+    ``ws7_cqr.py`` and ``test_conformal.py``) without pretending to detect subtler leakage. A
+    basis that merely *correlates* with the actual is fine and expected: a good forecast
+    correlates with what it forecasts.
+    """
+    yv = np.asarray(y, dtype=float)
+    bv = np.asarray(basis, dtype=float)
+    if bv.shape != yv.shape:
+        return
+    ok = np.isfinite(yv) & np.isfinite(bv)
+    if not ok.any():
+        return
+    if np.array_equal(bv[ok], yv[ok]) or np.array_equal(bv[ok], np.abs(yv[ok])):
+        raise OutcomeConditionedCoverageError(
+            f"{param} is the realised actual (or its absolute value), so this would measure "
+            f"coverage conditional on the outcome. A band that is correct by construction "
+            f"scores as low as 37.8% under that conditioning, so the resulting number would "
+            f"read as a band defect that is not there. Pass a magnitude knowable when the band "
+            f"was issued instead -- the predicted level, the predicted change from the origin, "
+            f"or trailing volatility.")
 
 
 # ── conformity scores and the correction ──────────────────────────────────────
@@ -242,7 +311,7 @@ def volatility_terciles(vol: np.ndarray) -> np.ndarray:
 
 
 def conditional_coverage_gate(y: np.ndarray, lo: np.ndarray, hi: np.ndarray,
-                              magnitude: np.ndarray,
+                              magnitude_at_origin: np.ndarray,
                               volatility: Optional[np.ndarray] = None,
                               floor: float = CONDITIONAL_FLOOR,
                               nominal: float = 1.0 - DEFAULT_ALPHA,
@@ -253,13 +322,23 @@ def conditional_coverage_gate(y: np.ndarray, lo: np.ndarray, hi: np.ndarray,
     covering 83% overall and 9.6% of the largest days passed it -- and the largest days are the
     ones the band exists for.
 
+    ``magnitude_at_origin`` must be knowable when the band is issued -- the predicted level, the
+    predicted change, or trailing volatility. It was called ``magnitude`` and every caller fed it
+    the realised actual, which measures coverage conditional on the outcome and understates a
+    correct band by tens of points (module docstring). The parameter is renamed rather than
+    merely documented so that every existing call site has to be looked at, and
+    :func:`_refuse_outcome_basis` rejects the actual outright.
+
     Every bucket is reported whether it passes or not, on both axes. Buckets thinner than
     ``min_bucket_n`` are reported and excluded from the verdict rather than allowed to fail it on
     a handful of rows; if that leaves nothing to judge, the verdict is ``None`` (never verified),
     never a pass.
     """
-    mag_b = assign_terciles_by_edges(np.asarray(magnitude, dtype=float),
-                                     tercile_edges(magnitude))
+    _refuse_outcome_basis(y, magnitude_at_origin, "magnitude_at_origin")
+    if volatility is not None:
+        _refuse_outcome_basis(y, volatility, "volatility")
+    mag_b = assign_terciles_by_edges(np.asarray(magnitude_at_origin, dtype=float),
+                                     tercile_edges(magnitude_at_origin))
     buckets = {"magnitude": coverage_by_bucket(y, lo, hi, mag_b)}
     if volatility is not None:
         buckets["volatility"] = coverage_by_bucket(y, lo, hi,
@@ -301,7 +380,12 @@ def conditional_coverage_gate(y: np.ndarray, lo: np.ndarray, hi: np.ndarray,
     return {"passed": passed, "floor": float(floor), "nominal": float(nominal),
             "overall_coverage": overall, "buckets": buckets,
             "n_failing_buckets": len(failures), "n_judged_buckets": len(judged),
-            "thin_buckets": thin, "reason_plain": reason}
+            "thin_buckets": thin, "reason_plain": reason,
+            # Stamped so a corrected figure is distinguishable from a pre-fix one on sight. Every
+            # number this project published before the fix was bucketed by the actual, and the
+            # two are not comparable -- a reader finding an old 9.6% next to a new 87.5% needs to
+            # see that they answer different questions, not that the band changed.
+            "bucketing_basis": "forecast-time (magnitude knowable at the origin)"}
 
 
 # ── per-target selection rule ─────────────────────────────────────────────────

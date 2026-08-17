@@ -151,10 +151,43 @@ def test_an_unmeasured_gate_is_none_not_true():
 
 
 def test_absent_coverage_is_not_a_failure():
-    """Point models report no intervals; that is not a defect."""
-    g = evaluate_gates(Measured(target="X", mase=0.5, sentinel_ratio=2.0))["coverage"]
+    """A point model reports no intervals; that is not a defect."""
+    g = evaluate_gates(Measured(target="X", mase=0.5, sentinel_ratio=2.0,
+                                has_intervals=False))["coverage"]
     assert g["passed"] is None
     assert "no prediction intervals" in g["reason_plain"]
+
+
+def test_a_published_band_that_was_never_scored_is_reported_as_a_gap():
+    """The hole this closes: a band nobody measured used to read like a point model.
+
+    All three live recipes carry ``interval_model: GBQuantile`` and ship p10/p90, yet every one
+    of their coverage gates said "reports no prediction intervals" -- so a miscalibrated band
+    could not reach a verdict and the omission appeared nowhere.
+    """
+    out = decide(Measured(target="X", mase=0.5, sentinel_ratio=2.0, leakage_detected=False,
+                          persistence_mimicry=False, overfit_ratio=1.0, has_intervals=True))
+    g = out["gates"]["coverage"]
+    assert g["passed"] is None, "unmeasured must never read as a pass"
+    assert "no prediction intervals" not in g["reason_plain"], (
+        "a model that DOES publish a range must not be described as having none")
+    assert "was not measured" in g["reason_plain"]
+    assert "coverage" in out["unmeasured_gates"], (
+        "an unscored published band must appear as an unmeasured gate, not as silence")
+
+
+def test_a_point_model_does_not_appear_to_be_missing_a_coverage_measurement():
+    """The other half: excluding coverage must still happen when there is nothing to measure."""
+    out = decide(Measured(target="X", mase=0.5, sentinel_ratio=2.0, leakage_detected=False,
+                          persistence_mimicry=False, overfit_ratio=1.0, has_intervals=False))
+    assert "coverage" not in out["unmeasured_gates"]
+
+
+def test_unknown_interval_status_is_reported_rather_than_assumed():
+    out = decide(Measured(target="X", mase=0.5, sentinel_ratio=2.0))
+    assert out["gates"]["coverage"]["passed"] is None
+    assert "coverage" in out["unmeasured_gates"], (
+        "not knowing whether a band exists is a gap, not a point model")
 
 
 def test_a_run_with_nothing_measured_is_not_publishable_by_default():

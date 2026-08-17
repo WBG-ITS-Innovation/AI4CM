@@ -1,5 +1,30 @@
 # Workstream 7 — conformalised intervals, a conditional-coverage gate, and the selection rule
 
+> ## ⚠️ CORRECTION, 2026-08-17 — the per-tercile figures below are measured wrongly
+>
+> Every "largest third" number in this report buckets days by the **realised actual**, `|y|`.
+> That conditions coverage on the outcome, which depresses it mechanically — for a *correct*
+> band as much as for a broken one. Control experiment (`backend/conformal.py`, pinned in
+> `test_conformal.py`): a band set to the exact 10th and 90th percentiles of the distribution
+> the actual is drawn from, so its true coverage is **80% by construction**, reads **69.0%** on
+> the top decile by `|y|` when noise is constant and **37.8%** when noise varies by day.
+>
+> Re-scoring identical sealed-window bands on a forecast-time basis moved median top-decile
+> coverage from **43.8% to 87.5%** across 31 model×target cells, and the big-day misses were
+> one-sided (one lower-edge miss in 31 cells; all the rest burst through the top) — the
+> signature of outcome-selection, not of a band that is too narrow.
+>
+> **What this changes.** The conclusion in *"Why CQR cannot fix this"* — that a large residual
+> conditional defect remains and Part 5d is needed to close it — rests on the broken metric and
+> overstates the gap. The section on **marginal** coverage stands: those figures do not depend on
+> bucketing, and CQR's measured effect on them is real and has since been reproduced.
+> `scripts/ws7_cqr.py` now buckets on the p50 and the gate refuses an outcome-derived basis
+> outright, so re-running this study produces corrected terciles.
+>
+> The genuine defect that survives correction is **marginal under-coverage on the stock target**:
+> 73.7% / 66.7% / 53.8% against a nominal 80% for GBQuantile / LGBMQuantile / ResidualRF on the
+> sealed window. See `docs/sessions/2026-08-17-interval-calibration.md`.
+
 **Date:** 2026-08-05 · **Data SHA-256:** `0b009fd0…5361f1` · **Calendar version:** `4b480eae9c8f`
 **TEST (2025) reads: 0** — everything below is TRAIN-calibrated and DEV-scored.
 All figures traced to logged runs (`study: ws7_cqr`); reproduce with `scripts/ws7_cqr.py`.

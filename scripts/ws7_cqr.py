@@ -83,15 +83,23 @@ def main() -> int:
         lo2, hi2 = widen(cal_t)
 
         vol = trailing_vol(s).reindex(f.X_te.index).to_numpy(dtype=float)
-        edges = tercile_edges(y)
-        mb = assign_terciles_by_edges(y, edges)
+
+        # "A big day" is defined by the FORECAST, never by the actual. The earlier version of
+        # this script bucketed on `y` on both axes, which conditions coverage on the outcome and
+        # depresses it for a correct band as much as for a broken one -- the 9.6% figure in
+        # reports/ws7_selection_and_cqr.md is measured that way and overstates the defect.
+        # The p50 is the band's own central estimate, so it is available at the origin.
+        mag_origin = np.abs(np.asarray(qp[0.50], dtype=float))
+        edges = tercile_edges(mag_origin)
+        mb = assign_terciles_by_edges(mag_origin, edges)
 
         res = {"target": target, "model": model, "crossings": ncross,
                "n": int(len(y)), "cal_n": int(len(cal_ix)),
                "width_global": cal_g.width, "cal_note": cal_t.note}
         for tag, (lo, hi) in (("before", (lo0, hi0)), ("cqr_global", (lo1, hi1)),
                               ("cqr_grouped", (lo2, hi2))):
-            g = conditional_coverage_gate(y, lo, hi, magnitude=y, volatility=vol)
+            g = conditional_coverage_gate(y, lo, hi, magnitude_at_origin=mag_origin,
+                                          volatility=vol)
             cb = coverage_by_bucket(y, lo, hi, mb)
             res[f"{tag}_overall"] = g["overall_coverage"]
             res[f"{tag}_gate"] = g["passed"]

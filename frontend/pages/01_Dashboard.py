@@ -22,7 +22,7 @@ from ui_styles import (
 from format_gel import (NOT_REPORTED, NOT_VERIFIED, UNIT_LABEL, gel_millions,
                         is_missing, number, pct, pct_points)
 from intervals import (calibration_verdict, coverage_by_model, coverage_by_tercile,
-                       detect_intervals, reliability_curve)
+                       detect_intervals, magnitude_basis, reliability_curve)
 
 APPROOT = Path(__file__).resolve().parents[1]
 REPOROOT_BACKEND = APPROOT.parent / "backend"
@@ -956,19 +956,22 @@ with tab_intervals:
                 "record what level the range advertises, so there is nothing to compare "
                 "the measurement against."), unsafe_allow_html=True)
 
-            # ── per-magnitude-tercile coverage: the known product defect ──────
+            # ── coverage by day size, grouped on what was known at the origin ──
+            _basis_col, _basis_label = magnitude_basis(df_t, _ispec)
             st.markdown(section_header(
                 "Coverage on small, middle and large days",
-                "The project's biggest known weakness — shown, not hidden"),
+                f"Day size measured by {_basis_label} — known before the day happened"),
                 unsafe_allow_html=True)
             terc = coverage_by_tercile(df_t, _ispec, model=_mdl)
             if terc.empty:
                 st.markdown(
                     empty_state(
-                        "Not enough spread in actual values to split into three groups.",
+                        ("Not enough spread in day size to split into three groups."
+                         if _basis_col else
+                         "Days cannot be grouped by size for this run: " + _basis_label + "."),
                         filename="predictions_long.csv",
                         looked_in=str(base_dir),
-                        command="Needs at least 6 scored rows with varying magnitudes"),
+                        command="Needs at least 6 scored rows and a forecast or opening level"),
                     unsafe_allow_html=True)
             else:
                 fig_t = go.Figure()

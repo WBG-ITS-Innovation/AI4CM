@@ -171,8 +171,10 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "describe a range rather than a point. Also unablated here."},
     "GBQuantile": {"family": "Quantile", "summary":
         "Gradient boosting with a pinball (quantile) loss — one model per quantile, giving a lower "
-        "edge, a middle and an upper edge. The bands it produces are this project's known weak "
-        "point: they are too narrow on the largest days."},
+        "edge, a middle and an upper edge. Its bands were long described here as too narrow on the "
+        "largest days. That description came from grouping days by how they turned out, which "
+        "understates any range; grouped instead by what was known before the day began, the bands "
+        "broadly hold up. The measured figures live in the run artifacts, not here."},
     "ResidualRF": {"family": "Quantile (residual)", "summary":
         "A random forest point forecast, with a band built from the spread of its own out-of-bag "
         "residuals. Distribution-free and cheap, but the band is the same shape everywhere, so it "

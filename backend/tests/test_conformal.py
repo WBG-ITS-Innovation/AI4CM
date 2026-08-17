@@ -122,18 +122,34 @@ def test_tercile_edges_come_from_calibration_and_are_reused():
 
 # ── the conditional-coverage gate ────────────────────────────────────────────
 
-def _band_that_misses_the_big_days(n=300):
-    y = np.linspace(1e8, 9e8, n)
-    p = y.copy()
-    p[200:] = y[200:] * 0.5
-    half = 0.05e8
-    return y, p - half, p + half
+def _band_that_misses_the_big_days(n=300, seed=11):
+    """A band with a GENUINE conditional defect, keyed to the forecast rather than the outcome.
+
+    The forecast rises steadily; the actual's dispersion around it rises with it. The band is a
+    constant width, so it is comfortable on quiet low days and hopeless on the days the forecast
+    itself says are large. Nothing here is keyed to how the day turned out, so the failure the
+    gate reports is one a forecaster could have seen coming.
+
+    The earlier fixture set the prediction to half the actual on the top third of ACTUALS and
+    bucketed on ``y``. That produced a failing gate, but it would have produced one for a
+    correct band too -- see ``test_a_perfect_band_is_not_reported_as_broken``.
+    """
+    rng = np.random.default_rng(seed)
+    fc = np.linspace(1e8, 9e8, n)                 # knowable at the origin
+    half = 0.25e8                                 # one width for every day: the defect
+    # Quiet on the lower two-thirds of forecast days, then dispersion climbs steeply. This is
+    # what makes the marginal figure look acceptable while the top bucket collapses -- the
+    # shape the real bands were accused of having.
+    ramp = np.clip((fc - np.quantile(fc, 2 / 3)) / (fc.max() - np.quantile(fc, 2 / 3)), 0, 1)
+    spread = 0.12e8 + 2.5e8 * ramp
+    y = fc + rng.normal(0, 1, n) * spread
+    return y, fc - half, fc + half, fc
 
 
 def test_gate_fails_the_band_a_marginal_gate_would_have_passed():
-    """The motivating case: healthy overall, catastrophic on the largest days."""
-    y, lo, hi = _band_that_misses_the_big_days()
-    g = conditional_coverage_gate(y, lo, hi, magnitude=y)
+    """The motivating case: healthy overall, catastrophic on the largest FORECAST days."""
+    y, lo, hi, fc = _band_that_misses_the_big_days()
+    g = conditional_coverage_gate(y, lo, hi, magnitude_at_origin=fc)
     assert g["overall_coverage"] > 0.6, "fixture should look acceptable on average"
     assert g["passed"] is False
     assert g["n_failing_buckets"] >= 1
@@ -143,17 +159,19 @@ def test_gate_fails_the_band_a_marginal_gate_would_have_passed():
 
 def test_gate_passes_a_band_that_holds_up_in_every_bucket():
     rng = np.random.default_rng(3)
-    y = np.concatenate([rng.normal(1e8, 1e7, 150), rng.normal(9e8, 9e7, 150)])
-    lo, hi = y - 3e8, y + 3e8
-    g = conditional_coverage_gate(y, lo, hi, magnitude=y)
+    fc = np.concatenate([np.full(150, 1e8), np.full(150, 9e8)])
+    y = fc + rng.normal(0, 1, 300) * 1e7
+    lo, hi = fc - 3e8, fc + 3e8
+    g = conditional_coverage_gate(y, lo, hi, magnitude_at_origin=fc)
     assert g["passed"] is True
     assert g["n_failing_buckets"] == 0
 
 
 def test_gate_reports_every_bucket_pass_or_fail():
-    y, lo, hi = _band_that_misses_the_big_days()
-    g = conditional_coverage_gate(y, lo, hi, magnitude=y,
-                                  volatility=np.abs(np.gradient(y)))
+    y, lo, hi, fc = _band_that_misses_the_big_days()
+    # Trailing dispersion of the forecast series: an origin-time quantity, like the pipeline's.
+    vol = pd.Series(fc).rolling(10, min_periods=2).std().shift(1).to_numpy()
+    g = conditional_coverage_gate(y, lo, hi, magnitude_at_origin=fc, volatility=vol)
     assert set(g["buckets"]) == {"magnitude", "volatility"}
     for axis in g["buckets"].values():
         assert len(axis) == 3, "all three buckets must be reported, not only failures"
@@ -168,8 +186,9 @@ def test_gate_scores_volatility_as_a_second_independent_axis():
     rng = np.random.default_rng(5)
     vol = np.concatenate([np.full(200, 1.0), np.full(100, 50.0)])
     y = rng.normal(0, 1, n) * vol
+    fc = np.zeros(n)                                # a flat forecast: benign on the magnitude axis
     lo, hi = np.full(n, -3.0), np.full(n, 3.0)      # fine at low vol, hopeless at high
-    g = conditional_coverage_gate(y, lo, hi, magnitude=np.abs(y), volatility=vol)
+    g = conditional_coverage_gate(y, lo, hi, magnitude_at_origin=fc, volatility=vol)
     vb = g["buckets"]["volatility"]
     assert vb[TERCILES[2]]["coverage"] < vb[TERCILES[0]]["coverage"]
     assert g["passed"] is False
@@ -177,7 +196,8 @@ def test_gate_scores_volatility_as_a_second_independent_axis():
 
 def test_gate_returns_never_verified_rather_than_a_pass_on_thin_data():
     y = np.array([1.0, 2.0, 3.0])
-    g = conditional_coverage_gate(y, y - 1, y + 1, magnitude=y, min_bucket_n=20)
+    fc = np.array([1.4, 1.9, 3.2])
+    g = conditional_coverage_gate(y, y - 1, y + 1, magnitude_at_origin=fc, min_bucket_n=20)
     assert g["passed"] is None, "too little data must never read as a pass"
     assert "not verified" in g["reason_plain"]
 
@@ -185,10 +205,11 @@ def test_gate_returns_never_verified_rather_than_a_pass_on_thin_data():
 def test_thin_buckets_are_excluded_from_the_verdict_not_failed():
     """A bucket with three rows should not decide a gate."""
     rng = np.random.default_rng(7)
-    y = np.concatenate([rng.normal(0, 1, 200), np.array([1e9, 1.1e9, 1.2e9])])
+    fc = np.concatenate([rng.normal(0, 1, 200), np.array([1e9, 1.1e9, 1.2e9])])
+    y = fc + rng.normal(0, 0.5, 203)
     lo, hi = y - 3.0, y + 3.0
     lo[-3:], hi[-3:] = 0.0, 1.0                     # the three big rows all miss
-    g = conditional_coverage_gate(y, lo, hi, magnitude=y, min_bucket_n=20)
+    g = conditional_coverage_gate(y, lo, hi, magnitude_at_origin=fc, min_bucket_n=20)
     assert any("largest third" in t for t in g["thin_buckets"]) or g["passed"] is not None
 
 

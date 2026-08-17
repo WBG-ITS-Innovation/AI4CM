@@ -113,27 +113,66 @@ def coverage_by_model(df: pd.DataFrame, spec: IntervalSpec) -> pd.DataFrame:
     return out.sort_values("coverage", ascending=False)
 
 
+#: Columns that may define "a big day", best first. Each is knowable at the forecast origin.
+#: ``y_true`` is deliberately absent -- see :func:`coverage_by_tercile`.
+_MAGNITUDE_BASES = (
+    ("yhat_p50", "the forecast for that day"),
+    ("y_pred", "the forecast for that day"),
+    ("origin_value", "the level the day started from"),
+)
+
+
+def magnitude_basis(df: pd.DataFrame, spec: IntervalSpec) -> Tuple[Optional[str], str]:
+    """Which column defines "a big day", and a plain-language name for it.
+
+    Returns ``(None, why)`` when the artifact carries nothing forecast-time to bucket on, so
+    the caller can say *not measurable* instead of quietly falling back to the actual.
+    """
+    if spec.mid and spec.mid in df.columns and df[spec.mid].notna().any():
+        return spec.mid, "the forecast for that day"
+    for col, label in _MAGNITUDE_BASES:
+        if col in df.columns and df[col].notna().any():
+            return col, label
+    return None, ("this artifact records no forecast and no opening level, so there is no way "
+                  "to group days by size using only what was known when the range was issued")
+
+
 def coverage_by_tercile(df: pd.DataFrame, spec: IntervalSpec,
                         model: Optional[str] = None) -> pd.DataFrame:
-    """Coverage split by |y_true| tercile — the project's biggest known product defect.
+    """Coverage split by day size, where size is measured **before** the day happens.
 
-    A band can look well calibrated on average while missing most of the largest days, and
-    the largest days are the ones a cash buffer exists for. So this is reported alongside the
-    overall figure rather than behind it.
+    This used to bucket on ``|y_true|``, and its docstring called the result "the project's
+    biggest known product defect". The result was largely an artifact of the bucketing. Grouping
+    by the realised actual selects, into the "largest" bucket, exactly those days whose actual
+    landed in the upper tail of its own predicted range — days *defined* by having exceeded the
+    forecast. A range that is correct by construction scores as low as **37.8%** in that bucket
+    (control experiment in ``backend/conformal.py`` and ``test_conformal.py``), so the low bars
+    this chart used to draw were substantially measuring their own definition.
+
+    Re-scoring identical sealed-window bands on a forecast-time basis moved median top-decile
+    coverage from 43.8% to 87.5%.
+
+    So days are grouped by a quantity known when the range was issued. Where the artifact has
+    no such column the frame comes back empty and the page says so, rather than reverting to the
+    actual and reporting a defect that is not there.
     """
     v = _valid(df, spec)
     if model is not None and "model" in v.columns:
         v = v[v["model"] == model]
+    empty = pd.DataFrame(columns=["tercile", "coverage", "n", "mean_magnitude"])
     if len(v) < 6:      # three buckets need enough rows to be meaningful at all
-        return pd.DataFrame(columns=["tercile", "coverage", "n", "mean_magnitude"])
+        return empty
+    basis, _ = magnitude_basis(v, spec)
+    if basis is None:
+        return empty
     try:
-        v = v.assign(_t=pd.qcut(v["y_true"].abs(), 3, labels=list(TERCILE_LABELS)))
+        v = v.assign(_t=pd.qcut(v[basis].abs(), 3, labels=list(TERCILE_LABELS)))
     except ValueError:
         # Degenerate magnitudes (too many ties) cannot be split into three buckets.
-        return pd.DataFrame(columns=["tercile", "coverage", "n", "mean_magnitude"])
+        return empty
     out = (v.groupby("_t", observed=False)
              .agg(coverage=("_covered", "mean"), n=("_covered", "size"),
-                  mean_magnitude=("y_true", lambda s: float(np.mean(np.abs(s)))))
+                  mean_magnitude=(basis, lambda s: float(np.mean(np.abs(s)))))
              .reset_index().rename(columns={"_t": "tercile"}))
     return out
 
