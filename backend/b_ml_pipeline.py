@@ -734,6 +734,33 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
     if cfg.eval_start or cfg.eval_end:
         print(f"[pipeline] Evaluation window bounded: "
               f"[{cfg.eval_start or 'start'} .. {cfg.eval_end or 'end'}] -> {len(folds)} fold(s)")
+
+    # The last of the four families to route its holdout read through the ledger. A_STAT and
+    # C_DL were fixed in P1, E_QUANTILE on 2026-08-17; B_ML was the remaining gap
+    # (docs/sessions/2026-08-17-interval-calibration.md §7 item 5).
+    #
+    # It was not a theoretical one. The daily runner passes {"folds":1,"min_train_years":4} with
+    # no `eval_start`, and `folds_override` keeps the LAST fold -- which on this index is
+    # train<=2024-12-31 / test 2025-01-01..2025-08-06, i.e. nothing but the sealed holdout. So
+    # every B_ML daily run evaluated the holdout end to end while `experiments/test_access.log`
+    # recorded zero B_ML reads against 16 for A_STAT and 121 for C_DL.
+    #
+    # Reporting on the holdout is legitimate -- it is what the holdout is for -- so this records
+    # rather than refuses. Fold construction chooses nothing. Crowning a champion from these rows
+    # IS a selection, and that is refused separately by `assert_selection_free` further down.
+    #
+    # `test_start`/`test_end` are TARGET dates here (positions below are target positions and the
+    # origin is `pos - h`), so the dates gated are the dates scored, with no conversion needed.
+    from evaluation_windows import PURPOSE_REPORT, require_test_access, window_for
+    _holdout = [t for (_tr_end, _ts, _te) in folds
+                for t in s.index[(s.index >= _ts) & (s.index <= _te)]
+                if window_for(t) == "test"]
+    if _holdout:
+        require_test_access(
+            f"B_ML reporting evaluation for {cfg.target!r} at h={cfg.horizon} covers "
+            f"{len(_holdout)} holdout target date(s) from {min(_holdout).date()} to "
+            f"{max(_holdout).date()}",
+            caller="b_ml_pipeline.run_pipeline_ml", purpose=PURPOSE_REPORT)
     lags, wins = choose_recipe(cfg)
     print(f"[pipeline] Recipe: lags={lags}, windows={wins}, "
           f"delta_modeling={cfg.use_delta_modeling}, is_stock={is_stock(cfg.target)}")
