@@ -507,6 +507,9 @@ def _cli() -> int:
     ap.add_argument("--model", default="")
     ap.add_argument("--publish", action="store_true",
                     help="official mode only; refused otherwise by publish_official()")
+    ap.add_argument("--issue-date", default="",
+                    help="official mode only; defaults to next_issue_date(), which "
+                         "avoids colliding with an existing issue")
     a = ap.parse_args()
 
     try:
@@ -518,7 +521,13 @@ def _cli() -> int:
                    "forecasts": _json.loads(res.forecasts.to_json(orient="records",
                                                                   date_format="iso"))}
             if a.publish:
-                out["published_to"] = str(publish_official(res))
+                # Without an explicit issue date `publish()` derives one from max(origin_date) --
+                # the end of the data, which on this dataset is 2025-08-06 and already has an
+                # issue. So `--publish` raised FileExistsError every time, and so did the
+                # Forecast page's "Publish ... under a new issue date" checkbox, which passes
+                # only this flag. `next_issue_date()` is what Session 2 did by hand.
+                out["published_to"] = str(publish_official(
+                    res, issue_date=a.issue_date or next_issue_date()))
         else:
             res = exploratory_run(a.target, a.model, Path(a.data), horizon=a.horizon)
             out = {"ok": True, "mode": res.mode, "target": res.target, "model": res.model,

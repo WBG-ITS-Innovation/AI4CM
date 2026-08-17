@@ -210,8 +210,17 @@ def publish(forward_dir: Path, issue_date: Optional[str] = None,
             vault_root=_VAULT_FROM_ROOT) -> Path:
     """Retain a forward run as an immutable published forecast, in both locations.
 
-    ``issue_date`` defaults to the origin date of the run, which is the honest label: it is
-    the last date whose data informed the forecast.
+    ``issue_date`` defaults to the origin date of the run — the last date whose data informed
+    the forecast.
+
+    **That default is a fallback, not the convention callers should rely on.** Because the
+    origin date is a property of the *data* rather than of the act of publishing, it is the
+    same date on every run until new data arrives, so the second publish from an unchanged
+    file collides: ``FileExistsError`` on ``forecasts/published/2025-08-06``, which is exactly
+    what ``forecast_modes._cli --publish`` hit on every invocation. Callers that publish
+    repeatedly should pass ``forecast_modes.next_issue_date()``, which is wall-clock and
+    suffixes a same-day re-issue. The origin date is not lost by doing so: it is a column in
+    ``forecast.csv`` and a field in the scorecard.
 
     **Both or neither.** The repo copy is gitignored, so publishing without retaining to the
     vault produces a forecast that exists only until the working tree is cleaned. If the vault
