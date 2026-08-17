@@ -292,3 +292,122 @@ def test_forecast_modes_exposes_a_cli_so_the_frontend_need_not_import_models():
         "the page imports the modelling stack again; it must dispatch to the backend interpreter"
     )
     assert "_BACKEND_PY" in code and "forecast_modes.py" in code
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THE CLI CAN ACTUALLY PUBLISH
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# `_cli` called `publish_official(res)` with no issue date, so `publish()` derived one from
+# max(origin_date) -- the end of the data, 2025-08-06 on this dataset, which already has an
+# issue. Every `--publish` raised FileExistsError, and so did the Forecast page's
+# "Publish to forecasts/published/ under a new issue date" checkbox, which passes only that
+# flag. Proposed in the agent's Session 5 record §8 and applied here, where it belongs.
+#
+# The pre-existing CLI test asserts on the module's *source text*, which is why this shipped:
+# it greps for the string "--publish" and never runs it. It is kept -- its real job is proving
+# the page does not import the modelling stack -- and these execute the path instead.
+
+
+def _cli_publishing_into(tmp_path, monkeypatch, target="Revenues"):
+    """Point every publish destination at tmp_path, then hand back a runner for `_cli`.
+
+    Both roots must be redirected. `publish()` sets ``vault_root = VAULT_PUBLISHED`` whenever
+    ``published_root is None``, and the CLI passes no root -- so redirecting only PUBLISHED_ROOT
+    would leave this test writing into the real private_vault.
+    """
+    import forecast_modes as fm
+    import forward_forecast as ff
+    import published_forecasts as pf
+
+    monkeypatch.setattr(pf, "PUBLISHED_ROOT", tmp_path / "published")
+    monkeypatch.setattr(pf, "VAULT_PUBLISHED", tmp_path / "vault")
+    monkeypatch.setattr(ff, "DEFAULT_OUT", tmp_path / "forward" / "latest")
+    # No refit: the CLI's only job under test is which issue date it passes onward.
+    monkeypatch.setattr(fm, "official_run",
+                        lambda *_a, **_k: _official(target))
+
+    def run(*extra):
+        argv = ["forecast_modes.py", "--mode", MODE_OFFICIAL, "--target", target,
+                "--data", str(DATA), "--publish", *extra]
+        monkeypatch.setattr(sys, "argv", argv)
+        return fm._cli()
+
+    return run, tmp_path / "published"
+
+
+def test_the_old_default_collided_with_an_existing_issue(tmp_path, monkeypatch):
+    """The reason the new default exists, pinned so it cannot be dismissed as belt-and-braces.
+
+    Publishing with no issue date twice from unchanged data targets the same directory both
+    times, because the origin date is a property of the data rather than of the act of
+    publishing.
+    """
+    import forecast_modes as fm
+    import forward_forecast as ff
+
+    monkeypatch.setattr(ff, "DEFAULT_OUT", tmp_path / "forward" / "latest")
+    root = tmp_path / "published"
+
+    first = fm.publish_official(_official("Revenues"), published_root=root)
+    assert first.name == "2025-08-06", (
+        "the fallback should label the issue with the data's origin date")
+
+    with pytest.raises(FileExistsError):
+        fm.publish_official(_official("Revenues"), published_root=root)
+
+
+def test_the_cli_publishes_twice_without_colliding(tmp_path, monkeypatch):
+    """Two `--publish` runs in a row produce two issues, not a FileExistsError."""
+    run, published = _cli_publishing_into(tmp_path, monkeypatch)
+
+    assert run() == 0, "the first --publish should succeed"
+    assert run() == 0, "the second --publish should succeed, under a suffixed issue date"
+
+    issues = sorted(p.name for p in published.iterdir() if p.is_dir())
+    today = pd.Timestamp.now(tz="UTC").date().isoformat()
+    assert issues == [today, f"{today}-r2"], issues
+    for name in issues:
+        assert (published / name / "forecast.csv").exists(), f"{name} has no forecast.csv"
+
+
+def test_the_cli_honours_an_explicit_issue_date(tmp_path, monkeypatch):
+    """The flag stays so a deliberate re-issue can name its own date."""
+    run, published = _cli_publishing_into(tmp_path, monkeypatch)
+
+    assert run("--issue-date", "2026-03-04") == 0
+    assert [p.name for p in published.iterdir() if p.is_dir()] == ["2026-03-04"]
+
+
+def test_the_cli_reports_where_it_published_to(tmp_path, monkeypatch, capsys):
+    """The page renders `published_to`, so it has to be in the JSON and has to be the real path."""
+    import json as _json
+
+    run, published = _cli_publishing_into(tmp_path, monkeypatch)
+    assert run("--issue-date", "2026-03-05") == 0
+
+    out = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["ok"] is True
+    assert out["published_to"] == str(published / "2026-03-05")
+    assert Path(out["published_to"]).is_dir()
+
+
+def test_the_cli_does_not_publish_when_publish_is_not_asked_for(tmp_path, monkeypatch, capsys):
+    """The default has to be inert: adding one must not make every run publish."""
+    import json as _json
+
+    import forecast_modes as fm
+    import forward_forecast as ff
+    import published_forecasts as pf
+
+    monkeypatch.setattr(pf, "PUBLISHED_ROOT", tmp_path / "published")
+    monkeypatch.setattr(pf, "VAULT_PUBLISHED", tmp_path / "vault")
+    monkeypatch.setattr(ff, "DEFAULT_OUT", tmp_path / "forward" / "latest")
+    monkeypatch.setattr(fm, "official_run", lambda *_a, **_k: _official("Revenues"))
+    monkeypatch.setattr(sys, "argv", ["forecast_modes.py", "--mode", MODE_OFFICIAL,
+                                      "--target", "Revenues", "--data", str(DATA)])
+
+    assert fm._cli() == 0
+    out = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert "published_to" not in out
+    assert not (tmp_path / "published").exists()
