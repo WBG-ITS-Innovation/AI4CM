@@ -114,6 +114,10 @@ class TruthNotAvailable(RuntimeError):
     """Raised when a published date is scored before its truth exists."""
 
 
+class SyntheticArtifact(RuntimeError):
+    """Raised when a run built on synthetic data is offered for publication."""
+
+
 # ── retention to the vault ────────────────────────────────────────────────────
 
 def refresh_vault_manifest(vault: Optional[Path] = None) -> Path:
@@ -168,6 +172,37 @@ def retain_to_vault(issue_dir: Path, vault_published: Optional[Path] = None) -> 
     return dest
 
 
+def _refuse_synthetic(forward_dir: Path) -> None:
+    """Refuse to publish a run built on synthetic data.
+
+    Nothing in the current codebase can produce this stamp: ``backend/synthetic_data.py`` was
+    removed and ``provenance.py`` has no ``is_synthetic`` support. That is exactly why the guard
+    is here rather than in the writer. On 2026-08-15 an artifact stamped ``is_synthetic: true``
+    was sitting in ``backend/forecast_runs/forward/latest`` -- an orphan of a code state that no
+    longer exists, left behind when the real data was restored over it -- and every publish path
+    would have taken it. It was caught by reading the file, which is not a control.
+
+    An orphaned artifact outlives the code that wrote it, so the check belongs at the boundary
+    the artifact crosses. Reading the stamp costs nothing and does not depend on the generator
+    ever coming back.
+    """
+    p = Path(forward_dir) / "forward_provenance.json"
+    if not p.exists():
+        return
+    try:
+        data = (json.loads(p.read_text()).get("data") or {})
+    except (ValueError, OSError):
+        return                          # a malformed provenance is a different complaint
+    if not data.get("is_synthetic"):
+        return
+    raise SyntheticArtifact(
+        f"Refusing to publish {forward_dir}: its provenance records is_synthetic=true, so these "
+        f"numbers describe generated data and no figure derived from them describes real "
+        f"Treasury performance. Regenerate the forward run against the canonical dataset. "
+        + (f"The artifact says: {data['synthetic_notice']}"
+           if data.get("synthetic_notice") else ""))
+
+
 # ── publishing ────────────────────────────────────────────────────────────────
 
 def publish(forward_dir: Path, issue_date: Optional[str] = None,
@@ -197,6 +232,7 @@ def publish(forward_dir: Path, issue_date: Optional[str] = None,
     fc_path = forward_dir / "forward_forecast.csv"
     if not fc_path.exists():
         raise FileNotFoundError(f"no forward run at {forward_dir}")
+    _refuse_synthetic(forward_dir)
     fc = pd.read_csv(fc_path)
 
     if issue_date is None:
