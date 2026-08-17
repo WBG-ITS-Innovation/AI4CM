@@ -108,15 +108,23 @@ def test_coverage_by_model_counts_correctly():
 
 
 def test_tercile_coverage_exposes_a_band_that_misses_the_big_days():
-    """The headline defect: good average coverage, bad coverage where it matters."""
+    """Good average coverage, bad coverage on the days the FORECAST called large.
+
+    The fixture's defect is keyed to ``yhat_p50`` -- a quantity known before the day happened --
+    not to ``y_true``. It used to be keyed to ``y_true`` (the top third of actuals was predicted
+    at half value), and bucketing on ``y_true`` then reported 0% there. That combination scores a
+    *correct* band just as harshly, which is why both the fixture and the split now key on the
+    forecast. See ``test_a_correct_band_is_not_reported_as_broken``.
+    """
     # Magnitudes must be CONTINUOUS or qcut cannot form three buckets -- a two-value
     # fixture made the split degenerate and the assertion hit an empty frame instead of
     # demonstrating anything.
     n = 300
-    y = np.linspace(1e8, 9e8, n)
-    p50 = y.copy()
-    p50[200:] = y[200:] * 0.5          # the largest third is badly predicted
-    half = 0.05e8                       # ...and the band is narrow, so those days are missed
+    rng = np.random.default_rng(11)
+    p50 = np.linspace(1e8, 9e8, n)
+    half = 0.25e8                       # one band width for every day: the defect
+    ramp = np.clip((p50 - np.quantile(p50, 2 / 3)) / (p50.max() - np.quantile(p50, 2 / 3)), 0, 1)
+    y = p50 + rng.normal(0, 1, n) * (0.12e8 + 2.5e8 * ramp)
     df = pd.DataFrame({"model": ["m"] * n, "y_true": y,
                        "yhat_p10": p50 - half, "yhat_p50": p50, "yhat_p90": p50 + half})
     spec = detect_intervals(df)
@@ -124,9 +132,52 @@ def test_tercile_coverage_exposes_a_band_that_misses_the_big_days():
     terc = coverage_by_tercile(df, spec)
     assert overall > 0.6, "fixture should look acceptable overall"
     biggest = terc[terc["tercile"] == TERCILE_LABELS[-1]].iloc[0]["coverage"]
-    assert biggest == pytest.approx(0.0), (
-        "tercile split must expose that the largest days are entirely missed"
-    )
+    smallest = terc[terc["tercile"] == TERCILE_LABELS[0]].iloc[0]["coverage"]
+    assert biggest < 0.35, "the split must expose that the largest forecast days are missed"
+    assert smallest > 0.9, "...while the quiet days are comfortably covered"
+
+
+def test_tercile_split_never_buckets_on_the_outcome():
+    """A band that is correct by construction must not be reported as broken.
+
+    This is the regression guard for the defect that motivated the change: bucketing on
+    ``|y_true|`` selects, into the "largest" bucket, the days whose actual landed in the upper
+    tail of its own range -- so a perfectly calibrated band scores far below its nominal there.
+    Measured on this fixture: bucketing on the outcome reads well under the 80% the band
+    genuinely delivers, while bucketing on the forecast recovers it.
+    """
+    n = 4000
+    rng = np.random.default_rng(3)
+    p50 = rng.normal(0, 100, n)
+    sd = rng.uniform(10, 200, n)                    # heteroscedastic, as the real series is
+    y = p50 + rng.normal(0, 1, n) * sd
+    df = pd.DataFrame({"model": ["m"] * n, "y_true": y, "yhat_p50": p50,
+                       "yhat_p10": p50 - 1.2816 * sd,     # an EXACT 80% band, by construction
+                       "yhat_p90": p50 + 1.2816 * sd})
+    spec = detect_intervals(df)
+    assert spec.nominal == pytest.approx(0.80)
+    assert coverage_by_model(df, spec).iloc[0]["coverage"] == pytest.approx(0.80, abs=0.02)
+
+    terc = coverage_by_tercile(df, spec)
+    biggest = terc[terc["tercile"] == TERCILE_LABELS[-1]].iloc[0]["coverage"]
+    assert biggest == pytest.approx(0.80, abs=0.05), (
+        "a band that is correct by construction must read as correct on the largest days too; "
+        f"got {biggest:.1%}")
+
+    # And demonstrate the artifact this protects against, so the reason cannot be lost.
+    outcome_bucketed = (df.assign(_t=pd.qcut(df["y_true"].abs(), 3, labels=list(TERCILE_LABELS)))
+                          .assign(_cov=(df["y_true"] >= df["yhat_p10"]) &
+                                       (df["y_true"] <= df["yhat_p90"]))
+                          .groupby("_t", observed=False)["_cov"].mean())
+    # Measured on this fixture: ~62% against a true 80%, an 18-point understatement of a band
+    # that is exactly right. A tercile is the mild case -- the top DECILE of the same fixture
+    # reads ~38% (see backend/conformal.py's control table), which is why the published caveat
+    # sounded so severe.
+    assert outcome_bucketed[TERCILE_LABELS[-1]] < 0.70, (
+        "the old basis should visibly understate this correct band -- if it no longer does, the "
+        "fixture stopped reproducing the defect and this guard is no longer guarding anything")
+    assert outcome_bucketed[TERCILE_LABELS[-1]] < biggest - 0.10, (
+        "the outcome basis must read materially worse than the forecast basis on the same band")
 
 
 def test_tercile_returns_empty_rather_than_guessing_on_degenerate_data():

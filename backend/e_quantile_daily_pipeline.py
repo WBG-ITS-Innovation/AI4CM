@@ -42,6 +42,16 @@ class Config:
     out_root: str = "outputs"
     demo_clip_months: Optional[int] = None  # None => full data; int => keep last N months
     variant: str = "univariate"          # "univariate" | "multivariate"
+    # Conformalise the outer quantiles against a causal slice of each fold's OWN training
+    # data. Off by default: it changes published band widths, so it is a deliberate act.
+    #
+    # Measured motivation (backend/coverage_report.py over the logged runs): on the state
+    # budget balance the nominal-80% band covers 73.7% (GBQuantile), 66.7% (LGBMQuantile)
+    # and 53.8% (ResidualRF) of outcomes. Those are marginal shortfalls that survive
+    # correcting the day-size metric, so they are the real defect rather than an artifact
+    # of how "a large day" was defined -- and a marginal shortfall is exactly what
+    # split-conformal calibration is guaranteed to repair.
+    cqr: bool = False
 
 # ---------- tiny utils ----------
 
@@ -315,6 +325,109 @@ def _fit_gb_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
     model = GradientBoostingRegressor(loss="quantile", alpha=q, random_state=42)
     model.fit(X_tr, y_tr)
     return model.predict(X_te)
+
+
+def _predict_quantiles(model_name: str, CONFIG: "Config", X_tr, y_tr, X_new,
+                       quantiles: Sequence[float]) -> Tuple[Dict[float, np.ndarray], int]:
+    """Fit ``model_name`` on (X_tr, y_tr) and predict ``quantiles`` on ``X_new``.
+
+    Returns ``(predictions, n_crossed_rows_repaired)``.
+
+    This is the single definition of "how this model predicts", used by the fold loop and by
+    the conformal step. They must not diverge: a correction calibrated from one model's
+    residuals and applied to a band another code path produced is not a calibration.
+    """
+    if model_name == "GBQuantile":
+        return {q: _fit_gb_quantile(X_tr, y_tr, X_new, q) for q in quantiles}, 0
+    if model_name == "ResidualRF":
+        return _fit_residual_rf_quantiles(X_tr, y_tr, X_new, tuple(quantiles)), 0
+    if model_name == "LGBMQuantile":
+        from tuning import fit_quantiles
+        return fit_quantiles("LGBMQuantile", X_tr, y_tr, X_new,
+                             dict(CONFIG.lgbm_params or {}), CONFIG.horizon,
+                             quantiles=tuple(quantiles))
+    raise ValueError(f"Unknown model '{model_name}'")
+
+
+def _conformalise(model_name: str, CONFIG: "Config", X_tr, y_tr,
+                  q_preds: Dict[float, np.ndarray], *, lo_q: float, hi_q: float,
+                  alpha: float) -> Tuple[Dict[float, np.ndarray], str]:
+    """Widen the outer quantiles by a split-conformal correction. Returns (preds, note).
+
+    Split-conformal quantile regression (Romano, Patterson & Candès 2019). The guarantee is
+    **marginal**: coverage of at least ``1-alpha`` averaged over the calibration distribution,
+    with no assumption about the model or the noise. That is precisely the defect measured
+    here -- bands narrower than they advertise on average -- so it is the right instrument.
+
+    What it does not promise is per-bucket coverage, and this deliberately applies ONE global
+    width rather than a per-magnitude one. WS7 measured grouped corrections on this data and
+    they were not uniformly better (on the stock target, splitting 502 calibration rows three
+    ways cost more in variance than it gained in targeting: 72.0% global against 68.4%
+    grouped). A single width is also the only form whose guarantee survives a 156-row window.
+
+    Never widens on failure. If the geometry cannot support a causal split, or the requested
+    level needs more calibration rows than exist, the band is returned untouched with the
+    reason -- a band that quietly skipped its correction while reporting as conformalised
+    would be worse than one that was never corrected.
+    """
+    from conformal import (causal_calibration_split, conformal_width, conformity_scores)
+
+    h = int(CONFIG.horizon)
+    n = int(len(X_tr))
+
+    # TWO embargoes are needed, and only one of them is `causal_calibration_split`'s job.
+    #
+    # That helper separates the FIT slice from the CALIBRATION slice by h rows, so the model
+    # whose residuals are being measured has not seen the calibration answers. It does not, and
+    # cannot, know what the calibration slice is being used to correct.
+    #
+    # The second embargo is between the calibration slice and the EVALUATION origin. X_tr ends at
+    # the row before this fold's first origin, so its final row carries a target h rows further
+    # on -- a target that has not happened yet at that origin. Calibrating on it would measure
+    # the correction partly against answers unavailable when the band is issued, which is the
+    # precise defect this session exists to remove; a test asserts the gap end to end.
+    #
+    # So drop the last h rows of the training block before splitting.
+    n_eff = n - h
+    if n_eff <= h + 4:
+        return q_preds, (f"no correction applied: {n} training rows leave too few after the "
+                         f"{h}-row evaluation embargo")
+    try:
+        fit_ix, cal_ix = causal_calibration_split(n_eff, h)
+    except ValueError as exc:
+        return q_preds, f"no correction applied: {exc}"
+
+    qc, _ = _predict_quantiles(model_name, CONFIG, X_tr.iloc[fit_ix],
+                               np.asarray(y_tr)[fit_ix], X_tr.iloc[cal_ix], (lo_q, hi_q))
+    y_cal = np.asarray(y_tr, dtype=float)[cal_ix]
+    scores = conformity_scores(y_cal, qc[lo_q], qc[hi_q])
+    width = conformal_width(scores, alpha)
+
+    if not np.isfinite(width):
+        return q_preds, (f"no correction applied: {len(cal_ix)} calibration rows cannot "
+                         f"support a {1 - alpha:.0%} band at finite width")
+
+    # A NEGATIVE width is not an error and must not be clamped away: it means the band was
+    # already wider than it needed to be, and tightening it is the correction doing its job.
+    # WS7 saw exactly this on revenues, where the width came out at -0 and the band was
+    # correctly left alone.
+    #
+    # What a negative width must NOT do is tighten so far that the edges cross. A p10 above its
+    # own p90 is not a narrow interval, it is a meaningless one, and this family already treats
+    # crossing as a reportable defect rather than something to silently sort. If the correction
+    # would invert any row, none of it is applied and the reason is returned.
+    lo_new = np.asarray(q_preds[lo_q], dtype=float) - width
+    hi_new = np.asarray(q_preds[hi_q], dtype=float) + width
+    if np.any(lo_new > hi_new):
+        n_bad = int(np.sum(lo_new > hi_new))
+        return q_preds, (f"no correction applied: a width of {width:+,.0f} would invert the band "
+                         f"on {n_bad} of {len(lo_new)} row(s)")
+
+    out = dict(q_preds)
+    out[lo_q], out[hi_q] = lo_new, hi_new
+    return out, (f"conformal width {width:+,.0f} from {len(cal_ix)} causal calibration rows "
+                 f"(fit/calibration gap {h}, calibration/evaluation embargo {h}), "
+                 f"targeting {1 - alpha:.0%}")
 
 def _fit_residual_rf_quantiles(X_tr, y_tr, X_te, quantiles: Tuple[float, ...]) -> Dict[float, np.ndarray]:
     """
@@ -602,6 +715,35 @@ def run_pipeline(CONFIG: Config) -> None:
     if not folds:
         raise ValueError("Unable to create CV folds — series too short for requested horizon/folds.")
 
+    # The hole A_STAT and C_DL already closed. E_QUANTILE's runners pin eval_start to
+    # 2025-01-01 -- every logged run.json says so -- and that read went through neither the
+    # gate nor the ledger, so `experiments/test_access.log` recorded nothing while the holdout
+    # was being evaluated on each daily run. There is a retrospective disclosure in that log
+    # covering exactly this gap; this is the enforcement that makes further ones unnecessary.
+    #
+    # Reporting on the holdout is legitimate -- it is what the holdout is for -- so this
+    # records rather than refuses. Fold construction chooses nothing, so no selection guard.
+    # Target dates are derived exactly as the fold loop derives them -- origin position in the
+    # business-day index, plus the horizon -- so the dates gated here are the dates scored.
+    from evaluation_windows import PURPOSE_REPORT, require_test_access, window_for
+    _idx = df.index
+    _pos_of = {d: i for i, d in enumerate(_idx)}
+    _holdout = []
+    for (_tr_end, _te_end) in folds:
+        for _od in od_all.iloc[_tr_end:_te_end].values:
+            _p = _pos_of.get(pd.Timestamp(_od))
+            if _p is None or _p + CONFIG.horizon >= len(_idx):
+                continue
+            _t = _idx[_p + CONFIG.horizon]
+            if window_for(_t) == "test":
+                _holdout.append(_t)
+    if _holdout:
+        require_test_access(
+            f"E_QUANTILE reporting evaluation for {CONFIG.target!r} at h={CONFIG.horizon} "
+            f"covers {len(_holdout)} holdout target date(s) from {min(_holdout).date()} to "
+            f"{max(_holdout).date()}",
+            caller="e_quantile_daily_pipeline.run_pipeline", purpose=PURPOSE_REPORT)
+
     # Model registry (you can add more later without touching the bridge/UI)
     registry = registry_models()
     chosen = list(registry.keys()) if not CONFIG.model_filter or CONFIG.model_filter.strip() == "" else [CONFIG.model_filter]
@@ -620,6 +762,7 @@ def run_pipeline(CONFIG: Config) -> None:
         fold_ix = 0
         pinballs: Dict[float, List[float]] = {q: [] for q in CONFIG.quantiles}
         coverages: List[float] = []
+        cqr_notes: List[str] = []
 
         for (tr_end, te_end) in folds:
             fold_ix += 1
@@ -629,25 +772,32 @@ def run_pipeline(CONFIG: Config) -> None:
             ov_te = ov_all.iloc[tr_end:te_end]  # origin values for test
 
             # Fit/predict per model
-            if model_name == "GBQuantile":
-                q_preds = {}
-                for q in CONFIG.quantiles:
-                    q_preds[q] = _fit_gb_quantile(X_tr, y_tr, X_te, q)
-            elif model_name == "ResidualRF":
-                q_preds = _fit_residual_rf_quantiles(X_tr, y_tr, X_te, CONFIG.quantiles)
-            elif model_name == "LGBMQuantile":
-                from tuning import fit_quantiles
-                q_preds, n_cross = fit_quantiles(
-                    "LGBMQuantile", X_tr, y_tr, X_te,
-                    dict(CONFIG.lgbm_params or {}), CONFIG.horizon,
-                    quantiles=CONFIG.quantiles)
-                if n_cross:
-                    # Reported, never swallowed: frequent crossing means the model is
-                    # misconfigured, and silently sorting would hide that.
-                    print(f"[quantile] LGBMQuantile fold {fold_ix}: repaired {n_cross} "
-                          f"crossed row(s) of {len(X_te)}")
-            else:
-                raise ValueError(f"Unknown model '{model_name}'")
+            q_preds, n_cross = _predict_quantiles(model_name, CONFIG, X_tr, y_tr, X_te,
+                                                  CONFIG.quantiles)
+            if n_cross:
+                # Reported, never swallowed: frequent crossing means the model is
+                # misconfigured, and silently sorting would hide that.
+                print(f"[quantile] {model_name} fold {fold_ix}: repaired {n_cross} "
+                      f"crossed row(s) of {len(X_te)}")
+
+            # ── conformalise the outer quantiles, if asked ────────────────────
+            # The correction is measured on the LAST rows of this fold's own training data,
+            # with a `horizon`-row gap so no conformity score comes from a target that was
+            # still in the future at the origin being calibrated. Nothing here touches X_te
+            # or y_te, so the correction cannot see the window it is scored on -- which is
+            # what makes it a calibration rather than a fit to the answer.
+            if CONFIG.cqr:
+                _cs = coverage_spec(CONFIG.quantiles)
+                if not _cs["measurable"]:
+                    print(f"[cqr] fold {fold_ix}: {_cs['reason']}; no correction applied")
+                else:
+                    q_preds, _cqr_note = _conformalise(
+                        model_name, CONFIG, X_tr, y_tr, q_preds,
+                        lo_q=_cs["coverage_lower_quantile"],
+                        hi_q=_cs["coverage_upper_quantile"],
+                        alpha=1.0 - _cs["coverage_nominal"])
+                    print(f"[cqr] fold {fold_ix}: {_cqr_note}")
+                    cqr_notes.append(_cqr_note)
 
             # ✅ FIX QUANT-2: Compute target_dates from origin + h steps.
             # The origin dates (dates_te / od_te) are the feature dates; the
@@ -741,6 +891,12 @@ def run_pipeline(CONFIG: Config) -> None:
         if coverages:
             # The level travels WITH the number, so a reader never parses the key name.
             emit_coverage(agg, float(np.mean(coverages)), CONFIG.quantiles)
+        # Whether the band was conformalised travels with it. A coverage figure means something
+        # different for a corrected band than for a raw one, and a consumer that cannot tell
+        # them apart will compare the two as if they were the same measurement.
+        agg["cqr_applied"] = bool(CONFIG.cqr)
+        if CONFIG.cqr:
+            agg["cqr_note"] = "; ".join(cqr_notes) if cqr_notes else "no fold produced a correction"
         leaderboard_rows.append(agg)
 
         # Long metrics for each fold/quantile

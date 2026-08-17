@@ -137,6 +137,19 @@ class Measured:
     coverage: Optional[float] = None
     coverage_nominal: Optional[float] = None
     coverage_band: Optional[List[float]] = None
+    #: Does this recipe publish prediction intervals at all?
+    #:
+    #: Without this the coverage gate could not tell "a point model, which correctly has no
+    #: intervals" from "a model that publishes a band nobody measured", and it treated both as
+    #: the former: ``coverage`` was excluded from ``unmeasured_gates`` outright. Measured
+    #: consequence -- all three recipes in ``registry/recipes.json`` carry
+    #: ``interval_model: GBQuantile`` and ship ``p10``/``p90`` in ``forecast.csv``, while every
+    #: one of their coverage gates reads *"This model reports no prediction intervals"*. A
+    #: miscalibrated band therefore could not affect a verdict, and the omission was invisible.
+    #:
+    #: ``True`` with ``coverage=None`` is now a reported gap. ``None`` means even that is
+    #: unknown, which is also reported -- never silence.
+    has_intervals: Optional[bool] = None
 
 
 def _num(x) -> Optional[float]:
@@ -267,12 +280,27 @@ def evaluate_gates(m: Measured) -> Dict[str, Dict]:
 
     # ── coverage: a distinct verdict, level read as data ─────────────────────
     cov = _num(m.coverage)
-    if cov is None:
+    if cov is None and m.has_intervals is False:
+        # A point model. No intervals to calibrate, so nothing is missing.
         gates["coverage"] = {
             "passed": None, "name": "interval coverage", "measured": None,
-            "threshold": None,
+            "threshold": None, "intervals_published": False,
             "reason_plain": ("This model reports no prediction intervals, so their calibration "
                              "was not measured. Point forecasts are unaffected."),
+        }
+    elif cov is None:
+        # Either it publishes a band nobody scored, or we cannot tell. Both are gaps, and both
+        # are now stated -- this is the case that used to read identically to a point model.
+        gates["coverage"] = {
+            "passed": None, "name": "interval coverage", "measured": None,
+            "threshold": None, "intervals_published": m.has_intervals,
+            "reason_plain": (
+                "This model publishes a predicted range, but how often outcomes actually fell "
+                "inside it was not measured for this run. An unmeasured range is not a "
+                "calibrated one: the point forecast can be used, the range cannot."
+                if m.has_intervals else
+                "Whether this model publishes a predicted range was not recorded, so its "
+                "calibration could not be checked either way. Not measured is not a pass."),
         }
     else:
         nominal = _num(m.coverage_nominal) or 0.80
@@ -343,8 +371,12 @@ def publication_verdict(gates: Dict[str, Dict]) -> Dict:
             verdict = v
             break
 
+    # Coverage used to be excluded from this list unconditionally, so "publishes a band nobody
+    # scored" was reported as nothing at all. It is excluded now only when the model genuinely
+    # has no intervals -- the one case where there is nothing to measure.
     unmeasured = sorted(n for n, g in gates.items()
-                        if g.get("passed") is None and n != "coverage")
+                        if g.get("passed") is None
+                        and not (n == "coverage" and g.get("intervals_published") is False))
 
     return {
         "verdict": verdict,
