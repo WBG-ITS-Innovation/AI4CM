@@ -123,14 +123,23 @@ def test_the_scored_ruler_equals_the_artifacts_origin_value(tmp_path):
 
     fc = pd.read_csv(root / "2025-08-06" / "forecast.csv")
     sc = pd.read_csv(tmp_path / "sc.csv")
-    merged = sc.merge(fc[["target", "horizon", "origin_value"]],
-                      on=["target", "horizon"], how="left")
-    assert len(merged) == len(sc)
-    for _, r in merged.iterrows():
+
+    # The scorecard now records `origin_value` itself, so this no longer has to reach back
+    # into the artifact to find the number -- which makes the check stricter, not merely
+    # tidier. Two things must hold: what the scorecard recorded is what the artifact
+    # published, and the ruler it scored against is that same number.
+    published = fc.set_index(["target", "horizon"])["origin_value"]
+    assert len(sc) == len(fc)
+    for _, r in sc.iterrows():
+        artifact = float(published.loc[(r["target"], int(r["horizon"]))])
+        assert r["origin_value"] == pytest.approx(
+            artifact, rel=PF.BASELINE_RTOL, abs=PF.BASELINE_ATOL), (
+            f"h={r['horizon']}: scorecard recorded origin_value "
+            f"{r['origin_value']:,.2f} but the artifact published {artifact:,.2f}")
         assert r["persistence_pred"] == pytest.approx(
             r["origin_value"], rel=PF.BASELINE_RTOL, abs=PF.BASELINE_ATOL), (
             f"h={r['horizon']}: scored against {r['persistence_pred']:,.2f} but the "
-            f"artifact published {r['origin_value']:,.2f}")
+            f"row's own origin_value is {r['origin_value']:,.2f}")
 
 
 def test_the_live_published_issue_carries_one_origin_value_per_target():
