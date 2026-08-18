@@ -76,11 +76,38 @@ def test_every_boundary_lands_in_the_right_window(date, expected):
 
 
 def test_the_windows_tile_without_gap_or_overlap():
-    days = pd.date_range("2015-01-05", "2026-12-31", freq="D")
+    """The four windows cover the timeline with no gap and no overlap — including today.
+
+    The upper bound follows the CLOCK. It was the literal ``"2026-12-31"``, and the reason that
+    had to change is not the usual one: it never failed when it passed. ``window_for`` maps
+    2015..2026 onto all four windows whenever it runs, so on 2027-01-01 the assertion below
+    still passed while the range it checked lay entirely in the past — every day the project was
+    actually operating in was outside it. A test that decays into a tautology is worse than one
+    that breaks, because breaking is a report. Bumping the literal to the next year would have
+    bought twelve months and kept the mechanism.
+
+    So: the bound is derived, and ``today`` is asserted to be *inside* the checked range. That
+    second assertion is what makes the decay loud — if this ever reverts to a fixed literal, it
+    fails on the day the literal passes instead of going quietly vacuous.
+    """
+    today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    # The literal is a FLOOR, not a cap: it guarantees the span always reaches far enough to
+    # exercise all four windows even if the clock were somehow behind the seal.
+    end = max(pd.Timestamp("2026-12-31"), today + pd.DateOffset(years=1))
+    days = pd.date_range("2015-01-05", end, freq="D")
+
     names = {window_for(d) for d in days}
     assert names == {"train", "dev", "test", "live"}
-    # Each day belongs to exactly one window, by construction of window_for.
-    for d in ("2023-12-31", "2024-01-01", "2025-01-01", "2025-08-06", "2025-08-07"):
+
+    assert days[0] <= today <= days[-1], (
+        f"the tiling check spans {days[0].date()}..{days[-1].date()}, which excludes today "
+        f"({today.date()}) — so it is verifying only the past. This is the failure the derived "
+        f"bound exists to make visible; do not fix it by widening a literal.")
+
+    # Each day belongs to exactly one window, by construction of window_for — checked at every
+    # boundary, and at today, which is the date anyone actually depends on.
+    for d in ("2023-12-31", "2024-01-01", "2025-01-01", "2025-08-06", "2025-08-07",
+              str(today.date())):
         hits = [w.name for w in WINDOWS if w.contains(d)]
         assert hits == [window_for(d)], f"{d} is in {hits}, window_for says {window_for(d)}"
 
