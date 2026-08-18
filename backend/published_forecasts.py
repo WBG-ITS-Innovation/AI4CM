@@ -50,6 +50,7 @@ This is how accuracy gets demonstrated over time without spending the one-shot h
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,17 +87,101 @@ _VAULT_FROM_ROOT = object()
 #: Nominal interval width, for hit-rate reporting.
 NOMINAL_COVERAGE = 0.80
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE SCORECARD SCHEMA
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Fixed deliberately BEFORE the first real row exists. Every row here is a permanent claim
+# about what was said and what happened, so a field added later cannot be back-filled for
+# rows already written -- there is nowhere to get the missing value from once the data has
+# moved on. That is also why the order is set now: with zero rows there is no migration.
+#
+# ``schema_version`` travels with each row because rows accumulate across issues over months
+# and this field set will grow. Without it a consumer reading a mixed file has to infer the
+# schema from which columns happen to be present, which is guessing.
+
+#: Current schema. Bump on any change to SCORECARD_COLUMNS, and say what changed below.
+#:
+#: 1 -- initial fixed schema (2026-08-18). 22 columns inherited from the pre-schema writer,
+#:      plus ``origin_date``/``origin_value`` (the forecast's data vintage, absent before),
+#:      ``interval_model``/``interval_nominal`` (which band, at what level), and this field.
+SCORECARD_SCHEMA_VERSION = 1
+
+#: One scored prediction per row: one target, one horizon, from one issue.
+#:
+#: IDENTITY -- what was forecast, and from when
+#:   schema_version   which field set this row was written under (see above)
+#:   issue_date       WALL-CLOCK date the forecast was published, suffixed ``-r2`` for a
+#:                    same-day re-issue. Not the data's date -- see ``origin_date``. The two
+#:                    were conflated until the publish CLI was fixed; both conventions are
+#:                    still on disk under ``forecasts/published/``.
+#:   target           which Treasury line
+#:   recipe_id        the champion at issue, by registry id. Champions are fixed, so this is
+#:                    the record of which one was in force when the claim was made.
+#:   horizon          business days ahead: ``target_date`` is ``origin_date`` + this many
+#:   origin_date      last date whose data informed the forecast. Now that ``issue_date`` is
+#:                    wall-clock, this is the ONLY field recording the data vintage -- without
+#:                    it a row cannot say whether it was a 5-day-ahead call or a backfill.
+#:   origin_value     the level at the origin. Recorded because ``persistence_pred`` is
+#:                    derived from it, so without it the shared ruler cannot be audited from
+#:                    the scorecard alone.
+#:   target_date      the date being forecast, and the date whose actual is ``y_true``
+#:
+#: THE PREDICTION, AND WHAT IT ADVERTISED
+#:   p10, p50, p90    the published band and its central estimate
+#:   interval_nominal the coverage the band CLAIMS, as a fraction (0.80 for p10-p90). Read as
+#:                    data, never assumed: ``inside_interval`` is meaningless without the level
+#:                    it was measured against, and putting that level only in the column names
+#:                    is the defect the E_QUANTILE audit already had to fix once (a figure
+#:                    named ``coverage_p10_p90`` was describing a different interval).
+#:
+#: WHAT HAPPENED
+#:   y_true           the actual, from the canonical dataset, once reality arrived
+#:   abs_error        |y_true - p50|
+#:   inside_interval  did the actual fall within [p10, p90] -- at ``interval_nominal``
+#:
+#: AGAINST THE SHARED RULER
+#:   persistence_pred        h-step persistence, READ from the artifact (see _persistence_for)
+#:   persistence_abs_error   |y_true - persistence_pred|
+#:   skill_vs_ruler_pct      how much better than the ruler, in percent
+#:   persistence_source      where the ruler came from, since there are two routes to it
+#:   scored_in_window        P1: which evaluation window ``target_date`` falls in. A realized
+#:                           number from LIVE (arrived after sealing) and one from TEST (the
+#:                           sealed holdout, one logged final read) are different claims, and
+#:                           the row says which rather than leaving it to be inferred.
+#:
+#: WHAT PRODUCED IT, AND UNDER WHAT CLAIM
+#:   publication_verdict  the gate verdict in force at issue
+#:   point_model          which model produced ``p50``
+#:   interval_model       which model produced ``p10``/``p90``. Distinct from ``point_model``
+#:                        and not cosmetic: measured on the sealed window at the same 80%
+#:                        nominal, GBQuantile covered 78.0% of revenues outcomes against
+#:                        ResidualRF's 69.8%, and 73.7% against 53.8% on the stock target. A
+#:                        band miss that cannot be attributed to the model that produced it
+#:                        is of little use to a retraining decision.
+#:   target_transform     the scaling the recipe modelled in
+#:
+#: REPRODUCIBILITY -- three hashes, because they answer three different questions
+#:   data_sha_at_issue   which dataset the forecast was MADE from
+#:   git_sha_at_issue    which code made it
+#:   scored_at_data_sha  which dataset it was SCORED against. Differs from
+#:                       ``data_sha_at_issue`` whenever actuals were revised or extended
+#:                       between issue and scoring, which is the normal case -- and if the two
+#:                       ever need reconciling, this is the field that makes it possible.
 SCORECARD_COLUMNS: Sequence[str] = (
-    "issue_date", "target", "recipe_id", "horizon", "target_date",
-    "p10", "p50", "p90", "y_true", "abs_error",
+    # identity
+    "schema_version", "issue_date", "target", "recipe_id", "horizon",
+    "origin_date", "origin_value", "target_date",
+    # the prediction, and what it advertised
+    "p10", "p50", "p90", "interval_nominal",
+    # what happened
+    "y_true", "abs_error", "inside_interval",
+    # against the shared ruler
     "persistence_pred", "persistence_abs_error", "skill_vs_ruler_pct",
-    "persistence_source",
-    # P1: which evaluation window the scored date falls in. A realized number from LIVE
-    # (arrived after the holdout was sealed) and one from TEST (the sealed holdout, one
-    # logged final read) are different claims, and the row should say which it is rather
-    # than leaving a consumer to infer it from the date.
-    "scored_in_window",
-    "inside_interval", "publication_verdict", "point_model", "target_transform",
+    "persistence_source", "scored_in_window",
+    # what produced it, and under what claim
+    "publication_verdict", "point_model", "interval_model", "target_transform",
+    # reproducibility
     "data_sha_at_issue", "git_sha_at_issue", "scored_at_data_sha",
 )
 
@@ -110,12 +195,83 @@ BASELINE_RTOL = 1e-9
 BASELINE_ATOL = 0.01         # one tetri
 
 
+# ── small readers for the schema's optional fields ────────────────────────────
+#
+# An older published issue may predate a column the schema now carries. These return None
+# rather than raising or substituting a plausible value: a blank cell says "this issue did not
+# record it", which is true, where a filled-in guess would be a claim nobody made.
+
+_QUANTILE_COL = re.compile(r"^p(\d{1,2})$")
+
+#: The quantile columns the scoring arithmetic names directly. Kept beside the reader so the
+#: gap between "what the record can describe" and "what the scorer can process" is visible in
+#: one place rather than discovered as a KeyError.
+SUPPORTED_QUANTILE_COLUMNS: Sequence[str] = ("p10", "p50", "p90")
+
+
+def _opt_date(v) -> Optional[str]:
+    """``YYYY-MM-DD``, or None when the artifact carries no such date."""
+    if v is None or (isinstance(v, float) and not np.isfinite(v)):
+        return None
+    try:
+        ts = pd.Timestamp(v)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(ts) else str(ts.date())
+
+
+def _opt_float(v) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if np.isfinite(f) else None
+
+
+def interval_nominal_of(fc: pd.DataFrame) -> Optional[float]:
+    """The coverage the published band claims, read from the quantile columns themselves.
+
+    ``p10``/``p90`` advertise 0.80. Read rather than assumed, because ``inside_interval`` is
+    measured against whatever pair the artifact actually published: hard-coding 0.80 here
+    would mean a future change to the quantiles silently redefined the hit flag while leaving
+    every historical row looking comparable. That is the defect the E_QUANTILE audit fixed once
+    already, where a figure keyed ``coverage_p10_p90`` was describing a different interval.
+
+    Returns None when fewer than two quantile columns are present, so the caller records "not
+    stated" instead of a level nobody published.
+    """
+    qs = sorted(int(m.group(1)) for c in fc.columns
+                for m in (_QUANTILE_COL.match(str(c)),) if m)
+    if len(qs) < 2:
+        return None
+    return round((qs[-1] - qs[0]) / 100.0, 10)
+
+
 class TruthNotAvailable(RuntimeError):
     """Raised when a published date is scored before its truth exists."""
 
 
 class SyntheticArtifact(RuntimeError):
     """Raised when a run built on synthetic data is offered for publication."""
+
+
+class UnsupportedIntervalShape(RuntimeError):
+    """Raised when a published issue's quantile columns are not the pair the scorer handles.
+
+    ``interval_nominal_of`` reads the advertised level from whatever pair an artifact carries,
+    so the *record* is already correct for any pair. The scorer is not: ``score_one`` and the
+    row builder name ``p10``/``p50``/``p90`` directly, so a differently-quantiled issue would
+    fail on a raw ``KeyError`` deep inside pandas.
+
+    This refuses at the issue boundary instead, naming what it found and what it supports. The
+    condition is unreachable today -- ``forward_forecast.QUANTILES`` is fixed at
+    ``(0.10, 0.50, 0.90)`` -- and that is exactly why it is a refusal rather than a
+    generalisation: making the arithmetic quantile-agnostic is a real change to how scores are
+    computed, and it should be made deliberately when a second shape actually exists, not
+    speculatively now. See the session record's open items.
+    """
 
 
 # ── retention to the vault ────────────────────────────────────────────────────
@@ -461,6 +617,23 @@ def score_published(data_path: Path,
         if gp.exists():
             gates = json.loads(gp.read_text())
         recipe_by_target = {r["target"]: r for r in man.get("recipes", [])}
+        # Per issue, not per row: the quantile columns are a property of the artifact.
+        issue_nominal = interval_nominal_of(fc)
+        # Refused here rather than as a KeyError three frames down. The docstring's promise is
+        # that this raises for a malformed issue, and an issue the arithmetic cannot score is
+        # exactly that -- see UnsupportedIntervalShape for why this is a refusal and not a
+        # generalisation.
+        missing = [c for c in SUPPORTED_QUANTILE_COLUMNS if c not in fc.columns]
+        if missing:
+            found = sorted(c for c in fc.columns if _QUANTILE_COL.match(str(c)))
+            raise UnsupportedIntervalShape(
+                f"{d.name}: cannot score this issue. It publishes quantile column(s) "
+                f"{found or 'none'}, and the scorer names "
+                f"{list(SUPPORTED_QUANTILE_COLUMNS)} directly (missing: {missing}). Its band "
+                f"advertises {issue_nominal if issue_nominal is not None else 'no'} coverage, "
+                f"which the scorecard schema can record -- but abs_error and inside_interval "
+                f"are computed against p50 and p10/p90 by name, so the row cannot be built. "
+                f"Generalising that arithmetic is a deliberate change, not a fallback.")
 
         for _, row in fc.iterrows():
             target = row["target"]
@@ -473,15 +646,26 @@ def score_published(data_path: Path,
                 if isinstance(g, dict) and g.get("target") == target:
                     verdict = g.get("status", "")
             base = {
+                "schema_version": SCORECARD_SCHEMA_VERSION,
                 "issue_date": man.get("issue_date", d.name),
                 "target": target,
                 "recipe_id": rid,
                 "horizon": int(row["horizon"]),
+                # The forecast's data vintage. `issue_date` is wall-clock, so without these
+                # two a scored row cannot say how far ahead it actually looked, nor let the
+                # ruler in `persistence_pred` be checked back to its source.
+                "origin_date": _opt_date(row.get("origin_date")),
+                "origin_value": _opt_float(row.get("origin_value")),
                 "target_date": str(pd.Timestamp(row["target_date"]).date()),
                 "p10": float(row["p10"]), "p50": float(row["p50"]),
                 "p90": float(row["p90"]),
+                # The level `inside_interval` is measured against, carried as data. Read from
+                # the quantile pair this issue actually published rather than assumed to be
+                # 0.80, so a change to the quantiles cannot silently redefine the hit flag.
+                "interval_nominal": issue_nominal,
                 "publication_verdict": verdict,
                 "point_model": row.get("point_model", rec.get("point_model", "")),
+                "interval_model": row.get("interval_model", rec.get("interval_model", "")),
                 "target_transform": row.get("target_transform",
                                             rec.get("target_transform", "raw")),
                 "data_sha_at_issue": man.get("data_sha_at_issue"),
@@ -530,6 +714,21 @@ def score_published(data_path: Path,
     }
 
 
+def _summary_nominal(valid: pd.DataFrame):
+    """The level a target's hit rate is measured against, taken from its own rows.
+
+    Returns the single level when the rows agree, a sorted list when an issue with different
+    quantiles is mixed in (so the summary states the ambiguity rather than picking one), and
+    ``NOMINAL_COVERAGE`` only for rows predating the field.
+    """
+    if "interval_nominal" not in valid.columns:
+        return NOMINAL_COVERAGE
+    levels = sorted({round(float(v), 10) for v in valid["interval_nominal"].dropna().tolist()})
+    if not levels:
+        return NOMINAL_COVERAGE
+    return levels[0] if len(levels) == 1 else levels
+
+
 def summarize_scorecard(df: pd.DataFrame) -> Dict[str, Dict]:
     """Per-target realized performance. Empty until truth arrives, which is honest."""
     out: Dict[str, Dict] = {}
@@ -549,7 +748,11 @@ def summarize_scorecard(df: pd.DataFrame) -> Dict[str, Dict]:
             "skill_vs_ruler_pct": ((pmae - mae) / pmae * 100.0)
             if (np.isfinite(pmae) and pmae > 0) else float("nan"),
             "interval_hit_rate": float(valid["inside_interval"].mean()),
-            "nominal_coverage": NOMINAL_COVERAGE,
+            # Read from the rows, not from NOMINAL_COVERAGE. A hit rate printed beside a
+            # hardcoded level is the same defect the schema's `interval_nominal` exists to
+            # remove -- it just moves it one layer up, into the summary a reader actually
+            # sees. Falls back to the constant only for rows written before the field existed.
+            "nominal_coverage": _summary_nominal(valid),
             "issues_covered": int(valid["issue_date"].nunique()),
         }
     return out
