@@ -233,8 +233,20 @@ def ops_daily_from_monthly(series: pd.Series, monthly_baseline: pd.Series, metho
                 hist_days = pd.date_range(my.replace(day=1), my, freq="B")
                 s = daily[(daily.index>=hist_days.min()) & (daily.index<=hist_days.max())].reindex(hist_days, fill_value=0.0)
                 if s.sum()>0:
-                    p = (s/s.sum()).reindex(days, fill_value=0.0).values
-                    profiles.append(p)
+                    # The shape must be carried across by POSITION, not by date label. This was
+                    # `.reindex(days, fill_value=0.0)`, and `days` are the working days of the
+                    # CURRENT month while the shape is indexed by those of the same month in a
+                    # PREVIOUS year -- no label ever matched, so every weight became 0.0 and the
+                    # whole daily baseline was identically zero (measured: 1983 of 1983 non-NaN
+                    # values exactly 0.00, while the monthly totals were correct). Every
+                    # MAE_skill_vs_Ops figure computed from it was therefore skill against a zero
+                    # forecast, overstating the margin roughly fourfold. Working-day counts
+                    # differ between months, so positions are mapped onto the target's length.
+                    w = (s/s.sum()).to_numpy(dtype=float)
+                    if len(w) != len(days):
+                        w = np.interp(np.linspace(0.0, 1.0, len(days)),
+                                      np.linspace(0.0, 1.0, len(w)), w)
+                    profiles.append(w)
             if profiles:
                 p = np.mean(np.vstack(profiles), axis=0)
                 p = p / (p.sum() if p.sum()>0 else 1.0)
