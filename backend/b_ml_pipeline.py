@@ -1083,7 +1083,40 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 glb["rank"] = range(len(glb))
                 print(f"[leaderboard] Persistence baseline MAE = {_mae_persist:.4f}")
 
-        glb[["target", "horizon", "model", "MAE", "rank"]].to_csv(out_root / "leaderboard.csv", index=False)
+        # BOTH comparators on every leaderboard row. "Better than a naive weekday repeat" and
+        # "better than the Treasury's current planning method" are different questions, and only
+        # the second is client-facing. Reporting only -- select_best_model and the publication
+        # gate are untouched and still turn on the naive ruler alone.
+        _lb_cols = ["target", "horizon", "model", "MAE", "rank"]
+        try:
+            import ops_baseline as _ops
+            _pl = pred_long.dropna(subset=["y_true", "y_pred"])
+            _tds = pd.to_datetime(_pl["target_date"], errors="coerce")
+            _ogs = (pd.to_datetime(_pl["origin_date"], errors="coerce")
+                    if "origin_date" in _pl.columns else _tds)
+            _ops.log_sealed_window_read(cfg.target, _tds.dropna(),
+                                        caller="b_ml_pipeline.leaderboard")
+            _cache = _ops.vintage_cache(cfg.data_path, cfg.target, _ogs.fillna(_tds), _tds)
+            _op = [_ops.ops_prediction_for(t, o, _cache)[0] for t, o in zip(_tds, _ogs.fillna(_tds))]
+            _pl = _pl.assign(_ops=_op)
+            _ok = _pl["_ops"].notna()
+            if _ok.any():
+                _ops_mae = float(np.mean(np.abs(_pl.loc[_ok, "y_true"] - _pl.loc[_ok, "_ops"])))
+                _per_model = (_pl[_ok].groupby("model")
+                              .apply(lambda g: float(np.mean(np.abs(g["y_true"] - g["y_pred"]))),
+                                     include_groups=False))
+                glb["ops_MAE"] = _ops_mae
+                glb["skill_vs_ops_pct"] = glb["model"].map(
+                    lambda m: _ops.skill_vs(_per_model.get(m, np.nan), _ops_mae))
+                _lb_cols += ["ops_MAE", "skill_vs_ops_pct"]
+            else:
+                glb["ops_MAE"] = np.nan
+                glb["skill_vs_ops_pct"] = np.nan
+                glb["ops_note"] = _ops.REASON_STOCK if is_stock(cfg.target) else _ops.REASON_NO_VINTAGE
+                _lb_cols += ["ops_MAE", "skill_vs_ops_pct", "ops_note"]
+        except Exception as _e:                     # noqa: BLE001 - reporting must not break a run
+            print(f"[ops] leaderboard comparison unavailable: {type(_e).__name__}: {_e}")
+        glb[_lb_cols].to_csv(out_root / "leaderboard.csv", index=False)
     
     # ✅ Forecast integrity checks with HARD GATE - run ALWAYS when predictions exist
     try:

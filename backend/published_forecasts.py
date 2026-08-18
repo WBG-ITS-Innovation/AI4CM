@@ -59,6 +59,10 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+from target_kinds import is_stock            # noqa: E402  (flows only have an Ops baseline)
+
 REPO = Path(__file__).resolve().parent.parent
 PUBLISHED_ROOT = REPO / "forecasts" / "published"
 SCORECARD = REPO / "forecasts" / "scorecard.csv"
@@ -105,7 +109,12 @@ NOMINAL_COVERAGE = 0.80
 #: 1 -- initial fixed schema (2026-08-18). 22 columns inherited from the pre-schema writer,
 #:      plus ``origin_date``/``origin_value`` (the forecast's data vintage, absent before),
 #:      ``interval_model``/``interval_nominal`` (which band, at what level), and this field.
-SCORECARD_SCHEMA_VERSION = 1
+#: 2 -- (2026-08-18) the Ops comparison: ``ops_pred``, ``ops_abs_error``, ``skill_vs_ops``,
+#:      ``ops_source``. A row now carries BOTH comparators -- the naive ruler
+#:      (``skill_vs_ruler_pct``) and the Treasury's current planning method -- because "better
+#:      than a naive repeat" and "better than what they do today" are different questions and
+#:      only the second is client-facing. Reporting only, never gating.
+SCORECARD_SCHEMA_VERSION = 2
 
 #: One scored prediction per row: one target, one horizon, from one issue.
 #:
@@ -140,11 +149,25 @@ SCORECARD_SCHEMA_VERSION = 1
 #:   abs_error        |y_true - p50|
 #:   inside_interval  did the actual fall within [p10, p90] -- at ``interval_nominal``
 #:
-#: AGAINST THE SHARED RULER
+#: AGAINST THE SHARED RULER -- naive h-step persistence
 #:   persistence_pred        h-step persistence, READ from the artifact (see _persistence_for)
 #:   persistence_abs_error   |y_true - persistence_pred|
-#:   skill_vs_ruler_pct      how much better than the ruler, in percent
+#:   skill_vs_ruler_pct      how much better than the ruler, in percent. This IS the
+#:                           naive-persistence skill; the name predates the second comparator and
+#:                           is kept because the agent contract, the frontend and three test
+#:                           modules read it.
 #:   persistence_source      where the ruler came from, since there are two routes to it
+#:
+#: AGAINST THE TREASURY'S CURRENT METHOD -- the client-facing comparison
+#:   ops_pred        the Ops planning figure for this date, at the vintage in force at this
+#:                   row's ORIGIN (so a January row is scored against the baseline the Treasury
+#:                   actually held then, not one built from a year that had not yet closed)
+#:   ops_abs_error   |y_true - ops_pred|
+#:   skill_vs_ops    how much better than the current method, in percent. NOT a gate: publication
+#:                   still turns on the naive ruler alone. A model can be worse than the current
+#:                   method and still publish, and five of eleven measured on revenues are.
+#:   ops_source      what the figure is, or why it is absent -- "not defined" for a stock target,
+#:                   whose balance level has no annual total for the method to average
 #:   scored_in_window        P1: which evaluation window ``target_date`` falls in. A realized
 #:                           number from LIVE (arrived after sealing) and one from TEST (the
 #:                           sealed holdout, one logged final read) are different claims, and
@@ -176,9 +199,12 @@ SCORECARD_COLUMNS: Sequence[str] = (
     "p10", "p50", "p90", "interval_nominal",
     # what happened
     "y_true", "abs_error", "inside_interval",
-    # against the shared ruler
+    # against the shared ruler (naive h-step persistence)
     "persistence_pred", "persistence_abs_error", "skill_vs_ruler_pct",
-    "persistence_source", "scored_in_window",
+    "persistence_source",
+    # against the Treasury's current planning method
+    "ops_pred", "ops_abs_error", "skill_vs_ops", "ops_source",
+    "scored_in_window",
     # what produced it, and under what claim
     "publication_verdict", "point_model", "interval_model", "target_transform",
     # reproducibility
@@ -619,6 +645,21 @@ def score_published(data_path: Path,
         recipe_by_target = {r["target"]: r for r in man.get("recipes", [])}
         # Per issue, not per row: the quantile columns are a property of the artifact.
         issue_nominal = interval_nominal_of(fc)
+
+        # The Ops comparator, per target, keyed by the vintage in force at each row's origin.
+        # Built once per issue: rows sharing an origin year share a baseline. Any sealed-window
+        # dates this reads are logged as a REPORT, like every other family's reporting path.
+        import ops_baseline as _ops
+        ops_cache: Dict[str, Dict] = {}
+        for _t in fc["target"].unique():
+            _rows = fc[fc["target"] == _t]
+            _tds = pd.to_datetime(_rows["target_date"], errors="coerce")
+            _ogs = (pd.to_datetime(_rows["origin_date"], errors="coerce")
+                    if "origin_date" in _rows.columns else _tds)
+            _ops.log_sealed_window_read(str(_t), _tds.dropna(),
+                                        caller="published_forecasts.score_published")
+            ops_cache[str(_t)] = _ops.vintage_cache(data_path, str(_t),
+                                                    _ogs.fillna(_tds), _tds)
         # Refused here rather than as a KeyError three frames down. The docstring's promise is
         # that this raises for a malformed issue, and an issue the arithmetic cannot score is
         # exactly that -- see UnsupportedIntervalShape for why this is a refusal and not a
@@ -672,9 +713,25 @@ def score_published(data_path: Path,
                 "git_sha_at_issue": man.get("git_sha_at_issue"),
                 "scored_at_data_sha": current_sha,
             }
+            # The Ops figure does not depend on truth having arrived, so it is attached to
+            # pending rows too -- what the current method said is knowable now, and a pending
+            # row that already carries it can be scored later without recomputing the vintage.
+            _op, _osrc = _ops.ops_prediction_for(
+                row["target_date"],
+                row.get("origin_date", row["target_date"]),
+                ops_cache.get(target, {}))
+            base["ops_pred"] = None if not np.isfinite(_op) else _op
+            base["ops_source"] = _ops.REASON_STOCK if is_stock(target) else _osrc
+            base["ops_abs_error"] = None
+            base["skill_vs_ops"] = None
+
             try:
                 got = score_one(row, truth_cache[target], horizon_steps)
                 base.update(got)
+                if base["ops_pred"] is not None:
+                    base["ops_abs_error"] = abs(float(got["y_true"]) - float(base["ops_pred"]))
+                    base["skill_vs_ops"] = _ops.skill_vs(got["abs_error"],
+                                                         base["ops_abs_error"])
                 from evaluation_windows import window_for
                 base["scored_in_window"] = window_for(base["target_date"])
                 # One ruler, one implementation: the artifact's origin_value and the
