@@ -52,53 +52,41 @@ def _resample(df: pd.DataFrame, target: str, cadence: str, date_col: str) -> pd.
     ser.index.freq = ser.index.freq or pd.infer_freq(ser.index)
     return ser
 
-def _ops_monthly_baseline(series_daily: pd.Series, years: int = 3) -> pd.Series:
-    """Monthly Treasury baseline from flows (3y annual mean × month share)."""
-    m = series_daily.resample("ME").sum().astype(float)
-    if m.empty: return m
-    df = m.to_frame("val")
-    df["year"] = df.index.year; df["month"] = df.index.month
-    counts = df.groupby("year")["val"].size()
-    full_years = counts.index[counts.eq(12)].tolist()
+# ── the Ops baseline: delegated, not re-implemented ───────────────────────────
+#
+# This module used to carry its own copy of the Treasury planning method, and that copy had the
+# same defect as C_DL's: the intraday profile was built from the same month in a PREVIOUS year and
+# then mapped onto the current year's dates with ``.reindex(days, fill_value=0.0)``. Labels cannot
+# match across years, so every weight became zero and the daily baseline was identically zero
+# (measured here: 2000 of 2000 values exactly 0.00).
+#
+# Four independent copies of this arithmetic existed, and fixing one in the ops-baseline session
+# left three wrong -- which is the argument for delegation rather than a fourth patch. These now
+# call ``backend/ops_baseline``, which is the single construction the scorecard, the leaderboards
+# and this runner all share.
 
-    out = []
-    for ts, mo, Y in zip(df.index, df["month"], df["year"]):
-        prev = [Y - k for k in range(1, years + 1)]
-        if not all(py in full_years for py in prev):
-            out.append(np.nan); continue
-        annual_prev = df[df["year"].isin(prev)].groupby("year")["val"].sum().reindex(prev)
-        annual_mean = annual_prev.mean()
-        mon_vals = [df.loc[(df["year"] == py) & (df["month"] == mo), "val"].iloc[0] for py in prev]
-        shares = [mv / annual_prev.loc[py] if annual_prev.loc[py] > 0 else np.nan for mv, py in zip(mon_vals, prev)]
-        share_mean = np.nanmean(shares)
-        out.append(annual_mean * share_mean if np.isfinite(share_mean) else np.nan)
-    base = pd.Series(out, index=m.index).ffill()
-    base.index.freq = "ME"
+
+def _ops_monthly_baseline(series_daily: pd.Series, years: int = 3) -> pd.Series:
+    """Monthly Treasury baseline (3-year annual mean x month share), via ops_baseline."""
+    from c_dl_pipeline import ops_monthly_baseline_treasury
+    base = ops_monthly_baseline_treasury(series_daily, years_window=years)
+    if len(base):
+        base.index.freq = "ME"
     return base
 
+
 def _ops_daily_from_monthly(daily_hist: pd.Series, monthly_forecast: pd.Series) -> pd.Series:
-    """Distribute monthly baseline to business days using recent daily profiles."""
-    pieces: List[pd.Series] = []
-    for ts, mv in monthly_forecast.dropna().items():
-        days = pd.date_range(ts.replace(day=1), ts, freq="B")
-        if not len(days): continue
-        profiles = []
-        for k in (1, 2, 3):
-            d0 = (ts - pd.DateOffset(years=k)).replace(day=1)
-            d1 = (ts - pd.DateOffset(years=k))
-            hist = daily_hist[(daily_hist.index >= d0) & (daily_hist.index <= d1)].reindex(
-                pd.date_range(d0, d1, freq="B"), fill_value=0.0
-            )
-            if hist.sum() > 0:
-                p = (hist / hist.sum()).reindex(days, fill_value=0.0).values
-                profiles.append(p)
-        if profiles:
-            prof = np.mean(np.vstack(profiles), axis=0)
-            prof = prof / (prof.sum() if prof.sum() > 0 else 1.0)
-        else:
-            prof = np.ones(len(days)) / len(days)
-        pieces.append(pd.Series(float(mv) * prof, index=days))
-    return pd.concat(pieces) if pieces else pd.Series(dtype=float)
+    """Spread the monthly baseline over working days, evenly.
+
+    ``flat`` is the canonical spread: it is the method as stated ("spread across working days"),
+    it emits no negative planning figures, and it is the harsher comparison. See
+    ``backend/ops_baseline`` for the measured reasoning.
+    """
+    from c_dl_pipeline import ops_daily_from_monthly
+    from ops_baseline import SPREAD_FLAT
+    out = ops_daily_from_monthly(daily_hist, monthly_forecast, method=SPREAD_FLAT)
+    return out.dropna()
+
 
 def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[int]) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
     years = sorted(set(idx.year))
