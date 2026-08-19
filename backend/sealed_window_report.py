@@ -136,9 +136,17 @@ def sealed_folds(target: str, eval_start: str = TEST_START, eval_end: str = TEST
     raw_folds = build_yearly_folds(s.index, 4, None, eval_start=eval_start, eval_end=eval_end)
     ok = X.notna().all(axis=1) & y_t.notna()
 
+    # An evaluation row's TRUTH must lie in the window being reported on, not merely its origin.
+    # Folds are origin-bounded, and truth is read at origin + H, so a DEV-scoped call used to be
+    # scored against 4 holdout target dates. Same invariant as the ws2_tune fix; applied here so a
+    # DEV reconstruction is measured on the same row set the corrected credentials use, and a
+    # sealed-window call cannot silently reach past TEST_END into LIVE.
+    allowed = {window_for(pd.Timestamp(eval_start)), window_for(pd.Timestamp(eval_end))}
+
     out: List[SealedFold] = []
     for tr_end, te_start, te_end in raw_folds:
-        ite = X.index[(X.index >= te_start) & (X.index <= te_end) & ok]
+        ite = pd.DatetimeIndex([d for d in X.index[(X.index >= te_start) & (X.index <= te_end) & ok]
+                                if d in tmap and window_for(tmap[d]) in allowed])
         if not len(ite):
             continue
 

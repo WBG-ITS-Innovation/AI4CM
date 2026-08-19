@@ -171,11 +171,11 @@ session), and the corrected margins are roughly a quarter of what they implied.
 **Sealed window (TEST 2025-01-01..2025-08-06), h=5, embargoed, `PURPOSE_REPORT` logged.**
 Machine-readable copy: `reports/sealed_window_champion_vs_ops.csv`.
 
-> **Sharing gate.** Open item 1 — `ws2_tune`'s DEV fold reads 4 holdout rows — **must be fixed
-> before these numbers go to a client.** The sealed-window figures below are themselves clean
-> (embargoed, origin-bounded, logged); what is not clean is the DEV credential that selected the
-> champions in the first place. A client asking "how was this model chosen?" deserves an answer that
-> does not include holdout data.
+> **Sharing gate — LIFTED 2026-08-18.** Open item 1 (`ws2_tune`'s DEV fold reads 4 holdout rows) is
+> **fixed**; see `docs/sessions/2026-08-18-dev-fold-holdout-leak.md`. Folds now require an evaluation
+> row's TARGET date to be in an allowed window, not just its origin. **No verdict or champion moved,
+> and every number in this table is unchanged** — the leak was at the DEV boundary while these
+> figures are measured on the holdout, a different fold. The table below stands as written.
 
 | Target | Role | Model | n | MAE | skill vs naive | **skill vs Ops** |
 |---|---|---|---:|---:|---:|---:|
@@ -208,10 +208,13 @@ aggregates a flow to an annual total and a balance level has none — not invent
 
 ## Open items
 
-### 1. TOP PRIORITY — `ws2_tune`'s DEV fold is scored against holdout rows
+### 1. ~~TOP PRIORITY~~ — RESOLVED 2026-08-18 · `ws2_tune`'s DEV fold was scored against holdout rows
 
-**Must be fixed in its own scoped session, before anything from these credentials is shared with a
-client.** Magnitude does not soften what it is: **selection on holdout data.**
+**Fixed** in `docs/sessions/2026-08-18-dev-fold-holdout-leak.md`. Folds now require an evaluation
+row's target date to be in an allowed window; DEV went 250 → 246 rows and TRAIN 1259 → 1254. No
+verdict or champion moved. The pinned test was deleted per its own instruction and replaced by
+`backend/tests/test_no_fold_reads_holdout_truth.py`, which asserts the property for every fold
+builder. The record below is kept as the description of what the defect was.
 
 `ws2_tune.make_folds` calls `assert_selection_free` on the evaluation **origins** — all DEV — and
 then reads truth at `origin + H`, 4 of which land in the sealed window (2025-01-01, 01-02, 01-03,

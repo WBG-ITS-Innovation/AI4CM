@@ -607,6 +607,101 @@
         "test"
       ],
       "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "DCNN",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8716608594657376,
+      "large_day_coverage": 0.9479768786127167,
+      "n_large_day": 173,
+      "mean_width": 235748900.90394884,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "GRU",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8536585365853658,
+      "large_day_coverage": 0.930635838150289,
+      "n_large_day": 173,
+      "mean_width": 218830499.96982744,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "LSTM",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8623693379790941,
+      "large_day_coverage": 0.9075144508670521,
+      "n_large_day": 173,
+      "mean_width": 220221321.3850998,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "MLP",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8739837398373984,
+      "large_day_coverage": 0.976878612716763,
+      "n_large_day": 173,
+      "mean_width": 2026909495.9167078,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "TRANSFORMER",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8716608594657376,
+      "large_day_coverage": 0.9248554913294798,
+      "n_large_day": 173,
+      "mean_width": 281556722.0366394,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
     }
   ]
 }
