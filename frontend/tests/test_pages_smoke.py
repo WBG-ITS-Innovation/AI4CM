@@ -37,6 +37,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 PAGES = [
     FRONTEND / "Overview.py",
+    FRONTEND / "pages" / "00_Start_here.py",
     FRONTEND / "pages" / "02_Scorecard.py",
     FRONTEND / "pages" / "07_Data_Preprocessing.py",
     FRONTEND / "pages" / "08_Lab.py",

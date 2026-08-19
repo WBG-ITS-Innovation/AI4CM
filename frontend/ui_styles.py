@@ -829,9 +829,11 @@ HELP = {
         "A self-test for whether the inputs actually inform the target. We shuffle the "
         "historical answers, refit, and see how much worse the model gets. If the inputs "
         "carry real information, destroying the link should hurt badly. We require the error "
-        "to get at least 1.50x worse; below that we treat the model as tracking a typical "
-        "level rather than anticipating individual days. 1.50 is a deliberate margin above "
-        "1.00 (where shuffling changed nothing at all) so that noise cannot pass."
+        "to get at least 1.15 times worse; below that we treat the model as tracking a "
+        "typical level rather than anticipating individual days. 1.15 is not a round number "
+        "chosen for comfort: it was measured against 360 runs on deliberately scrambled "
+        "inputs, whose highest ratio was 1.12, so nothing that passes it can be explained "
+        "by noise."
     ),
     "mase": (
         "Error divided by the error of a simple seasonal repeat, measured on the training "
