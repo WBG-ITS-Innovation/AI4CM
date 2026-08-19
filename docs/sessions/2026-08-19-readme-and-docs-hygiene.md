@@ -6,13 +6,14 @@ work) and not modified.
 **Constraints honoured:** documentation only. No behaviour change, no source edit, no artifact
 touched, no model run. Plan approved before any file was written.
 
-Three tasks, all landed.
+Four tasks, all landed. Task 4 was added on review, before merge.
 
 | | Task | Outcome |
 |---|---|---|
 | 1 | Audit what a first-time reader sees | README five months stale; **four durable documents actively contradict the code** |
 | 2 | Rewrite `README.md` for the two audiences | done — trust architecture, measured headline with caveats attached, current state and known limits |
 | 3 | Sessions index; stale docs marked rather than left silently wrong | `docs/sessions/README.md` added; five documents given dated notices |
+| 4 | **Second pass** — rebalance the README toward use | results slimmed to a table; setup rewritten for a non-technical reader; a first-10-minutes tour added; every command executed |
 
 > **The finding that matters most in this record is in Task 1.** The stale README was the
 > *expected* problem. The unexpected one is that `CHANGELOG.md` and `docs/SIGNAL_FINDING.md` do not
@@ -85,7 +86,8 @@ open item rather than fixed in passing.
 ## Task 2 — the README
 
 Rewritten around the same two-audience structure the agent repository uses, so a reader moving
-between the two repositories meets the same shape. 489 lines.
+between the two repositories meets the same shape. 489 lines at this point; the second pass
+below reshaped it to 782 and moved the caveat commentary described here into Known limits.
 
 **What it now says, in order:** what the Lab is (three targets, their champions, their verdicts) →
 what it will not do → **what has been measured** → how trust is enforced → the four families →
@@ -166,6 +168,119 @@ with the evidence available at the time, and a history that has been tidied is h
 one that admits what it got superseded by.
 
 ---
+
+---
+
+## Second pass — rebalancing the README toward use
+
+Reviewed before merge with the instruction: **much less results commentary, much more setup and
+hands-on guidance.** Four changes, all in `README.md`. 489 → 782 lines, and the balance moved from
+roughly 25% hands-on to roughly 60%.
+
+### 1 · The results section, slimmed
+
+The measured table stays, gains a **MASE column** (so a reader sees the gate's own metric beside
+the skill percentages), and keeps one blockquote pointing at Known limits plus one sentence on the
+withdrawn July figures. **Readable in about twenty seconds.**
+
+The five caveat bullets that travelled with it were **moved into Known limits, not duplicated**.
+That section is now grouped under three headings — what the table does and does not cover, what
+cannot currently be reproduced, everything else — and the caveats merged into existing items rather
+than being appended as new ones:
+
+* Expenditure's thin margin and the stock target's absent Ops comparison became a single item 1;
+* `n=146 not 156` became item 2, cross-referencing the embargo item that explains four of the ten;
+* "measures the recipe, not the credentials" merged into the reproducibility item, which already
+  carried the reconstruction gaps.
+
+### 2 · Getting started, rewritten for someone who has never opened a terminal
+
+Seven numbered steps, one command each, every one with a sentence saying what it does and what the
+screen shows when it worked — including the steps where **nothing visible happens**, which is the
+point at which a first-timer assumes failure. Then a "You know it worked when…" section quoting the
+actual terminal block and describing the landing page, a separate short path for the modelling
+environment, and four troubleshooting entries chosen as the most likely to be hit: `python` not
+found, PowerShell's execution policy blocking activation, pip failing behind a TLS-inspecting
+corporate proxy, and the port already being in use.
+
+The condensed technical version and the test-suite command live below it under **For developers**,
+which also absorbed the old "Running a forecast" section.
+
+### 3 · "Your first 10 minutes"
+
+Five steps that double as a smoke test: confirm the app found its backend, run a model and read the
+leaderboard's two comparators, find the gate verdicts and their plain-language reasons, publish
+twice and watch the second issue refuse to overwrite the first, then find the files on disk and
+check them against what the screen said.
+
+### 4 · Every command executed, not transcribed
+
+**A fresh clone into a temporary directory, both environments built from scratch, the app launched
+and served.** What was run and what came back:
+
+| Step | Result |
+|---|---|
+| `git clone` (local source, to verify command shape and resulting layout) | exit 0, expected layout |
+| `python3 -m venv frontend/.venv` + `source .../activate` | `VIRTUAL_ENV` set, `python` resolves inside it |
+| `python -m pip install -r frontend/requirements.txt` | `Successfully installed ... streamlit-1.40.1` |
+| `python -m streamlit run frontend/Overview.py` **from the repository root** | HTTP **200**, and a real websocket session drove the script with **zero** errors in the server log |
+| `./scripts/setup_unix.sh` | exit 0, `✅ Setup complete.`, `.tg_paths.json` written correctly |
+| `python -m pip install -r backend/requirements.txt` | exit 0 — torch, xgboost, lightgbm, catboost, statsmodels, optuna |
+| `scripts/verify_backend_env.py` | all twelve entries `OK` |
+| `./scripts/run_app_unix.sh` | HTTP 200 |
+| second launch on a busy port | `Port 8599 is already in use` — the exact string the troubleshooting entry quotes |
+| `next_issue_date()` against a seeded directory | `2026-08-19` → `-r2` → `-r3`, the behaviour step 4 of the tour describes |
+
+**One verification nearly went the wrong way, and is worth recording.** Importing `Overview.py`
+directly to check that a repository-root launch resolves its imports raised
+`StreamlitPageNotFoundError: Could not find page: pages/00_Lab.py`. Taken at face value that would
+have condemned the launch command the README gives. It is an artifact of running the script with no
+Streamlit session, where `st.page_link` falls back to the working directory instead of the
+entrypoint's. Settled by running the real server and driving it with an actual websocket client:
+zero errors. **The cheap check disagreed with the real one, and the real one is what shipped.**
+
+### Three limits on that verification, stated rather than implied
+
+1. **The Windows commands were not executed** — this machine is macOS. They are the forms the
+   repository's own `scripts/setup_windows.bat` uses, plus the standard PowerShell activation path
+   and its execution-policy fix. Every macOS/Linux command was run.
+2. **The proxy troubleshooting entry was not reproduced**, because that needs a TLS-inspecting
+   network. `--cert` and `--index-url` are pip's documented flags for it, and the repository already
+   carries evidence of such a proxy (`frontend/certs/corp_bundle.pem`, 146 public roots).
+3. **The tour's steps 2–4 need the dataset**, which is not in the repository. The mechanism each
+   step describes was verified directly instead — the pre-flight module, the leaderboard columns as
+   actually written by `b_ml_pipeline`, and `next_issue_date` — rather than by driving the UI.
+
+A fourth point, found by that checking rather than assumed: the **Forecast page stops early on a
+fresh install**. `load_forward_artifacts()` raises `FileNotFoundError` when no forward run exists,
+and the page renders one warning and calls `st.stop()` — so the verdict banners the tour's step 3
+describes never appear. Confirmed by running the loader in the fresh clone. The step now tells the
+reader what they will actually see and gives the command that fixes it, which the page itself also
+prints. A tour that opened with a screen the reader could not get past would have failed at exactly
+the audience it is written for.
+
+### The brief had one premise that does not hold, and it was not written in
+
+The brief asked the tour to explain that **"the unchanged-data warning is the system working"**.
+**The Lab has no unchanged-data warning.** That guardrail — refusing a byte-identical input file —
+belongs to the Agent repository's `data_intake.py`. Checked before writing rather than assumed.
+
+The Lab's own equivalents were used instead, and they teach the same lesson from real behaviour:
+the **data-quality pre-flight** that blocks a run before it starts, and above all
+**`next_issue_date()` suffixing a same-day re-publish to `-r2` rather than overwriting** — verified
+above. That is a genuine case of an obstacle being the system protecting the record of what it said,
+which is what the brief was reaching for.
+
+### Two stale things found in source, and left alone
+
+Both are outside a documentation pass, so they are recorded rather than fixed:
+
+* **`frontend/Overview.py` carries its own *Quick Start* block** naming a `TreasuryGeorgiaBackEnd/`
+  path from an earlier layout. A reader following the new README and then reading the landing page
+  meets two different sets of instructions, so the README names this explicitly and says which to
+  follow.
+* **`backend/requirements.txt` has a developer's absolute Windows path in a header comment**
+  (`C:\Users\...`), one of the seven local-path exposures the public-exposure audit listed.
 
 ## What was deliberately not done
 
