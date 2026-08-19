@@ -1,5 +1,23 @@
 # Roadmap
 
+> **Status line outdated as of 2026-08-19 — the sequencing below still stands.**
+>
+> The "Status as of 2026-08-05" table says the 2025 holdout has had **zero**
+> evaluations and quotes 29–41% lower error than the naive benchmark. Both have
+> been superseded: the sealed window has since been evaluated under
+> `PURPOSE_REPORT` and logged, and the measured champion figures are in
+> [`README.md`](../README.md) and
+> [`2026-08-18-artifact-regeneration.md`](sessions/2026-08-18-artifact-regeneration.md).
+>
+> The signal row is also pre-recalibration: the sentinel threshold moved from an
+> uncalibrated 1.50 to a measured **1.15** on 2026-08-13, which changed which
+> targets clear it. Revenues is now `publishable`; the stock target is `withheld`
+> on accuracy.
+>
+> **The ordering and the reasoning for it are not superseded** — the argument for
+> why tuning comes after the target-representation work, and the honest
+> alternative at the end, both still apply.
+
 Where the project is, in order. Each item lists what it changes and what it unblocks, so a
 reader can see why the sequence is what it is.
 
