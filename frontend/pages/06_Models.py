@@ -658,9 +658,57 @@ def _render_model_detail() -> None:
 
     _names = sorted(models)
     _champ_names = {n for n in _names if n in champs}
-    st.caption(f"{len(_names)} models in the pool · {len(_champ_names)} promoted as a champion "
+    _n_evaluated = sum(1 for m in models.values() if m.get("status") == "evaluated")
+    _n_untested = sum(1 for m in models.values() if m.get("status") == "untested")
+    st.caption(f"{len(_names)} models on the shelf · {len(_champ_names)} promoted as a champion "
                f"({', '.join(sorted(_champ_names))}) · "
-               f"{sum(1 for m in models.values() if not m['available'])} unavailable")
+               f"{sum(1 for m in models.values() if not m['available'])} unavailable here")
+
+    # ── The shelf, with what has and has not been measured ────────────────────
+    #
+    # This table is the reason the status field exists. Before it, an untested model
+    # appeared in the list beside a champion with nothing distinguishing them, and the
+    # Lab's default selection was Ridge, which has no recorded result on any target.
+    st.markdown("**Every model on the shelf, and whether anyone has measured it**")
+    st.markdown(
+        f"{_n_evaluated} of these have a recorded result that can be quoted and traced back "
+        f"to the run that produced it. {_n_untested} are registered candidates with no "
+        f"recorded result yet. A candidate can be run as an experiment and cannot become "
+        f"the model behind an official forecast until a result has been recorded for it."
+    )
+    _STATUS_LABEL = {
+        "evaluated": "measured",
+        "untested": "UNTESTED",
+        "baseline": "reference rule",
+        "unavailable": "not installed here",
+    }
+    st.dataframe(pd.DataFrame([{
+        "Model": n,
+        "Family": models[n].get("pipeline", "—"),
+        "Status": _STATUS_LABEL.get(models[n].get("status"), models[n].get("status", "—")),
+        "Measured on": ", ".join(models[n].get("measured_on") or []) or "nothing yet",
+        "Can be a champion": "yes" if models[n].get("gate_eligible") else "no",
+    } for n in _names]), hide_index=True, use_container_width=True)
+
+    with st.expander("What does UNTESTED mean?"):
+        st.markdown(
+            "- It means no measured result has been recorded for that model on any target, "
+            "so there is no number to show for it and nothing for the publication checks to "
+            "read.\n"
+            "- It does **not** mean the model is bad, or that it has never been executed. It "
+            "means nobody has yet run it through the evaluation that produces a quotable "
+            "figure.\n"
+            "- You can run an untested model as an experiment from the Lab or from the "
+            "comparison on the Forecast page. Nothing you run there is published.\n"
+            "- It cannot become the model behind an official forecast until a result has "
+            "been recorded, because an official recipe cites the run that measured it and "
+            "that citation is checked.\n"
+            "- A **reference rule** is not a candidate at all. Carrying the last value "
+            "forward is the yardstick the others are measured against, so asking whether it "
+            "was measured is the wrong question.\n"
+            "- Adding a model is one entry in `backend/model_catalog.py`. See "
+            "`docs/ADDING_A_MODEL.md`."
+        )
 
     _pick = st.selectbox("Model", _names,
                          index=_names.index("LightGBM_L1") if "LightGBM_L1" in _names else 0)
@@ -672,6 +720,18 @@ def _render_model_detail() -> None:
                  f"(`{m.get('missing_library', 'unknown')}`) is not installed, so the model cannot "
                  f"be run or configured. It is listed here rather than hidden, so the pool's "
                  f"contents do not silently change with the environment.")
+
+    # ── status, before anything that looks like a number ──────────────────────
+    if m.get("status") == "untested":
+        st.warning(f"**UNTESTED.** {m.get('status_note', '')}")
+    elif m.get("status") == "baseline":
+        st.info(f"**Reference rule.** {m.get('status_note', '')}")
+    elif m.get("status") == "evaluated":
+        st.success(
+            "**Measured.** This model has a recorded result on "
+            + ", ".join(m.get("measured_on") or [])
+            + ", so the figures below can be traced back to the runs that produced them."
+        )
 
     # ── description: general, not measured ────────────────────────────────────
     st.markdown(f"#### {_pick}")

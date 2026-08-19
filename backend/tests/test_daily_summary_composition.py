@@ -77,18 +77,21 @@ def test_client_framing_matches_the_function_it_came_from(written_summary):
 
 def test_the_written_file_carries_the_counts_behind_the_sentence(written_summary):
     comp = written_summary["model_composition"]
-    assert comp["counts"] == {"machine-learning models": 13, "deep-learning models": 5,
-                              "statistical models": 4, "quantile methods": 3,
+    assert comp["counts"] == {"machine-learning models": 15, "deep-learning models": 5,
+                              "statistical models": 5, "quantile methods": 3,
                               "reference baselines": 3}
-    assert sum(comp["counts"].values()) == 28
+    assert sum(comp["counts"].values()) == 31
     # Every counted model must be named, so a consumer can requote or recompute.
-    assert sum(len(v) for v in comp["members"].values()) == 28
+    assert sum(len(v) for v in comp["members"].values()) == 31
+    # And the count of the shelf must not be mistaken for the count of the evidence.
+    assert comp["evaluated_total"] + comp["untested_total"] == 28, (
+        "the three reference baselines are not candidates and must not be counted as either")
 
 
 def test_the_two_meanings_of_champion_are_both_recorded(written_summary):
     """Conflating them is how a true sentence becomes a wrong one."""
     comp = written_summary["model_composition"]
-    assert len(comp["champion_pool"]) == 13, comp["champion_pool"]
+    assert len(comp["champion_pool"]) == 15, comp["champion_pool"]
     assert comp["champion_pool_category"] == "machine-learning models"
     assert set(comp["daily_best_model_families"]) == {"A_STAT", "B_ML", "C_DL", "E_QUANTILE"}, (
         "the Agent ranks across every family that writes a best_model, not across champion_pool")

@@ -124,6 +124,11 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "express 'the answer is this much of feature A plus that much of feature B', so it cannot "
         "represent an interaction like 'the 15th matters, but only in a month with a holiday'. "
         "Fast, stable, and the honest floor a tree model has to beat."},
+    "Huber": {"family": "Linear", "summary":
+        "A straight-line fit whose loss stops growing quadratically once a residual gets large, "
+        "so a single enormous day pulls it far less than it pulls an ordinary linear fit. This "
+        "series has single days ten times the local level, which is exactly the situation the "
+        "loss was designed for. Registered as a candidate and not yet measured."},
     "Lasso": {"family": "Linear", "summary":
         "Ridge's cousin with a penalty that can drive coefficients to exactly zero, so it selects "
         "features as it fits. Useful when most inputs are irrelevant, which is often true of a "
@@ -132,6 +137,11 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "A blend of ridge and lasso. It keeps lasso's ability to discard features while handling "
         "correlated features more gracefully — and calendar features are heavily correlated, "
         "since day-of-month and business-day-of-month largely say the same thing."},
+    "GBDT_L1": {"family": "Boosted trees", "summary":
+        "Boosted trees trained on absolute error, splitting on actual feature values rather than "
+        "on the 255-bin histogram its faster sibling uses. Slower, and on a few thousand rows "
+        "that costs little; the binning is an approximation precisely at the extreme values this "
+        "series carries its information in. Registered as a candidate and not yet measured."},
     "RandomForest": {"family": "Bagged trees", "summary":
         "Many deep trees, each grown on a different random sample of rows and features, then "
         "averaged. Averaging independent errors is what makes it robust; it captures interactions "
@@ -192,6 +202,11 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
     "ETS": {"family": "Statistical", "summary":
         "Exponential smoothing — a weighted average of the past where recent observations count "
         "for more, with optional trend and seasonal terms. Uses only the target's own history."},
+    "ETS_DAMPED": {"family": "Statistical", "summary":
+        "The same method with the trend damped, so a trend it has picked up flattens out as the "
+        "forecast reaches further ahead instead of continuing indefinitely. Usually the safer of "
+        "the two at longer horizons, where an undamped trend can run away from the level. "
+        "Registered as a candidate and not yet measured."},
     "THETA": {"family": "Statistical", "summary":
         "A classical decomposition method: de-trend the series, forecast the pieces, recombine. "
         "Strong on smooth seasonal series and a well-known competition benchmark."},
@@ -376,9 +391,19 @@ def model_pool() -> Dict[str, Dict]:
                          "class": "(unavailable)", "missing_library": lib,
                          "hyperparameters": {"set_by_pipeline": [], "library_default": [],
                                              "n_total": 0}}
+    # Has anybody recorded a result for this model? Derived from the experiment ledger by
+    # `model_catalog`, never declared. Carried on every pool entry so the Models page can
+    # badge an untested model rather than showing it beside a champion undifferentiated,
+    # which is how Ridge came to be the Lab's default selection with no recorded result.
+    from model_catalog import status_of, measured_targets, untested_badge, EVALUATED
+
     for name, d in out.items():
         d.update(DESCRIPTIONS.get(name, {"family": "—", "summary": ""}))
         d["description_kind"] = "general description, not a measured claim"
+        d["status"] = status_of(name)
+        d["measured_on"] = list(measured_targets(name))
+        d["gate_eligible"] = d["status"] == EVALUATED
+        d["status_note"] = "" if d["status"] == EVALUATED else untested_badge(name)
     return out
 
 
@@ -469,6 +494,31 @@ def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
     promoted = sorted({r["point_model"] for r in load_registry()["recipes"]})
     off_pool = [m for m in promoted if m not in champion_pool]
 
+    # How many of these have a result anybody could quote? Counted, not assumed.
+    #
+    # Adding this changed the picture the sentence paints. Measured the day it was added,
+    # only 8 of the 28 non-baseline entries had a row in experiments/log.csv, so a sentence
+    # saying "13 machine-learning models compete on each target" was describing a shelf
+    # rather than a body of evidence. The counts below let the sentence say both.
+    #
+    # The ledger is the right test rather than a harsh one: a registry recipe cites a
+    # ledger run_id and registry.verify_against_log checks it, so a model with no ledger
+    # row cannot become a champion however many times it has been executed.
+    from model_catalog import EVALUATED, status_of
+
+    evaluated, untested = [], []
+    for name, entry in pool.items():
+        if client_category(entry) == "reference baselines":
+            continue
+        (evaluated if status_of(name) == EVALUATED else untested).append(name)
+    # `client_category` and `model_catalog.BASELINE` must agree about which entries are
+    # rulers, or one of the two counts is wrong. Checked here rather than left to trust.
+    from model_catalog import BASELINE
+    _rulers = {n for n, e in pool.items() if client_category(e) == "reference baselines"}
+    assert _rulers == {n for n in pool if status_of(n) == BASELINE}, (
+        "the client categories and the model catalogue disagree about which entries are "
+        "reference baselines")
+
     return {
         "counts": counts,
         "members": members,
@@ -477,6 +527,10 @@ def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
         "champion_pool_category": CHAMPION_POOL_CATEGORY,
         "champion_pool": champion_pool,
         "champion_pool_size": len(champion_pool),
+        "evaluated": sorted(evaluated),
+        "untested": sorted(untested),
+        "evaluated_total": len(evaluated),
+        "untested_total": len(untested),
         "promoted_by_registry": promoted,
         "promoted_outside_champion_pool": off_pool,
         "daily_best_model_families": sorted({e["pipeline"] for e in pool.values()}),
@@ -506,6 +560,16 @@ def client_framing(pool: Optional[Dict[str, Dict]] = None) -> str:
     if counts["reference baselines"]:
         sentence += (f"; {counts['reference baselines']} further entries are reference "
                      f"baselines, not competitors")
+    # The clause that stops the sentence describing a shelf as though it were evidence.
+    #
+    # "Recorded result" is the precise claim and it is narrower than "has been run": A_STAT
+    # runs daily and writes a leaderboard into its run folder without entering anything in
+    # experiments/log.csv. What the ledger holds is what a recipe can cite and what the
+    # publication checks can read, so a model outside it has no quotable number.
+    if comp["untested_total"]:
+        sentence += (f". Of those, {comp['evaluated_total']} have a recorded result on at "
+                     f"least one target and {comp['untested_total']} are registered "
+                     f"candidates with no recorded result yet")
     return sentence + "."
 
 

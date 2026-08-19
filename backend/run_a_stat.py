@@ -186,9 +186,14 @@ A_STAT_MODELS: Dict[str, Dict[str, str]] = {
                "summary": "Predict the mean of the last N observations (default 7). A smoothing "
                           "reference with no trend or seasonal term."},
     "ETS": {"role": "forecast",
-            "summary": "Exponential smoothing — a weighted average of the past where recent "
-                       "observations count for more, with optional trend and seasonal terms. "
-                       "Uses only the target's own history."},
+            "summary": "Exponential smoothing, which is a weighted average of the past where "
+                       "recent observations count for more, with optional trend and seasonal "
+                       "terms. Uses only the target's own history."},
+    "ETS_DAMPED": {"role": "forecast",
+                   "summary": "The same method with a damped trend, so a trend it has "
+                              "picked up flattens out as the forecast reaches further "
+                              "ahead instead of continuing indefinitely. Usually the safer "
+                              "of the two at longer horizons."},
     "SARIMAX": {"role": "forecast",
                 "summary": "Seasonal ARIMA with optional external regressors. Models the series "
                            "through its own autocorrelation and differencing, and is the only "
@@ -260,12 +265,19 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
         y_pred = np.repeat(float(y_tr.tail(w).mean()), n).astype(float)
         return y_pred, *_nan_pi(n)
 
-    if m == "ETS":
-        ets_ov = ov.get("ETS", {})
+    if m in ("ETS", "ETS_DAMPED"):
+        # One branch, two entries. ETS_DAMPED differs from ETS in exactly one setting, so a
+        # second copy of this block would be a second place for the seasonal fallback and the
+        # interval extraction to drift.
+        ets_ov = ov.get(m, ov.get("ETS", {}))
         trend = None if ets_ov.get("trend") in (None, "None") else ets_ov.get("trend", "add")
         seasonal = None if ets_ov.get("seasonal") in (None, "None") else ets_ov.get("seasonal", "add")
         periods = int(ets_ov.get("seasonal_periods", 12))
-        damped = bool(ets_ov.get("damped_trend", False))
+        damped = True if m == "ETS_DAMPED" else bool(ets_ov.get("damped_trend", False))
+        if damped and trend is None:
+            # statsmodels refuses a damped trend with no trend to damp, and the refusal
+            # arrives as an exception the caller would swallow into a naive fallback.
+            trend = "add"
         if seasonal and len(y_tr) < 2 * periods:
             seasonal = None
         try:
