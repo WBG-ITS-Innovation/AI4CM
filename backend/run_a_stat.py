@@ -88,8 +88,25 @@ def _ops_daily_from_monthly(daily_hist: pd.Series, monthly_forecast: pd.Series) 
     return out.dropna()
 
 
-def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[int]) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
+def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[int],
+                  eval_start: Optional[str] = None,
+                  eval_end: Optional[str] = None) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
+    """Annual rolling-origin folds, optionally bounded to an evaluation window.
+
+    ``eval_start`` / ``eval_end`` are INCLUSIVE bounds on the TARGET dates a fold scores.
+    Both default to ``None``, which is the behaviour this function has always had: fold
+    over every full year in the file. That default is correct for the reporting run this
+    module was written for, and wrong for anything that compares models by eye, because
+    the last year in the file is the sealed holdout.
+
+    B_ML's ``build_yearly_folds`` already took these bounds and this is the same rule, so
+    a run bounded to train and dev covers the same years in both families. A fold that
+    falls entirely outside the bounds is dropped; one that straddles an edge is trimmed
+    to it, because a partial block is a smaller sample rather than a wrong one.
+    """
     years = sorted(set(idx.year))
+    lo = pd.Timestamp(eval_start) if eval_start else None
+    hi = pd.Timestamp(eval_end) if eval_end else None
     folds=[]
     for Y in years:
         if Y - years[0] < min_years: 
@@ -99,20 +116,45 @@ def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[in
         tr_end = tr_end_cand[-1]
         ts_span = idx[(idx >= pd.Timestamp(f"{Y}-01-01")) & (idx <= pd.Timestamp(f"{Y}-12-31"))]
         if ts_span.empty: continue
+        if lo is not None:
+            ts_span = ts_span[ts_span >= lo]
+        if hi is not None:
+            ts_span = ts_span[ts_span <= hi]
+        if ts_span.empty: continue
         folds.append((tr_end, ts_span[0], ts_span[-1]))
     # If want_folds is None, use ALL folds (thorough mode). Otherwise limit to last N folds.
     if want_folds is not None and want_folds > 0 and len(folds) > want_folds:
         folds = folds[-want_folds:]
     return folds
 
-def _fallback_fold(idx: pd.DatetimeIndex, horizon: int) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
-    """Used when yearly folds cannot be built; always return at least one fold if there is enough history to test `horizon`."""
+def _fallback_fold(idx: pd.DatetimeIndex, horizon: int,
+                   eval_start: Optional[str] = None,
+                   eval_end: Optional[str] = None) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
+    """Used when yearly folds cannot be built; always return at least one fold if there is enough history to test `horizon`.
+
+    The bounds are applied to the index BEFORE the block is carved, not to the block
+    afterwards. Trimming afterwards would be worse than useless: this fallback takes the
+    last ``te_len`` rows of the file, and on a bounded run those rows are exactly the ones
+    the bound exists to exclude, so the caller would silently get an empty fold list from
+    a function whose contract is "always return at least one fold". Restricting the index
+    first means the fallback returns a real fold inside the window, or an honest nothing.
+    """
+    if eval_end:
+        idx = idx[idx <= pd.Timestamp(eval_end)]
     n = len(idx)
     if n <= horizon + 5: 
         return []
     te_len = max(horizon, min(12, n//4))
     te_end = idx[-1]; te_start = idx[-te_len]
     tr_end = idx[-(te_len + horizon)]
+    if eval_start:
+        # Only the scored block moves. ``tr_end`` is history, and history before the
+        # evaluation start is exactly what the model is supposed to learn from.
+        lo = pd.Timestamp(eval_start)
+        if te_end < lo:
+            return []
+        if te_start < lo:
+            te_start = idx[idx >= lo][0]
     return [(tr_end, te_start, te_end)]
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -307,6 +349,10 @@ def main():
     folds = None if folds_raw is None else int(folds_raw)  # None = use ALL folds (thorough mode)
     minyrs  = int(ov.get("min_train_years", 4))
     demo    = ov.get("demo_clip_months")
+    # Both default to None, so an unbounded reporting run is byte-identical to before.
+    # The Lab sets eval_end so an exploratory run never folds into the sealed window.
+    eval_start = ov.get("eval_start") or None
+    eval_end   = ov.get("eval_end") or None
 
     for k,v in [("TG_FAMILY","A_STAT"),("TG_MODEL_FILTER",model),("TG_TARGET",target),
                 ("TG_CADENCE",cadence),("TG_HORIZON",horizon),("TG_DATA_PATH",data),
@@ -332,15 +378,30 @@ def main():
         ops_month.rename("forecast").to_csv(cad_dir/f"{target}_ops_baseline_monthly.csv")
 
     idx = y_all.index
-    folds_list = _yearly_folds(idx, minyrs, folds)
+    folds_list = _yearly_folds(idx, minyrs, folds, eval_start=eval_start, eval_end=eval_end)
+    if eval_start or eval_end:
+        _log(f"Evaluation window bounded: [{eval_start or 'start'} .. {eval_end or 'end'}] "
+             f"-> {len(folds_list)} fold(s)")
     if not folds_list:
         _log("WARNING: Not enough full-year coverage; using recent sliding-window fold.")
-        folds_list = _fallback_fold(idx, horizon)
+        folds_list = _fallback_fold(idx, horizon, eval_start=eval_start, eval_end=eval_end)
         if not folds_list:
-            # last-ditch: naive test on last horizon
+            # Last-ditch block, still inside the bound. Reaching past the bound here was
+            # the quiet way a bounded run could end up scoring the sealed window: the
+            # last-horizon block of an unrestricted index is precisely the newest data.
+            bounded = idx
+            if eval_start:
+                bounded = bounded[bounded >= pd.Timestamp(eval_start)]
+            if eval_end:
+                bounded = bounded[bounded <= pd.Timestamp(eval_end)]
+            if len(bounded) < max(horizon, 2) + 2:
+                raise ValueError(
+                    f"No dates fall in window [{eval_start or 'start'} .. {eval_end or 'end'}] "
+                    f"with enough history to test horizon {horizon}: "
+                    f"{len(bounded)} row(s) available.")
             _log("WARNING: Minimal fallback — using last-horizon test block.")
-            te_end = idx[-1]; te_start = idx[-max(horizon, 2)]
-            tr_end = idx[-(max(horizon, 2) + 1)]
+            te_end = bounded[-1]; te_start = bounded[-max(horizon, 2)]
+            tr_end = bounded[-(max(horizon, 2) + 1)]
             folds_list = [(tr_end, te_start, te_end)]
 
     # ── The holdout read, recorded ────────────────────────────────────────────
@@ -486,4 +547,12 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         _log(f"ERROR: {e}")
+        # See the C_DL runners: one report shape across all four families. TG_OUT_ROOT is
+        # read from the environment rather than from `main`'s locals, because the failure
+        # may have happened before `main` bound anything.
+        try:
+            from runner_errors import write_error_report
+            write_error_report(os.environ.get("TG_OUT_ROOT", "outputs"), e, context="A_STAT")
+        except Exception:
+            pass
         raise

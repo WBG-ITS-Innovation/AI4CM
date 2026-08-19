@@ -19,6 +19,10 @@ def main():
         date_col=_getenv("TG_DATE_COL", "date"),
         folds=overrides.get("folds", 3),  # None = use ALL folds (thorough mode)
         min_train_years=int(overrides.get("min_train_years", 4)),
+        # See the univariate runner: the config carried these, the runner did not read
+        # them, so no caller could bound where an evaluation ended.
+        eval_start=overrides.get("eval_start", None),
+        eval_end=overrides.get("eval_end", None),
         model_filter=_getenv("TG_MODEL_FILTER", "").strip() or None,
         quantiles=tuple(overrides.get("quantiles", [0.1,0.5,0.9])),
         lags_daily=tuple(overrides.get("lags_daily", [1,5,20])),
@@ -51,4 +55,14 @@ def main():
     print(f"[runner] Elapsed: {time.time()-t0:.1f}s")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as _e:
+        # See the C_DL runners: one report shape across all four families.
+        try:
+            from runner_errors import write_error_report
+            write_error_report(os.environ.get("TG_OUT_ROOT", "outputs"), _e,
+                               context="E_QUANTILE multivariate")
+        except Exception:
+            pass
+        raise

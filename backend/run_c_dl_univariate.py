@@ -83,6 +83,9 @@ def main() -> None:
         # against the same persistence number as the other families. Override
         # with TG_PARAM_OVERRIDES {"eval_start": null} to fold over all years.
         eval_start=ov.get("eval_start", _TEST_START),
+        # No default: the holdout is the floor here, so the ceiling has to be asked
+        # for. The Lab asks for it on every exploratory run.
+        eval_end=ov.get("eval_end", None),
         device=str(ov.get("device", "auto")),
         quick_mode=bool(ov.get("quick_mode", False)),
         thorough_mode=bool(ov.get("thorough_mode", False)),
@@ -116,6 +119,10 @@ def main() -> None:
         _log("[runner] DONE")
     except Exception as e:
         _log(f"[runner] ERROR: {e}")
+        # One report shape across all four families, so the Lab has one thing to read
+        # and can say what happened in plain words instead of printing a traceback.
+        from runner_errors import write_error_report
+        write_error_report(out_root, e, context="C_DL univariate")
         raise
 
 if __name__ == "__main__":
