@@ -12,18 +12,24 @@ Three tasks. All delivered, and two produced findings larger than the tasks them
 | 2 | Sealed-window predictions for the champions | done — required a **new harness**; the champion turned out **not reproducible** |
 | 3 | Final measured table, champion vs naive and vs Ops | done — supersedes the July deck |
 
-> ## ⚠️ The two findings that matter most
+> ## ⚠️ Read this before citing anything below
 >
-> **1. `ws2_tune`'s DEV fold is scored against 4 holdout rows.** It calls `assert_selection_free`
-> on evaluation *origins* (all DEV) and then reads truth at `origin + H` — 4 of which land in the
-> sealed window. So every champion credential in `registry/recipes.json` includes 4 holdout
-> observations. This is **selection on holdout data**, the one thing the four-window split exists
-> to prevent. Measured impact on DEV MAE: Revenues 0.82%, Expenditure 1.16%, stock 0.51%.
+> **1. `ws2_tune`'s DEV fold is scored against 4 holdout rows — TOP-PRIORITY, blocks client
+> sharing.** It calls `assert_selection_free` on evaluation *origins* (all DEV) and then reads truth
+> at `origin + H` — 4 of which land in the sealed window. So every champion credential in
+> `registry/recipes.json` includes 4 holdout observations: **selection on holdout data**, the one
+> thing the four-window split exists to prevent. Impact on DEV MAE is small (Revenues 0.82%,
+> Expenditure 1.16%, stock 0.51%) and that **does not change what it is**. Fix in its own scoped
+> session before the Task 3 numbers go to a client. Pinned by an inverted test (open item 1).
 >
 > **2. The champion recipes are not reproducible.** The script that produced their credentials is
-> absent from the repository. Reconstruction differs by **5.1% / 8.1% / 19.5%**, with n=250 against
-> a logged n=262. Sealed-window figures therefore **supersede** those credentials rather than
-> extend them.
+> absent from the repository. Reconstruction differs by **5.1% / 8.1% / 19.5%** at n=250 against a
+> logged n=262. Sealed-window figures **supersede** those credentials rather than extend them, and
+> `dev_reconstruction()` reports the gap beside every figure (open item 2).
+>
+> **3. The Task 3 table is the client-facing set and supersedes the July deck.** Every earlier
+> "N% better than the Treasury's current method" figure is withdrawn — those were measured against a
+> zero baseline.
 
 ---
 
@@ -87,12 +93,24 @@ over those rows.
 Every C_DL model is **48–58% worse** than the Treasury's current method, where the artifact claimed
 23–36% better.
 
-**Method note, since it was against my recommendation.** I proposed correcting the column in place —
-the bug was in the comparator, not the predictions, and the metrics were exactly reproducible from
-the stored predictions (5/5 MAEs matching to 1e-6). Full retraining was chosen instead, so the fresh
-run's MAEs differ from 2026-08-04's (e.g. MLP 6.88e7 against 4.72e7): those are different models,
-not corrected ones. The old run was left intact as the record of its own date, with only its wrong
-column cleared.
+### Decision recorded: retraining, and what the fresh run is not
+
+I proposed correcting the column in place — the bug was in the comparator, not the predictions, and
+the metrics were exactly reproducible from the stored predictions (5/5 MAEs matching to 1e-6). Full
+retraining was chosen instead, **reviewed and accepted**. The consequences are recorded here rather
+than left to be inferred:
+
+* **The 2026-08-18 C_DL run is a NEW run, not a corrected 2026-08-04.** Retraining produced
+  different models, so its MAEs are not comparable to the older run's — e.g. MLP **6.88e7** against
+  the old **4.72e7**. Neither number is wrong; they are different fits.
+* **Only the ops column may be compared across the two.** The corrected ops figures replace the
+  zero-baseline ones as *the* Ops comparison for C_DL; the MAE, RMSE and interval columns of the two
+  runs are separate measurements.
+* **2026-08-04 stays intact** as the record of what was computed on its own date. Only its wrong
+  column was cleared, with an `OPS_SKILL_CLEARED.md` beside it stating the removed values and why.
+
+So a reader comparing the two runs should compare *ops skill against the current method*, and not
+read the MAE difference as an improvement or a regression.
 
 ---
 
@@ -144,10 +162,20 @@ cannot be read as continuous with the credentials.
 
 ---
 
-## Task 3 — the final measured table
+## Task 3 — THE CLIENT-FACING NUMBERS
+
+**These supersede the July deck.** Any earlier figure of the form "N% better than the Treasury's
+current method" is withdrawn — those were computed against a baseline of zero (see the ops-baseline
+session), and the corrected margins are roughly a quarter of what they implied.
 
 **Sealed window (TEST 2025-01-01..2025-08-06), h=5, embargoed, `PURPOSE_REPORT` logged.**
-This supersedes the July deck figures. Also at `reports/sealed_window_champion_vs_ops.csv`.
+Machine-readable copy: `reports/sealed_window_champion_vs_ops.csv`.
+
+> **Sharing gate.** Open item 1 — `ws2_tune`'s DEV fold reads 4 holdout rows — **must be fixed
+> before these numbers go to a client.** The sealed-window figures below are themselves clean
+> (embargoed, origin-bounded, logged); what is not clean is the DEV credential that selected the
+> champions in the first place. A client asking "how was this model chosen?" deserves an answer that
+> does not include holdout data.
 
 | Target | Role | Model | n | MAE | skill vs naive | **skill vs Ops** |
 |---|---|---|---:|---:|---:|---:|
@@ -161,7 +189,7 @@ This supersedes the July deck figures. Also at `reports/sealed_window_champion_v
 Ops MAE: Revenues 54,741,553 · Expenditure 56,076,535. `n/a` on the stock target because the method
 aggregates a flow to an annual total and a balance level has none — not invented.
 
-**How to read this honestly.**
+**How to read this honestly** — and these caveats travel with the table, not in a footnote:
 
 * **Revenues is the strong case**: +32% over the current method, and the champion beats the best
   non-champion on the ops comparison (+32.0% vs +20.9%) despite a *higher* MAE — because ResidualRF
@@ -171,22 +199,81 @@ aggregates a flow to an annual total and a balance level has none — not invent
 * **The stock target has no ops comparison at all**, and is `withheld`.
 * `n=146` rather than 156: 4 rows lost to the embargo, the rest to incomplete features at the
   window edge.
+* **These are a measurement of the champion *recipe*, not a continuation of its logged
+  credentials** — which are not reproducible (open item 2). The reconstruction gap on DEV is 5.13%
+  (Revenues), 8.12% (Expenditure), 19.45% (stock), and `dev_reconstruction()` reports it beside any
+  sealed-window figure so the two are never conflated.
 
 ---
 
 ## Open items
 
-1. **`ws2_tune`'s DEV fold reads 4 holdout rows** — the leakage finding above. Fixing it changes
-   what the tuner optimises and what the registry credentials mean, so it needs its own session.
-   `test_sealed_window_report.py` pins it and will fail once fixed.
-2. **The champion credentials are unreproducible** — the WS4 harness is gone. Either reconstruct it
-   or formally supersede the credentials with figures from this harness.
-3. **`b_ml_pipeline` keeps a divergent ops method** (12-year shift, flat spread). No zero bug, but
-   it is not the Treasury method; it is unused for reporting and should be deleted or delegated.
-4. **Expenditure still has no non-champion sealed predictions**, so its "best alternative" row is
-   empty. One `b_ml` run over the sealed window would fill it.
-5. **`backend/forecast_runs/**` is gitignored**, so artifact corrections do not appear in any diff
-   and cannot be reviewed as one. Worth deciding whether reporting artifacts should be tracked.
+### 1. TOP PRIORITY — `ws2_tune`'s DEV fold is scored against holdout rows
+
+**Must be fixed in its own scoped session, before anything from these credentials is shared with a
+client.** Magnitude does not soften what it is: **selection on holdout data.**
+
+`ws2_tune.make_folds` calls `assert_selection_free` on the evaluation **origins** — all DEV — and
+then reads truth at `origin + H`, 4 of which land in the sealed window (2025-01-01, 01-02, 01-03,
+01-06). The guard passes because it is checking the wrong dates. Every champion credential in
+`registry/recipes.json` therefore includes 4 holdout observations.
+
+Measured impact on DEV MAE: Revenues **0.82%**, Expenditure **1.16%**, stock target **0.51%**.
+
+**Pinned by** `backend/tests/test_sealed_window_report.py::test_the_tuners_dev_fold_is_scored_against_holdout_rows`.
+The pin is inverted on purpose: it **passes while the leak exists** and **fails once it is fixed**,
+with an assertion message instructing the fixer to delete it. A companion,
+`::test_the_borrowed_selection_path_still_lacks_the_embargo`, pins the related 5-row training
+embargo gap the same way. So neither can be quietly lost, and neither can be "fixed" without
+someone noticing.
+
+Why it was not fixed here: correcting a selection path changes what the tuner optimises and what
+every registry credential means. That is not an artifact-regeneration change.
+
+### 2. Known limitation — the champion credentials are not reproducible
+
+The script that produced them is absent from the repository. Runs are stamped
+`feature_names=['ws4:ratio']` / `['ws4:raw']`, `fold_scheme="DEV confirmation, single 2024 fold"`
+(a string no current script emits), `per_fold: []`, one recorded feature name; there is no
+`scripts/ws4_*.py`, and the surviving WS4 reports re-run tests rather than regenerating figures.
+
+Reconstruction gap: Revenues **5.13%**, Expenditure **8.12%**, stock **19.45%**, at n=250 against a
+logged n=262. Parameter mismatch is ruled out — `champion_estimator` asserts every recipe-declared
+parameter against `available_models()` — so the gap is fold geometry plus this harness's embargo.
+
+**Mitigation in place:** `sealed_window_report.dev_reconstruction()` recomputes the DEV figure and
+returns it alongside the logged credential with the delta and an explanatory note, so no
+sealed-window number can be presented as continuous with credentials it cannot reproduce.
+`::test_it_states_the_gap_to_the_logged_credential` fails if that stops being true.
+
+Either reconstruct the WS4 harness, or formally supersede the credentials with figures from this
+harness. Recorded as a limitation, not a defect to be worked around.
+
+### 3. DECIDED — reporting artifacts stay untracked
+
+`backend/forecast_runs/**` **remains gitignored**. The tracked surface is deliberate and stays as
+it is:
+
+* the **scorecard** (`forecasts/scorecard.csv`) stays **tracked** — it is the durable record of
+  scored claims, and its header is pinned to `SCORECARD_COLUMNS` by test;
+* **vault retention** covers everything else, which is what `private_vault/` exists for;
+* run artifacts stay out of version control, so artifact corrections do not appear in a diff.
+
+The practical consequence, stated so it is not rediscovered: **this session's artifact work is not
+reviewable as a diff.** The commit is source-only. Verification is by re-running the reproduction
+commands, and by the `OPS_SKILL_CLEARED.md` notes left beside each corrected file.
+
+### 4. Expenditure has no non-champion sealed predictions
+
+Its "best alternative" row in the Task 3 table is empty because no other model has sealed-window
+predictions for that target. **Deliberately not added this session.** One `b_ml` run over the sealed
+window would fill it.
+
+### 5. `b_ml_pipeline` keeps a divergent ops method
+
+`shift(12).rolling(36)` within month-groups — a 12-**year** shift — with a flat spread. No zero bug,
+but it is not the Treasury method. Unused for reporting; should be deleted or delegated like the
+other three.
 
 ---
 
