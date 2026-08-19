@@ -34,6 +34,7 @@ from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
+import ops_baseline_view as obv  # the Treasury's planning method, from the one construction
 st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
 inject_global_css()
 inject_design_system()
@@ -89,40 +90,27 @@ def _load_outputs(base_dir: Path) -> Tuple[Optional[pd.DataFrame], Optional[pd.D
 
 # ──────────────────────────────────────────────────────────────────────
 # Baseline helpers
+#
+# `_weekday_mean_baseline` and `_read_ops_baseline` used to live here, and both are gone. The
+# first invented a day-of-week mean of the actuals whenever the real baseline was missing and
+# the chart labelled it "Ops baseline"; the second read a run-folder CSV that every B_ML run
+# writes empty. `frontend/ops_baseline_view.py` documents both defects and the evidence.
 # ──────────────────────────────────────────────────────────────────────
-def _weekday_mean_baseline(df: pd.DataFrame) -> Optional[pd.Series]:
-    """Fallback baseline derived from Actuals for display only."""
-    if "date" not in df.columns or "y_true" not in df.columns:
-        return None
-    dfx = df[["date","y_true"]].dropna().copy()
-    dfx["date"] = pd.to_datetime(dfx["date"])
-    dfx = dfx.set_index("date")
-    dfx["dow"] = dfx.index.dayofweek
-    prof = dfx.groupby("dow")["y_true"].mean()
-    out = dfx.index.to_series().apply(lambda d: prof.get(d.dayofweek, np.nan))
-    out.index = dfx.index
-    return out
+@st.cache_data(show_spinner=False, ttl=300)
+def _ops_baseline_cached(base_dir_str: str, target: str):
+    """The Treasury's current planning method for this run, or a reason there is none.
 
-def _read_ops_baseline(base_dir: Path, target: str) -> Optional[pd.Series]:
-    daily_file = base_dir / f"{target}_ops_baseline_daily.csv"
-    monthly_file = base_dir / f"{target}_ops_baseline_monthly.csv"
-    if daily_file.exists():
-        df = _read_csv(daily_file)
-        if {"date","forecast"}.issubset(df.columns):
-            return pd.Series(df["forecast"].values, index=pd.to_datetime(df["date"]))
-    if monthly_file.exists():
-        dfm = _read_csv(monthly_file)
-        if "date" in dfm.columns and "forecast" in dfm.columns:
-            dfm["date"] = pd.to_datetime(dfm["date"])
-            dfm = dfm.dropna(subset=["date"]).set_index("date").sort_index()
-            parts = []
-            for ts, v in dfm["forecast"].items():
-                days = pd.date_range(ts.replace(day=1), ts, freq="B")
-                if len(days):
-                    parts.append(pd.Series(float(v)/len(days), index=days))
-            if parts:
-                return pd.concat(parts).sort_index()
-    return None
+    Cached because it starts the backend interpreter, and Streamlit reruns this whole file on
+    every interaction. Both arguments are plain strings so they hash as cache keys: a leading
+    underscore would tell Streamlit NOT to hash them, which would return the first run's
+    baseline for every other run.
+    """
+    return obv.compute(Path(base_dir_str), target)
+
+
+def _ops_baseline(base_dir: Path, target: str):
+    """`(series, reason)` for the Ops baseline. One of the two is always None."""
+    return _ops_baseline_cached(str(base_dir), target)
 
 # ──────────────────────────────────────────────────────────────────────
 # Formatting helpers
@@ -658,14 +646,27 @@ with tab_overlay:
         line=dict(color="#1e293b", width=2.5),
     )
 
-    # Baseline
-    ops = _read_ops_baseline(base_dir, tgt)
-    if ops is None:
-        ops = _weekday_mean_baseline(df_t)
-    if ops is not None and not ops.empty:
+    # ── The Ops baseline: the Treasury's current planning method ──────────────────────────
+    #
+    # Read from `ops_baseline_view`, which asks the backend for the same comparator the
+    # leaderboard's `skill_vs_ops_pct` was computed against. Verified on one real run: the
+    # ops_MAE recomputed from this series matches the stored leaderboard figure exactly.
+    #
+    # It used to read `<target>_ops_baseline_daily.csv` from the run folder, which was wrong
+    # twice over. For the stock target no such file exists, because the method does not apply
+    # to a balance, and the code fell through to a day-of-week mean of the ACTUALS and drew
+    # that under the name "Ops baseline" -- five values spanning 1.38% of their own mean, so a
+    # flat line a reader would take for the Treasury's method. For the flows the file exists
+    # but every B_ML run writes it empty, and an all-NaN series is not an empty one, so it
+    # passed the `not ops.empty` guard and `.resample().sum()` turned it into a line of zeros.
+    #
+    # So: no invented baseline, and "has real numbers in it" is the question asked.
+    ops, ops_why = _ops_baseline(base_dir, tgt)
+    if obv.usable(ops):
         ops = ops.loc[(ops.index >= s_true.index.min()) & (ops.index <= s_true.index.max())]
         if _freq:
             ops = ops.resample(_freq).sum() if treat_as_flow else ops.resample(_freq).last()
+        ops = ops.dropna()
         if not ops.empty:
             fig.add_scatter(
                 x=ops.index, y=ops.values,
@@ -720,6 +721,13 @@ with tab_overlay:
     )
     plotly_chrome(fig)
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+
+    # Say what the comparison line is, or say why there is not one. A chart that quietly loses
+    # its comparator invites the reader to assume the model had nothing to beat.
+    if obv.usable(ops):
+        st.caption(obv.CAPTION_WHY_FLAT)
+    elif ops_why:
+        st.caption(ops_why)
 
     # Small multiples
     with st.expander("Per-horizon breakdown (first selected model)", expanded=False):

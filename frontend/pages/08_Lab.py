@@ -5,7 +5,7 @@ import html
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 import pandas as pd
 import plotly.express as px
@@ -35,6 +35,7 @@ from i18n import t as _t  # this page's tooltips are its own, and are translated
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import plotly_chrome  # presentation only
+import ops_baseline_view as obv  # the Treasury's planning method, one construction
 st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
 inject_global_css()
 
@@ -287,38 +288,43 @@ def _scroll_term(container, text: str, height: int = 360):
     )
 
 
-def _baseline_series(out_root: Path, target: str, cadence: str) -> Optional[pd.Series]:
+def _baseline_series(base_dir: Path, target: str, cadence: str) -> Tuple[Optional[pd.Series], Optional[str]]:
+    """The Treasury's current planning method over this run's dates, or a reason there is none.
+
+    This used to read ``<target>_ops_baseline_daily.csv`` out of the run folder. Every B_ML run
+    writes that file with no numbers in it (measured: 0 non-NaN of 2763 rows, in all 14 run
+    folders present), so the helper returned None and the chart quietly dropped its comparison
+    line with nothing said. A reader then sees a model with nothing to beat.
+
+    It now asks the backend for the same comparator the leaderboard's ``skill_vs_ops_pct`` was
+    computed against, and returns a reader-facing reason when there genuinely is not one -- a
+    balance has no Ops baseline at all, because the method totals a flow over a year and a
+    balance is a level. See ``frontend/ops_baseline_view.py``.
     """
-    Tries to load Ops baseline forecast series if present.
-    Supports both daily baseline and monthly baseline that can be spread over business days.
-    """
+    series, why = _ops_baseline(base_dir, target)
+    if not obv.usable(series):
+        return None, why
+
     cad = cadence.lower()
+    if cad == "weekly":
+        series = series.resample("W-FRI").sum()
+    elif cad == "monthly":
+        series = series.resample("ME").sum()
+    return series.dropna(), None
 
-    def _read(p: Path):
-        if not p.exists():
-            return None
-        df = pd.read_csv(p)
-        if not {"date", "forecast"}.issubset(df.columns):
-            return None
-        s = pd.Series(df["forecast"].values, index=pd.to_datetime(df["date"], errors="coerce")).dropna()
-        return s if not s.empty else None
 
-    daily = _read(out_root / f"{target}_ops_baseline_daily.csv") or _read(out_root / cad / f"{target}_ops_baseline_daily.csv")
-    if daily is not None:
-        return daily if cad == "daily" else (daily.resample("W-FRI").sum() if cad == "weekly" else daily.resample("ME").sum())
+@st.cache_data(show_spinner=False, ttl=300)
+def _ops_baseline_cached(base_dir_str: str, target: str):
+    """Cached because it starts the backend interpreter, and Streamlit reruns this file often.
 
-    monthly = _read(out_root / f"{target}_ops_baseline_monthly.csv") or _read(out_root / cad / f"{target}_ops_baseline_monthly.csv")
-    if monthly is not None:
-        parts = []
-        for ts, val in monthly.items():
-            days = pd.date_range(ts.replace(day=1), ts, freq="B")
-            if len(days):
-                parts.append(pd.Series(float(val) / len(days), index=days))
-        if parts:
-            dd = pd.concat(parts).sort_index()
-            return dd if cad == "daily" else (dd.resample("W-FRI").sum() if cad == "weekly" else monthly)
+    Both arguments are plain strings so they hash as cache keys. A leading underscore would tell
+    Streamlit NOT to hash them, which would hand every run the first run's baseline.
+    """
+    return obv.compute(Path(base_dir_str), target)
 
-    return None
+
+def _ops_baseline(base_dir: Path, target: str):
+    return _ops_baseline_cached(str(base_dir), target)
 
 
 # -------------------------------------------------------------------
@@ -857,7 +863,11 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
                 g = pred[pred["model"] == m]
                 fig.add_scatter(x=g["date"], y=g["y_pred"], name=m, mode="lines")
 
-            base = _baseline_series(Path(out_real), target, cadence)
+            # The comparison line, read from the run's own predictions so the origins are the
+            # ones this run actually forecast from. `p.parent` rather than `out_real`, because
+            # a weekly or monthly run keeps its predictions in a cadence subfolder.
+            base, base_why = _baseline_series(p.parent, target, cadence)
+            _base_drawn = False
             if base is not None and len(base):
                 rng = (pred["date"].min(), pred["date"].max())
                 b = base[(base.index >= rng[0]) & (base.index <= rng[1])]
@@ -867,9 +877,17 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
                         name="Ops baseline", mode="lines",
                         line=dict(dash="dot"),
                     )
+                    _base_drawn = True
 
             plotly_chrome(fig)
             st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+
+            # Say what the comparison line is, or say why there is not one. Silence here reads
+            # as "this model had nothing to beat", which is the one wrong conclusion available.
+            if _base_drawn:
+                st.caption(obv.CAPTION_WHY_FLAT)
+            elif base_why:
+                st.caption(base_why)
         else:
             st.caption("No predictions_long.csv found in the outputs folder.")
 
