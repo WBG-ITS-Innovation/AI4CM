@@ -24,8 +24,8 @@ sys.path.insert(0, str(REPO / "backend"))
 pytest.importorskip("streamlit", reason="streamlit is installed in frontend/.venv only")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-DASHBOARD = FRONTEND / "pages" / "01_Dashboard.py"
-HISTORY = FRONTEND / "pages" / "02_History.py"
+DASHBOARD = FRONTEND / "pages" / "03_Dashboard.py"
+HISTORY = FRONTEND / "pages" / "05_History.py"
 
 
 @pytest.fixture(autouse=True)
@@ -150,7 +150,7 @@ def test_dashboard_reconciles_its_ranking_with_the_integrity_report():
     )
 
 
-# ── item 7: 02_History crashed with an empty runs directory ───────────────────
+# ── item 7: 05_History crashed with an empty runs directory ───────────────────
 
 def test_history_renders_with_an_empty_runs_directory(tmp_path, monkeypatch):
     """The live crash: df[visible] on an empty frame raised
@@ -163,7 +163,7 @@ def test_history_renders_with_an_empty_runs_directory(tmp_path, monkeypatch):
     at = AppTest.from_file(str(HISTORY), default_timeout=60)
     at.run()
     assert not at.exception, (
-        "02_History still raises with an empty runs directory: "
+        "05_History still raises with an empty runs directory: "
         + "; ".join(str(e.value) for e in at.exception)
     )
 
@@ -316,7 +316,7 @@ NOT_REPORTED_TEXT = "not reported"
 
 # ── item 3: the benchmark series reaches the Forecast chart ───────────────────
 
-FORECAST = FRONTEND / "pages" / "05_Forecast.py"
+FORECAST = FRONTEND / "pages" / "01_Forecast.py"
 
 
 def test_forecast_chart_plots_the_benchmark_as_its_own_trace():

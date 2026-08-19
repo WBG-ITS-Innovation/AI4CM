@@ -4,7 +4,7 @@ Tests for the run-folder creation logic that caused the NameError crash.
 
 The original bug:
     NameError: name 'out_root' is not defined
-    at line 618 of pages/00_Lab.py
+    at line 618 of pages/08_Lab.py
 
 Root cause: `new_run_folders()` was imported but never called, so
 `out_root`, `run_dir`, and `run_id` were undefined at module scope,
@@ -17,7 +17,7 @@ These tests verify:
 3. `run_dir` is a parent of `out_root`.
 4. The env dict can be constructed safely once folders are created.
 5. Edge-case run labels (special characters, very long names) are safe.
-6. The module-level code in 00_Lab.py no longer references out_root/run_dir.
+6. The module-level code in 08_Lab.py no longer references out_root/run_dir.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ import pytest
 # Shared helpers
 # ---------------------------------------------------------------------------
 FRONTEND_DIR = Path(__file__).resolve().parents[1]
-LAB_PAGE = FRONTEND_DIR / "pages" / "00_Lab.py"
+LAB_PAGE = FRONTEND_DIR / "pages" / "08_Lab.py"
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ class TestRunLabelEdgeCases:
 # 3. Static analysis: module-level code must NOT reference out_root/run_dir
 # ---------------------------------------------------------------------------
 class TestLabPageStaticSafety:
-    """Verify 00_Lab.py doesn't reference out_root or run_dir at module level."""
+    """Verify 08_Lab.py doesn't reference out_root or run_dir at module level."""
 
     def test_out_root_not_at_module_level(self):
         """out_root must only appear inside the button handler or in functions."""
