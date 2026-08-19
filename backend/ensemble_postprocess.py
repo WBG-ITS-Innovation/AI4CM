@@ -39,8 +39,8 @@ def ensure_dirs(root: str):
     os.makedirs(root, exist_ok=True)
     os.makedirs(os.path.join(root, "plots"), exist_ok=True)
 
-def is_stock(target: str) -> bool:
-    return target.strip().lower() in {"state budget balance","balance","t0"}
+# Copy 5 of 7. One definition now: backend/target_kinds.py.
+from target_kinds import is_stock  # noqa: E402,F401
 
 def coverage_width(y_true, lo, hi):
     if lo is None or hi is None: return (np.nan, np.nan)

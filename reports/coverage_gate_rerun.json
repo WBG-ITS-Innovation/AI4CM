@@ -1,0 +1,707 @@
+{
+  "verdicts": [
+    {
+      "target": "Revenues",
+      "registry_verdict": "publishable",
+      "verdict_before": "publishable",
+      "verdict_after": "publishable",
+      "changed": false,
+      "coverage_measured": 0.7805,
+      "coverage_n": 205,
+      "coverage_source": "e_quantile/GBQuantile over 205 rows (test)",
+      "coverage_gate": true,
+      "decided_by_before": null,
+      "decided_by_after": null
+    },
+    {
+      "target": "Expenditure",
+      "registry_verdict": "withheld",
+      "verdict_before": "withheld",
+      "verdict_after": "withheld",
+      "changed": false,
+      "coverage_measured": null,
+      "coverage_n": 0,
+      "coverage_source": "no interval artifact exists for this target",
+      "coverage_gate": null,
+      "decided_by_before": "accuracy_vs_naive",
+      "decided_by_after": "accuracy_vs_naive"
+    },
+    {
+      "target": "State budget balance",
+      "registry_verdict": "withheld",
+      "verdict_before": "withheld",
+      "verdict_after": "withheld",
+      "changed": false,
+      "coverage_measured": 0.7372,
+      "coverage_n": 156,
+      "coverage_source": "e_quantile/GBQuantile over 156 rows (test)",
+      "coverage_gate": true,
+      "decided_by_before": "accuracy_vs_naive",
+      "decided_by_after": "accuracy_vs_naive"
+    }
+  ],
+  "measurements": [
+    {
+      "family": "a_stat",
+      "target": "Revenues",
+      "model": "ETS",
+      "n": 0,
+      "nominal": null,
+      "nominal_source": "A_STAT writes the interval columns but leaves them empty",
+      "overall_coverage": null,
+      "large_day_coverage": null,
+      "n_large_day": 0,
+      "mean_width": null,
+      "magnitude_basis": "",
+      "windows": [],
+      "note": "y_lo/y_hi are present but empty in every row, so this family published no intervals for this run"
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "ElasticNet",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8782051282051282,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 204324582.38375002,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "ExtraTrees",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8782051282051282,
+      "large_day_coverage": 0.875,
+      "n_large_day": 16,
+      "mean_width": 144956133.93837413,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "HistGBDT",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8012820512820513,
+      "large_day_coverage": 0.625,
+      "n_large_day": 16,
+      "mean_width": 139099721.4730976,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "Lasso",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8717948717948718,
+      "large_day_coverage": 0.875,
+      "n_large_day": 16,
+      "mean_width": 194898585.33948854,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "LightGBM",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8461538461538461,
+      "large_day_coverage": 0.875,
+      "n_large_day": 16,
+      "mean_width": 149556077.81412718,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "RandomForest",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8782051282051282,
+      "large_day_coverage": 0.75,
+      "n_large_day": 16,
+      "mean_width": 146090639.83989307,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "Ridge",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8717948717948718,
+      "large_day_coverage": 0.875,
+      "n_large_day": 16,
+      "mean_width": 195032487.8334467,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "Revenues",
+      "model": "XGBoost",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8525641025641025,
+      "large_day_coverage": 0.625,
+      "n_large_day": 16,
+      "mean_width": 147364755.704,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "DCNN",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8774680603948897,
+      "large_day_coverage": 0.9826589595375722,
+      "n_large_day": 173,
+      "mean_width": 166567000.59249732,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "GRU",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8635307781649245,
+      "large_day_coverage": 0.8554913294797688,
+      "n_large_day": 173,
+      "mean_width": 141830247.3804705,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "LSTM",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8780487804878049,
+      "large_day_coverage": 0.8728323699421965,
+      "n_large_day": 173,
+      "mean_width": 147541476.94197735,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "MLP",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8763066202090593,
+      "large_day_coverage": 0.9710982658959537,
+      "n_large_day": 173,
+      "mean_width": 351025608.6979635,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "TRANSFORMER",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8554006968641115,
+      "large_day_coverage": 0.953757225433526,
+      "n_large_day": 173,
+      "mean_width": 194519919.4091694,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "e_quantile",
+      "target": "Revenues",
+      "model": "GBQuantile",
+      "n": 205,
+      "nominal": 0.8,
+      "nominal_source": "read from the quantile column names (p10 to p90)",
+      "overall_coverage": 0.7804878048780488,
+      "large_day_coverage": 0.8095238095238095,
+      "n_large_day": 21,
+      "mean_width": 98880044.24382678,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "e_quantile",
+      "target": "Revenues",
+      "model": "ResidualRF",
+      "n": 205,
+      "nominal": 0.8,
+      "nominal_source": "read from the quantile column names (p10 to p90)",
+      "overall_coverage": 0.697560975609756,
+      "large_day_coverage": 0.38095238095238093,
+      "n_large_day": 21,
+      "mean_width": 65467544.08014971,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "a_stat",
+      "target": "State budget balance",
+      "model": "ETS",
+      "n": 0,
+      "nominal": null,
+      "nominal_source": "A_STAT writes the interval columns but leaves them empty",
+      "overall_coverage": null,
+      "large_day_coverage": null,
+      "n_large_day": 0,
+      "mean_width": null,
+      "magnitude_basis": "",
+      "windows": [],
+      "note": "y_lo/y_hi are present but empty in every row, so this family published no intervals for this run"
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "CatBoost_L1",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8974358974358975,
+      "large_day_coverage": 0.875,
+      "n_large_day": 16,
+      "mean_width": 733430857.928576,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "CatBoost_Quantile",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8974358974358975,
+      "large_day_coverage": 0.875,
+      "n_large_day": 16,
+      "mean_width": 733430857.928576,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "ElasticNet",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.9230769230769231,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 922404779.2226489,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "ExtraTrees",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8846153846153846,
+      "large_day_coverage": 0.6875,
+      "n_large_day": 16,
+      "mean_width": 802074733.2035502,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "HistGBDT",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.9102564102564102,
+      "large_day_coverage": 0.8125,
+      "n_large_day": 16,
+      "mean_width": 964309984.7943213,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "HistGBDT_L1",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8782051282051282,
+      "large_day_coverage": 0.75,
+      "n_large_day": 16,
+      "mean_width": 752419362.7946467,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "Lasso",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.9166666666666666,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 854593849.6241779,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "LightGBM",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.9358974358974359,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 1045940235.8846436,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "LightGBM_L1",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.9102564102564102,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 794034429.9626694,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "RandomForest",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8717948717948718,
+      "large_day_coverage": 0.5,
+      "n_large_day": 16,
+      "mean_width": 896408035.8787552,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "Ridge",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.9230769230769231,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 859143883.329821,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "XGBoost",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.9358974358974359,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 1002079318.3240005,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "b_ml",
+      "target": "State budget balance",
+      "model": "XGBoost_L1",
+      "n": 156,
+      "nominal": 0.9,
+      "nominal_source": "ConfigBML.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8846153846153846,
+      "large_day_coverage": 0.75,
+      "n_large_day": 16,
+      "mean_width": 756719771.932,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "e_quantile",
+      "target": "State budget balance",
+      "model": "GBQuantile",
+      "n": 156,
+      "nominal": 0.8,
+      "nominal_source": "read from the quantile column names (p10 to p90)",
+      "overall_coverage": 0.7371794871794872,
+      "large_day_coverage": 0.9375,
+      "n_large_day": 16,
+      "mean_width": 400963149.2237447,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "e_quantile",
+      "target": "State budget balance",
+      "model": "LGBMQuantile",
+      "n": 156,
+      "nominal": 0.8,
+      "nominal_source": "read from the quantile column names (p10 to p90)",
+      "overall_coverage": 0.6666666666666666,
+      "large_day_coverage": 0.5,
+      "n_large_day": 16,
+      "mean_width": 348707726.5833661,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "e_quantile",
+      "target": "State budget balance",
+      "model": "ResidualRF",
+      "n": 156,
+      "nominal": 0.8,
+      "nominal_source": "read from the quantile column names (p10 to p90)",
+      "overall_coverage": 0.5384615384615384,
+      "large_day_coverage": 0.5,
+      "n_large_day": 16,
+      "mean_width": 205462165.21222463,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "test"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "DCNN",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8716608594657376,
+      "large_day_coverage": 0.9479768786127167,
+      "n_large_day": 173,
+      "mean_width": 235748900.90394884,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "GRU",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8536585365853658,
+      "large_day_coverage": 0.930635838150289,
+      "n_large_day": 173,
+      "mean_width": 218830499.96982744,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "LSTM",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8623693379790941,
+      "large_day_coverage": 0.9075144508670521,
+      "n_large_day": 173,
+      "mean_width": 220221321.3850998,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "MLP",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8739837398373984,
+      "large_day_coverage": 0.976878612716763,
+      "n_large_day": 173,
+      "mean_width": 2026909495.9167078,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    },
+    {
+      "family": "c_dl",
+      "target": "Revenues",
+      "model": "TRANSFORMER",
+      "n": 1722,
+      "nominal": 0.9,
+      "nominal_source": "ConfigCDL.nominal_pi, captured in artifacts/config.json",
+      "overall_coverage": 0.8716608594657376,
+      "large_day_coverage": 0.9248554913294798,
+      "n_large_day": 173,
+      "mean_width": 281556722.0366394,
+      "magnitude_basis": "the forecast for that day",
+      "windows": [
+        "dev",
+        "test",
+        "train"
+      ],
+      "note": ""
+    }
+  ]
+}

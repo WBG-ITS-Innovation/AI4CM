@@ -22,8 +22,14 @@ from statsmodels.tsa.forecasting.theta import ThetaModel
 
 def _log(msg: str): print(time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg, flush=True)
 
-def _is_stock(name: str) -> bool:
-    return str(name).strip().lower() in {"state budget balance", "balance", "net", "stock"}
+from evaluation_windows import (PURPOSE_REPORT, require_test_access,  # noqa: E402
+                                window_for as _window_for)
+
+# The implementation that diverged: it alone treated "net" and "stock" as stock targets and
+# "t0" as a flow, so a column named t0 would have been modelled as a level here and as a delta
+# in the other three families. Now one shared definition, whose alias set is the UNION of all
+# four -- see backend/target_kinds.py for why the union rather than a pick.
+from target_kinds import is_stock as _is_stock  # noqa: E402,F401
 
 def _resample(df: pd.DataFrame, target: str, cadence: str, date_col: str) -> pd.Series:
     df = df.copy()
@@ -46,53 +52,41 @@ def _resample(df: pd.DataFrame, target: str, cadence: str, date_col: str) -> pd.
     ser.index.freq = ser.index.freq or pd.infer_freq(ser.index)
     return ser
 
-def _ops_monthly_baseline(series_daily: pd.Series, years: int = 3) -> pd.Series:
-    """Monthly Treasury baseline from flows (3y annual mean × month share)."""
-    m = series_daily.resample("ME").sum().astype(float)
-    if m.empty: return m
-    df = m.to_frame("val")
-    df["year"] = df.index.year; df["month"] = df.index.month
-    counts = df.groupby("year")["val"].size()
-    full_years = counts.index[counts.eq(12)].tolist()
+# ── the Ops baseline: delegated, not re-implemented ───────────────────────────
+#
+# This module used to carry its own copy of the Treasury planning method, and that copy had the
+# same defect as C_DL's: the intraday profile was built from the same month in a PREVIOUS year and
+# then mapped onto the current year's dates with ``.reindex(days, fill_value=0.0)``. Labels cannot
+# match across years, so every weight became zero and the daily baseline was identically zero
+# (measured here: 2000 of 2000 values exactly 0.00).
+#
+# Four independent copies of this arithmetic existed, and fixing one in the ops-baseline session
+# left three wrong -- which is the argument for delegation rather than a fourth patch. These now
+# call ``backend/ops_baseline``, which is the single construction the scorecard, the leaderboards
+# and this runner all share.
 
-    out = []
-    for ts, mo, Y in zip(df.index, df["month"], df["year"]):
-        prev = [Y - k for k in range(1, years + 1)]
-        if not all(py in full_years for py in prev):
-            out.append(np.nan); continue
-        annual_prev = df[df["year"].isin(prev)].groupby("year")["val"].sum().reindex(prev)
-        annual_mean = annual_prev.mean()
-        mon_vals = [df.loc[(df["year"] == py) & (df["month"] == mo), "val"].iloc[0] for py in prev]
-        shares = [mv / annual_prev.loc[py] if annual_prev.loc[py] > 0 else np.nan for mv, py in zip(mon_vals, prev)]
-        share_mean = np.nanmean(shares)
-        out.append(annual_mean * share_mean if np.isfinite(share_mean) else np.nan)
-    base = pd.Series(out, index=m.index).ffill()
-    base.index.freq = "ME"
+
+def _ops_monthly_baseline(series_daily: pd.Series, years: int = 3) -> pd.Series:
+    """Monthly Treasury baseline (3-year annual mean x month share), via ops_baseline."""
+    from c_dl_pipeline import ops_monthly_baseline_treasury
+    base = ops_monthly_baseline_treasury(series_daily, years_window=years)
+    if len(base):
+        base.index.freq = "ME"
     return base
 
+
 def _ops_daily_from_monthly(daily_hist: pd.Series, monthly_forecast: pd.Series) -> pd.Series:
-    """Distribute monthly baseline to business days using recent daily profiles."""
-    pieces: List[pd.Series] = []
-    for ts, mv in monthly_forecast.dropna().items():
-        days = pd.date_range(ts.replace(day=1), ts, freq="B")
-        if not len(days): continue
-        profiles = []
-        for k in (1, 2, 3):
-            d0 = (ts - pd.DateOffset(years=k)).replace(day=1)
-            d1 = (ts - pd.DateOffset(years=k))
-            hist = daily_hist[(daily_hist.index >= d0) & (daily_hist.index <= d1)].reindex(
-                pd.date_range(d0, d1, freq="B"), fill_value=0.0
-            )
-            if hist.sum() > 0:
-                p = (hist / hist.sum()).reindex(days, fill_value=0.0).values
-                profiles.append(p)
-        if profiles:
-            prof = np.mean(np.vstack(profiles), axis=0)
-            prof = prof / (prof.sum() if prof.sum() > 0 else 1.0)
-        else:
-            prof = np.ones(len(days)) / len(days)
-        pieces.append(pd.Series(float(mv) * prof, index=days))
-    return pd.concat(pieces) if pieces else pd.Series(dtype=float)
+    """Spread the monthly baseline over working days, evenly.
+
+    ``flat`` is the canonical spread: it is the method as stated ("spread across working days"),
+    it emits no negative planning figures, and it is the harsher comparison. See
+    ``backend/ops_baseline`` for the measured reasoning.
+    """
+    from c_dl_pipeline import ops_daily_from_monthly
+    from ops_baseline import SPREAD_FLAT
+    out = ops_daily_from_monthly(daily_hist, monthly_forecast, method=SPREAD_FLAT)
+    return out.dropna()
+
 
 def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[int]) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
     years = sorted(set(idx.year))
@@ -121,6 +115,72 @@ def _fallback_fold(idx: pd.DatetimeIndex, horizon: int) -> List[Tuple[pd.Timesta
     tr_end = idx[-(te_len + horizon)]
     return [(tr_end, te_start, te_end)]
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE MODELS THIS FAMILY OFFERS -- ONE SOURCE OF TRUTH
+#
+# Item 6 part 3. `model_reference.DESCRIPTIONS` described ETS and Theta while `model_pool()`
+# enumerated only B_ML and E_QUANTILE, so two descriptions were unreachable from the Models page
+# and no test could tell. The fix is not to delete the descriptions -- these are real production
+# models, and this module (not the unreferenced `a_stat_models_pipeline.py`) is the one
+# `scripts/run_daily_forecast.sh` invokes. The fix is to make the family enumerable, the same way
+# E_QUANTILE already is via its `registry_models()`.
+#
+# `_fc` dispatches on these names and now REFUSES an unknown one. It used to fall through to a
+# naive forecast, so `TG_MODEL_FILTER=XGBoost` would have produced a carried-forward last value
+# published under the label "XGBoost".
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: ``{NAME: {"summary": ..., "role": "forecast" | "baseline"}}``
+#: ``role`` matters for counting: a reference baseline is not a competing model, and summing the
+#: two would inflate any headline count shown to a client (see reports/gate_audit.md §4).
+A_STAT_MODELS: Dict[str, Dict[str, str]] = {
+    "NAIVE": {"role": "baseline",
+              "summary": "Carry the last observed value forward. The reference every other "
+                         "model is measured against, not a competitor."},
+    "WEEKDAY_MEAN": {"role": "baseline",
+                     "summary": "Predict each day with the historical average for that weekday. "
+                                "A calendar-only reference."},
+    "MOVAVG": {"role": "baseline",
+               "summary": "Predict the mean of the last N observations (default 7). A smoothing "
+                          "reference with no trend or seasonal term."},
+    "ETS": {"role": "forecast",
+            "summary": "Exponential smoothing — a weighted average of the past where recent "
+                       "observations count for more, with optional trend and seasonal terms. "
+                       "Uses only the target's own history."},
+    "SARIMAX": {"role": "forecast",
+                "summary": "Seasonal ARIMA with optional external regressors. Models the series "
+                           "through its own autocorrelation and differencing, and is the only "
+                           "A_STAT model that can take exogenous inputs."},
+    "STL_ARIMA": {"role": "forecast",
+                  "summary": "Split the series into trend, season and remainder (STL), forecast "
+                             "the remainder with ARIMA, then recombine. Useful when the seasonal "
+                             "shape is strong and stable."},
+    "THETA": {"role": "forecast",
+              "summary": "A classical decomposition method: de-trend the series, forecast the "
+                         "pieces, recombine. Strong on smooth seasonal series and a well-known "
+                         "competition benchmark."},
+}
+
+
+class UnknownAStatModel(ValueError):
+    """A model name this family does not implement."""
+
+
+def registry_models() -> Dict[str, str]:
+    """The models this family offers, as ``{name: description}``.
+
+    Mirrors ``e_quantile_daily_pipeline.registry_models()`` so both families are enumerable by the
+    same contract, and so a model cannot be added to the dispatch without appearing in the
+    reports, the Models page and the tests that enumerate it.
+    """
+    return {name: spec["summary"] for name, spec in A_STAT_MODELS.items()}
+
+
+def model_roles() -> Dict[str, str]:
+    """``{name: "forecast" | "baseline"}`` — so a count can exclude the references."""
+    return {name: spec["role"] for name, spec in A_STAT_MODELS.items()}
+
+
 # predictors — each returns (y_pred, y_lo, y_hi) as numpy arrays
 def _nan_pi(n: int) -> Tuple[np.ndarray, np.ndarray]:
     """Return NaN prediction interval arrays of length n."""
@@ -132,6 +192,12 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
     Returns (y_pred, y_lo, y_hi).  Models without native PIs return NaN for y_lo/y_hi.
     """
     m = model.upper()
+    if m not in A_STAT_MODELS:
+        raise UnknownAStatModel(
+            f"A_STAT does not implement {model!r}. Known models: "
+            f"{', '.join(sorted(A_STAT_MODELS))}. Refusing to forecast -- this used to fall "
+            f"through to a carried-forward last value, which would be published under the "
+            f"requested model's name.")
     n = len(idx)
     pi_alpha = float(ov.get("pi_alpha", 0.10))  # 90 % PI by default
 
@@ -208,8 +274,11 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
         y_pred = ThetaModel(y_tr).fit().forecast(n).values.astype(float)
         return y_pred, *_nan_pi(n)
 
-    y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
-    return y_pred, *_nan_pi(n)
+    # Unreachable: membership was checked above. Kept as an explicit failure rather than a
+    # silent naive fallback, so a model listed in A_STAT_MODELS but never wired here is caught.
+    raise UnknownAStatModel(
+        f"{m} is listed in A_STAT_MODELS but has no branch in _fc(); it was added to the "
+        f"registry without being implemented.")
 
 def _plot_overlay(df_slice: pd.DataFrame, out_png: Path, ops: Optional[pd.Series]):
     fig, ax = plt.subplots(figsize=(12,4))
@@ -274,6 +343,26 @@ def main():
             tr_end = idx[-(max(horizon, 2) + 1)]
             folds_list = [(tr_end, te_start, te_end)]
 
+    # ── The holdout read, recorded ────────────────────────────────────────────
+    # A_STAT folds over every full year, so its evaluation reaches 2025 -- the sealed holdout --
+    # on an ordinary run. That is legitimate: this module's own discipline says "TEST is run at
+    # the end of a milestone to report what would have happened", and reporting is not choosing.
+    # What was wrong is that it happened through NEITHER path: no gate, and no log entry, so the
+    # holdout was being read on every daily run with nothing recording it.
+    #
+    # purpose="report" therefore records without raising. No selection guard is added here,
+    # because this family makes no selection: it runs one model per invocation via
+    # TG_MODEL_FILTER and its leaderboard ranks that model against the persistence baseline.
+    _eval_dates = [t for (_tr, ts, te) in folds_list
+                   for t in idx[(idx >= ts) & (idx <= te)]]
+    _test_dates = [t for t in _eval_dates if _window_for(t) == "test"]
+    if _test_dates:
+        require_test_access(
+            f"A_STAT reporting evaluation for {target!r} at h={horizon} covers "
+            f"{len(_test_dates)} holdout target date(s) from {min(_test_dates).date()} to "
+            f"{max(_test_dates).date()}",
+            caller="run_a_stat.main", purpose=PURPOSE_REPORT)
+
     # ── Rolling-origin, h-step-ahead evaluation (C-3) ──
     # For every target date t in the fold's test window we refit the model on
     # the history up to the ORIGIN (t - h steps back) and take the h-step-ahead
@@ -329,8 +418,23 @@ def main():
         rows.append({"target":target,"horizon":horizon,"cadence":cadence,"model":m,
                      "MAE":_mae(g['y_true'],g['y_pred']),"RMSE":_rmse(g['y_true'],g['y_pred'])})
     metr=pd.DataFrame(rows); metr.to_csv(outroot/"metrics_long.csv", index=False)
-    lb=(metr.groupby("model",as_index=False)["MAE"].mean().sort_values("MAE")
+    # The identity columns must be carried onto EVERY row. This groupby used to aggregate MAE
+    # alone, dropping target/horizon/cadence -- and the persistence row below was concatenated
+    # *with* them, so the baseline row was identified and the model rows were not. A consumer
+    # asking "which model won for target X" got NaN for the winner. RMSE was dropped the same way,
+    # which is why it read as an all-null column despite being computed in metrics_long.
+    # NO selection guard here, deliberately. This family runs ONE model per invocation via
+    # TG_MODEL_FILTER and never chooses between models: the leaderboard ranks that model
+    # against the persistence baseline, which is a report, not a choice. A guard was added
+    # here in this session's first pass and immediately refused an ordinary run, because
+    # A_STAT legitimately evaluates over the reporting window. Ranking a model against a
+    # ruler is not selecting a model. (Separately: this path reads 2025 rows without going
+    # through require_test_access -- a pre-existing hole recorded in the session notes, not
+    # something a selection guard should paper over.)
+    lb=(metr.groupby("model",as_index=False)[["MAE","RMSE"]].mean().sort_values("MAE")
+           .assign(target=target, horizon=horizon, cadence=cadence)
            .assign(rank=lambda x: np.arange(1,len(x)+1)))
+    lb=lb[["target","horizon","cadence","model","MAE","RMSE","rank"]]
 
     # ✅ FIX STAT-2 / C-2: Persistence baseline (shared h-step ruler) + quality gate
     _stat_integrity = {"pipeline": "STAT", "target": target, "horizon": horizon}

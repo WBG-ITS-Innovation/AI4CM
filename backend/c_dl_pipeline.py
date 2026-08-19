@@ -118,8 +118,8 @@ def ensure_dirs(root: str):
     for sub in ["plots","artifacts"]:
         os.makedirs(os.path.join(root, sub), exist_ok=True)
 
-def is_stock(name: str) -> bool:
-    return name.strip().lower() in {"state budget balance","balance","t0"}
+# One definition for all four families -- see backend/target_kinds.py.
+from target_kinds import is_stock  # noqa: E402,F401
 
 def load_holidays(holidays_csv: Optional[str], idx: pd.DatetimeIndex) -> pd.Series:
     if not holidays_csv or not os.path.exists(holidays_csv):
@@ -233,8 +233,20 @@ def ops_daily_from_monthly(series: pd.Series, monthly_baseline: pd.Series, metho
                 hist_days = pd.date_range(my.replace(day=1), my, freq="B")
                 s = daily[(daily.index>=hist_days.min()) & (daily.index<=hist_days.max())].reindex(hist_days, fill_value=0.0)
                 if s.sum()>0:
-                    p = (s/s.sum()).reindex(days, fill_value=0.0).values
-                    profiles.append(p)
+                    # The shape must be carried across by POSITION, not by date label. This was
+                    # `.reindex(days, fill_value=0.0)`, and `days` are the working days of the
+                    # CURRENT month while the shape is indexed by those of the same month in a
+                    # PREVIOUS year -- no label ever matched, so every weight became 0.0 and the
+                    # whole daily baseline was identically zero (measured: 1983 of 1983 non-NaN
+                    # values exactly 0.00, while the monthly totals were correct). Every
+                    # MAE_skill_vs_Ops figure computed from it was therefore skill against a zero
+                    # forecast, overstating the margin roughly fourfold. Working-day counts
+                    # differ between months, so positions are mapped onto the target's length.
+                    w = (s/s.sum()).to_numpy(dtype=float)
+                    if len(w) != len(days):
+                        w = np.interp(np.linspace(0.0, 1.0, len(days)),
+                                      np.linspace(0.0, 1.0, len(w)), w)
+                    profiles.append(w)
             if profiles:
                 p = np.mean(np.vstack(profiles), axis=0)
                 p = p / (p.sum() if p.sum()>0 else 1.0)
@@ -397,6 +409,19 @@ def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int,
     if cutoff is not None:
         print(f"[DL] eval_start={cutoff.date()} pinned: {len(folds)} fold(s) kept, "
               f"{dropped} dropped for starting before it")
+
+    # The same hole A_STAT had. C_DL's runners default eval_start to TEST_START -- it reports on
+    # the holdout by design -- and that read went through neither the gate nor the log. Reporting
+    # is legitimate (it is what the holdout is for), so this records rather than refuses. No
+    # selection guard: fold construction chooses nothing.
+    from evaluation_windows import PURPOSE_REPORT, require_test_access, window_for
+    test_dates = [t for (_te, ts, tend) in folds
+                  for t in idx[(idx >= ts) & (idx <= tend)] if window_for(t) == "test"]
+    if test_dates:
+        require_test_access(
+            f"C_DL reporting evaluation covers {len(test_dates)} holdout target date(s) from "
+            f"{min(test_dates).date()} to {max(test_dates).date()}",
+            caller="c_dl_pipeline.yearly_folds", purpose=PURPOSE_REPORT)
     return folds
 
 def _last_window_fallback_masks(label_idx: np.ndarray, horizon: int) -> List[Tuple[np.ndarray, np.ndarray]]:
@@ -610,6 +635,13 @@ class MLPReg(nn.Module):
         b, L, C = x.shape
         return self.net(x.reshape(b, L*C)).squeeze(-1)
 
+# The catalogue lives in c_dl_registry (no torch import) so the Models page can enumerate this
+# family on a machine without torch. Re-exported here because this is where callers expect it.
+# Added in item 6: the artifact validator caught a published champion ("MLP") that was in no
+# enumerable pool, so a consumer reading the leaderboard could not look up what had won.
+from c_dl_registry import C_DL_MODELS, registry_models  # noqa: E402,F401
+
+
 def make_model(name: str, in_dim: int, seq_len: int, cfg: ConfigDL) -> nn.Module:
     n = name.lower()
     if n=="lstm":        return LSTMReg(in_dim, hid=96, layers=2, dropout=cfg.dropout)
@@ -740,7 +772,16 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
             if not stock:
                 y_daily = resample_cadence(df, target, "daily")
                 m_base  = ops_monthly_baseline_treasury(y_daily)
-                d_base  = ops_daily_from_monthly(y_daily, m_base, method="profile")
+                # FLAT is the canonical spread. It is the Treasury method as stated ("spread
+                # across working days"), it emits no negative planning figures, and it is the
+                # harsher comparison, so no margin is claimed that a softer construction
+                # manufactured. `profile` remains available and remains correct arithmetic, but on
+                # this data it inherits the series' negative days -- 22 negative daily revenue
+                # baselines over this run's rows -- which is not defensible as a planning figure.
+                # Keeping this aligned with `ops_baseline.DEFAULT_SPREAD` is what stops the
+                # leaderboard and the scorecard reporting against two different comparators.
+                from ops_baseline import DEFAULT_SPREAD
+                d_base  = ops_daily_from_monthly(y_daily, m_base, method=DEFAULT_SPREAD)
                 if cadence.lower()=="daily":
                     ops_series = d_base
                 elif cadence.lower()=="weekly":
@@ -926,6 +967,7 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                                 shift_diagnostic_horizon_aware,
                                 compute_skill_score,
                                 compute_persistence_baseline,
+                                validate_alignment_step_based,
                             )
                         except ImportError:
                             from backend.forecast_integrity import (
@@ -955,9 +997,47 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                                     "best_shift": shift_result.get("best_shift", 0),
                                     "is_lag0_issue": shift_result.get("is_lag0_issue", False),
                                     "is_persistence_like": shift_result.get("is_persistence_like", False),
-                                    "alignment_ok": True,
                                     "mask_target_at_origin": stock,
                                 })
+
+                                # ── alignment: CHECKED, not asserted ────────────────────
+                                # This field used to be the literal `True`. Nothing verified it,
+                                # so a DL run displayed a green alignment tick that no check had
+                                # earned -- and because the dashboard also defaulted a MISSING key
+                                # to True, "never checked" and "passed" were indistinguishable.
+                                #
+                                # The property it is supposed to attest is the one every other
+                                # family checks: in the modelling index, the target date must sit
+                                # exactly `h` positions after the origin date. build_sequences()
+                                # constructs them as idx[end_i] and idx[end_i + horizon] over
+                                # F.index, so F.index is the index those positions refer to.
+                                #
+                                # Written from the checker's own verdict, so a misalignment
+                                # produces False. If the check cannot run at all the key is
+                                # omitted entirely rather than guessed -- read_gate()-style, an
+                                # absent verdict must read as "not checked", never as a pass.
+                                try:
+                                    _align = validate_alignment_step_based(
+                                        df_pred_h, pd.DatetimeIndex(F.index), h)
+                                    _dl_integrity["alignment_ok"] = bool(
+                                        _align.get("alignment_ok", False))
+                                    _dl_integrity["n_misaligned"] = int(
+                                        _align.get("n_misaligned", 0))
+                                    _dl_integrity["misaligned_examples"] = _align.get(
+                                        "misaligned_examples", [])[:5]
+                                    _dl_integrity["alignment_checked"] = True
+                                    if not _dl_integrity["alignment_ok"]:
+                                        print(f"[DL][WARN] Alignment FAILED for {target} h={h}: "
+                                              f"{_dl_integrity['n_misaligned']} of "
+                                              f"{len(df_pred_h)} predictions are not exactly {h} "
+                                              f"steps after their origin.")
+                                except Exception as _ax:
+                                    # No verdict rather than a favourable one.
+                                    _dl_integrity.pop("alignment_ok", None)
+                                    _dl_integrity["alignment_checked"] = False
+                                    _dl_integrity["alignment_check_error"] = str(_ax)
+                                    print(f"[DL][WARN] Alignment check could not run for {target} "
+                                          f"h={h}: {_ax}. Reporting no verdict rather than a pass.")
                                 # Quality gate
                                 _QUALITY_GATE = 5.0
                                 if skill_pct < _QUALITY_GATE:
