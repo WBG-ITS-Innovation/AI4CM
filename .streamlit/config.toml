@@ -1,0 +1,41 @@
+# Console design tokens, adopted as the lab's look.
+#
+# Source: ~/Projects/ai4cm-ui/handoff/DESIGN_TOKENS.md §1.1. That document says the lab's own
+# palette already passes AA and "this is not a request to restyle" — the operator explicitly
+# overrode that line to take the console's look, so these are the console values.
+#
+# Streamlit 1.40.1 accepts exactly these six theme keys. Everything the tokens carry beyond
+# them (status inks, borders, type scale, tabular numerals, measure) lives in
+# frontend/ui_styles.py, because config cannot express it.
+#
+# Contrast re-measured independently rather than taken on trust (WCAG 2.x, sRGB):
+#   text on background              16.53:1   (threshold 4.5)
+#   text on secondary background    15.43:1
+#   primary on background            7.82:1
+#   primary on secondary background  7.30:1
+#   white on primary (button fill)   8.09:1
+# All pass; no pair needed adjusting. secondaryBackground vs background is 1.07:1 by design —
+# two adjacent surface tints are not a boundary carrying information (WCAG 1.4.11 does not
+# apply), and darkening it would cost text contrast for nothing.
+#
+# Greyscale separation of accent from background (BT.601 luma): 69 vs 251 = 182 of 255.
+
+[theme]
+base = "light"
+primaryColor = "#155860"                 # slate-teal
+backgroundColor = "#FCFBF9"              # warm paper
+secondaryBackgroundColor = "#F5F3F0"
+textColor = "#1A1C1E"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# The Deploy button can restart the app mid-demo; error details stay visible because a hidden
+# traceback in front of an audience is worse than a visible one.
+toolbarMode = "minimal"
+showErrorDetails = true
+
+[server]
+headless = true

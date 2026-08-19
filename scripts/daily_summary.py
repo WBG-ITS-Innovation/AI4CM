@@ -96,15 +96,38 @@ def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> 
         the series.  Skill above the threshold and "reproduces persistence"
         can both be true at once — measured against different baselines — and
         a model that only replays yesterday is not usable for planning even
-        when it clears the skill bar.
+        when it clears the skill bar;
+      * the intervals are miscalibrated (item 5).  This is the FOURTH distinct
+        verdict, and it used to be invisible here: a coverage failure arrived
+        only as `run_status=FAILED_QUALITY` or the generic "quality gate
+        failed", so an E_QUANTILE family withheld for broken intervals was
+        indistinguishable from one withheld for poor skill.  A model whose P50
+        is excellent and whose 80% band covers 43% of outcomes needs a
+        different fix from one that simply cannot forecast, and the reason a
+        family was withheld is what a treasury reader acts on.
+
+    The four verdicts — leakage, no signal, persistence-mimicry, coverage —
+    are deliberately independent conditions, each with its own phrasing, and
+    ``test_failure_mode_distinctness.py`` pins the separation.
     """
     reasons: list[str] = []
+    coverage_reasons = _coverage_failure_reasons(report or {})
     if report:
         status = str(report.get("run_status", "")).strip().upper()
+        generic = None
         if status == "FAILED_QUALITY":
-            reasons.append("run_status=FAILED_QUALITY")
-        elif report.get("quality_gate_passed") is False:
-            reasons.append("quality_gate_passed=false")
+            generic = "run_status=FAILED_QUALITY"
+        else:
+            # X9: read through the single canonical reader. This function previously checked
+            # only `quality_gate_passed`, so a B_ML run -- which wrote the INVERTED
+            # `quality_gate_failed` -- was reported as PASSING its gate when it had failed.
+            from forecast_integrity import read_gate
+            if read_gate(report) is False:
+                generic = "quality gate failed (per the family's integrity report)"
+        # Suppress the generic line only when the specific cause is already stated below.
+        # Dropping it unconditionally would hide failures that have no named cause.
+        if generic and not coverage_reasons:
+            reasons.append(generic)
     if leakage_flag:
         reasons.append("leakage flag raised")
     if report.get("signal_detected") is False:
@@ -113,7 +136,148 @@ def gate_reasons(report: dict, leakage_flag: bool, shift_flag: bool = False) -> 
         reasons.append(f"no signal beyond shuffled targets (ratio {ratio_s})")
     if shift_flag:
         reasons.append("forecast is persistence-like (shift diagnostic)")
+    reasons.extend(coverage_reasons)
     return reasons
+
+
+def _window_and_policy_fields(data_file) -> dict:
+    """Which window the run's data spans, and the champion-fixity statement.
+
+    P1. Two things a consumer could previously only guess. `windows` says where every
+    number came from -- the four-way split with its boundaries, plus which windows the
+    input file actually covers -- so "is this a holdout figure or a live one" is answerable
+    from the artifact. `champion_policy` says that a completed run did NOT re-choose a
+    model, which is the assumption a client would otherwise make on seeing numbers move.
+
+    Degrades with a stated reason rather than a bare omission, per the contract's §0
+    pattern.
+    """
+    out: dict = {}
+    try:
+        sys.path.insert(0, str(BACKEND_DIR))
+        from evaluation_windows import (LIVE_START, SELECTABLE_WINDOWS, TEST_END,
+                                        WINDOWS, window_for)
+
+        spans, latest = [], None
+        try:
+            dates = pd.to_datetime(pd.read_csv(data_file, usecols=["date"])["date"],
+                                   errors="coerce").dropna()
+            if len(dates):
+                latest = str(dates.max().date())
+                spans = sorted({window_for(d) for d in dates},
+                               key=lambda w: [x.name for x in WINDOWS].index(w))
+        except Exception:                          # noqa: BLE001 - the split is still worth stating
+            spans = []
+
+        out["windows"] = {
+            "definition": {w.name: {"start": w.start, "end": w.end, "purpose": w.purpose}
+                           for w in WINDOWS},
+            "selectable": sorted(SELECTABLE_WINDOWS),
+            "report_only": [w.name for w in WINDOWS if w.name not in SELECTABLE_WINDOWS],
+            "data_spans_windows": spans,
+            "latest_data_date": latest,
+            "test_sealed_through": TEST_END,
+            "live_begins": LIVE_START,
+            "note": ("Selection is permitted only on the selectable windows. LIVE is data "
+                     "that arrived after the holdout was sealed: it is scored against "
+                     "actuals and never used to choose a model, recipe, hyperparameter or "
+                     "threshold."),
+        }
+    except Exception as exc:                       # noqa: BLE001
+        out["windows_unavailable_reason"] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        from registry import champion_policy
+        out["champion_policy"] = champion_policy()
+    except Exception as exc:                       # noqa: BLE001
+        out["champion_policy_unavailable_reason"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def _composition_fields() -> dict:
+    """The model-composition block for SUMMARY.json, or an explicit reason it is absent.
+
+    Derived from ``model_reference.model_pool()``, which imports every family's registry. That
+    import can fail on a machine missing a modelling library, and a summary must not fail because
+    the *catalogue* could not be read -- the run itself is unaffected.
+
+    So absence follows the pattern documented in AGENT_ARTIFACT_CONTRACT.md §0: never a bare
+    missing key, always a companion field naming the reason. A consumer that finds
+    ``client_framing`` absent and ``client_framing_unavailable_reason`` present knows the
+    composition was not derivable here, as opposed to a writer that forgot to emit it.
+    """
+    try:
+        sys.path.insert(0, str(BACKEND_DIR))
+        from model_reference import client_framing, composition
+
+        comp = composition()
+        return {
+            "client_framing": client_framing(),
+            "model_composition": {
+                "counts": comp["counts"],
+                "members": comp["members"],
+                # The two different things "champion" means here. Conflating them is how a true
+                # sentence becomes a wrong one: `champion_pool` is what a registry recipe may
+                # promote, `daily_best_model_families` is every family this file writes a
+                # per-family `best_model` for -- and the Agent ranks across the latter.
+                "champion_pool": comp.get("champion_pool"),
+                "champion_pool_category": comp.get("champion_pool_category"),
+                "daily_best_model_families": comp.get("daily_best_model_families"),
+                # Integrity cross-check, carried so a consumer does not have to trust the
+                # sentence: any model a recipe actually promotes that is NOT in champion_pool.
+                # Non-empty means the eligible pool a client was told about is wrong.
+                "promoted_by_registry": comp.get("promoted_by_registry"),
+                "promoted_outside_champion_pool": comp.get("promoted_outside_champion_pool"),
+            },
+        }
+    except Exception as exc:                       # noqa: BLE001 - a catalogue, not the run
+        return {"client_framing_unavailable_reason":
+                f"could not derive the model composition: {type(exc).__name__}: {exc}"}
+
+
+def _coverage_failure_reasons(report: dict) -> list[str]:
+    """Interval miscalibration, phrased as its own verdict.
+
+    The nominal level is read as data (``coverage_nominal``) and only falls back to the key name
+    when a run predates that field — the level is a property of the fitted alphas, not of the
+    string that carries the number (audit field #2).
+
+    Deliberately says nothing about skill, leakage or persistence: a family whose intervals are
+    broken but whose median is excellent must be told exactly that.
+    """
+    out: list[str] = []
+    # 1. The family's own gate already named coverage. Trust it and quote it.
+    for r in report.get("quality_gate_reasons") or []:
+        if "coverage" in str(r).lower():
+            out.append(f"intervals miscalibrated: {r}")
+    if out:
+        return out
+
+    # 2. No named reason, but the numbers are present and outside the band.
+    measured = None
+    for key in ("coverage_p10_p90", "coverage"):
+        if _is_number(report.get(key)):
+            measured = float(report[key])
+            break
+    if measured is None:
+        for key, val in report.items():
+            if str(key).startswith("coverage_p") and _is_number(val):
+                measured = float(val)
+                break
+    if measured is None:
+        return out
+
+    nominal = report.get("coverage_nominal")
+    nominal = float(nominal) if _is_number(nominal) else 0.80
+    band = report.get("coverage_band")
+    if isinstance(band, (list, tuple)) and len(band) == 2 and all(_is_number(b) for b in band):
+        lo, hi = float(band[0]), float(band[1])
+    else:
+        lo, hi = max(0.0, nominal - 0.10), min(1.0, nominal + 0.10)
+    if not (lo <= measured <= hi):
+        out.append(f"intervals miscalibrated: coverage {measured:.1%} outside "
+                   f"[{lo:.0%}, {hi:.0%}] (nominal {nominal:.0%})")
+    return out
 
 
 def _fmt_money(x) -> str:
@@ -252,6 +416,19 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     # ── Skill vs persistence + run status, from the integrity report ──
     report = _read_json(_find_integrity_report(family_dir))
     info["integrity_found"] = bool(report)
+
+    # X11: a persistence baseline computed over zero prediction rows is not a baseline. It
+    # previously appeared in the leaderboard as an ordinary row, indistinguishable from one
+    # measured on real predictions, so a reader could not tell "computed on nothing" from
+    # "computed and equal to zero".
+    _n_pred = int(len(preds)) if preds is not None else 0
+    info["n_prediction_rows"] = _n_pred
+    _has_baseline = bool(report) and report.get("mae_persistence") is not None
+    info["baseline_without_predictions"] = bool(_has_baseline and _n_pred == 0)
+    if info["baseline_without_predictions"]:
+        info["gate_reasons"] = list(info.get("gate_reasons", [])) + [
+            "persistence baseline reported with zero prediction rows"
+        ]
     if _is_number(report.get("skill_pct")):
         info["skill_pct"] = f"{float(report['skill_pct']):.2f}%"
     if report.get("run_status"):
@@ -284,12 +461,24 @@ def summarize_family(name: str, family_dir: Path) -> dict:
     info["gate_reasons"] = gate_reasons(
         report, family_leakage_flag(info), family_shift_flag(info)
     )
+    # X10: ONE PUBLISHER, and this is not it. The family's integrity_report.json publishes the
+    # verdict; SUMMARY.json derives from it and from the summary-side flags. Both computing it
+    # independently is what let SUMMARY.json contradict integrity_report.json on the
+    # 2026-08-04 C_DL run. The derivation is recorded alongside the value so a reader can see
+    # which source produced it.
+    from forecast_integrity import read_gate
+    _published = read_gate(report) if info["integrity_found"] else None
     if info["gate_reasons"]:
         info["gate_passed"] = False
-    elif info["integrity_found"]:
-        info["gate_passed"] = True
-    else:
+        info["gate_source"] = "derived: summary-side flags raised"
+    elif _published is None:
         info["gate_passed"] = None  # never verified — must not look like a pass
+        info["gate_source"] = ("never verified: no integrity report, or it records no gate "
+                               "verdict")
+    else:
+        info["gate_passed"] = _published
+        info["gate_source"] = "published by the family's integrity_report.json"
+    info["gate_published"] = _published
 
     return info
 
@@ -333,6 +522,15 @@ def main() -> int:
     parser.add_argument("--mode", choices=["production", "backtest"], default="production",
                         help="production: warn when data is stale. backtest: the data "
                              "deliberately ends in the past; label the run instead of warning.")
+    # The contract gate. On by default: an artifact that fails the contract is one the Agent
+    # would read wrongly, so publishing it is the harm. --no-validate exists for diagnosing a
+    # broken run, not for getting past the gate.
+    parser.add_argument("--no-validate", action="store_true",
+                        help="skip the artifact contract check (diagnosis only)")
+    parser.add_argument("--strict-validate", action="store_true",
+                        help="promote contract warnings to errors; what a NEW run should meet")
+    parser.add_argument("--published-root", default=None, type=Path,
+                        help="also validate the published forecast issues under this directory")
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
@@ -416,10 +614,33 @@ def main() -> int:
 
     # Machine-readable twin of the text report, for downstream tooling.
     payload = {
+        # run_id: SUMMARY.json previously carried no identifier of its own run, so a consumer
+        # holding the file could not say which run produced it or join it to anything.
+        "run_id": run_dir.name,
+        "schema_version": 2,
         "run_date": args.run_date,
         "target": args.target,
         "cadence": args.cadence,
         "horizon": args.horizon,
+        # data_file: review C1. SUMMARY.txt has printed `Data file: <name>` since it was
+        # written; the JSON twin did not carry it, so two artifacts of the same run
+        # disagreed about whether the input was knowable, and a consumer that reached for
+        # `data_file` got None and rendered it. The name only -- the digest, row count and
+        # date range belong to provenance.json (contract 7), and duplicating them here
+        # would create a second place for them to drift.
+        "data_file": data_file.name,
+        # client_framing / model_composition: `model_reference.client_framing()` and
+        # `composition()` existed and were tested, and nothing ever wrote them -- so no artifact
+        # carried the composition and the Agent correctly reported "composition not recorded" on
+        # every run. A derived sentence nobody publishes is not a contract field.
+        #
+        # Written as BOTH the prose sentence a client reads and the counts it was derived from, so
+        # a consumer can requote the sentence or recompute from the numbers without re-deriving
+        # the categories itself. Never a single headline count: the entries are not one kind of
+        # thing (see reports/gate_audit.md §4).
+        **_composition_fields(),
+        # P1: where every number came from, and that champions were not re-chosen.
+        **_window_and_policy_fields(data_file),
         "families": [
             {
                 "name": s["name"],
@@ -432,6 +653,14 @@ def main() -> int:
                 "integrity_verified": s["integrity_found"],
                 "gate_passed": s["gate_passed"],
                 "gate_reasons": s["gate_reasons"],
+                # X10: which source produced the verdict above, and what the family itself
+                # published, so the two can never silently disagree again.
+                "gate_source": s.get("gate_source"),
+                "gate_published_by_family": s.get("gate_published"),
+                # X11: a persistence baseline without prediction rows is not a result. Recorded
+                # so a consumer can tell "baseline computed on nothing" from "baseline 0".
+                "n_prediction_rows": s.get("n_prediction_rows"),
+                "baseline_without_predictions": s.get("baseline_without_predictions"),
                 "leakage_flag": family_leakage_flag(s),
                 "shift_flag": family_shift_flag(s),
             }
@@ -454,6 +683,23 @@ def main() -> int:
     (run_dir / "SUMMARY.json").write_text(json.dumps(payload, indent=2))
 
     print(report)
+
+    # ── the contract gate ────────────────────────────────────────────────────────────────────
+    # SUMMARY.json and the per-family tables are a published interface, read by the AI4CM Agent.
+    # Validate the files that were just written, before anything downstream consumes them. This
+    # reads the ARTIFACTS -- the existing contract tests grep the writer's source, which is why no
+    # SUMMARY.json on disk carries schema_version even though every such test passes.
+    if not args.no_validate:
+        from artifact_validation import validate_run
+        vrep = validate_run(run_dir, strict=args.strict_validate,
+                            published_root=args.published_root)
+        print("\n" + "-" * 40)
+        print("ARTIFACT CONTRACT")
+        print(vrep.summary())
+        if not vrep.ok:
+            print("\nERROR: artifacts failed the contract and must not be published. "
+                  "Fix the writer, not the validator.", file=sys.stderr)
+            return 2
 
     if n_ok < len(families):
         print("ERROR: one or more requested families produced no output.", file=sys.stderr)

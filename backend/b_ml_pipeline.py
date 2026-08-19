@@ -29,7 +29,13 @@ from typing import Sequence, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+# pyplot is deferred: importing this module must not require a plotting stack. The Streamlit
+# frontend imports it to run a forecast and its venv has no matplotlib (it renders with Plotly),
+# so a module-level import crashed the forecast path. See backend/lazy_plot.py.
+try:
+    from lazy_plot import plt
+except ImportError:  # pragma: no cover - package-relative entry points
+    from backend.lazy_plot import plt
 
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, HistGradientBoostingRegressor
@@ -50,6 +56,14 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 
+# X9: the canonical gate writer. Imported at module level so it is unambiguously in scope
+# wherever the integrity report is finalised, rather than relying on a nested try-block import.
+try:
+    from forecast_integrity import write_gate
+except Exception:  # pragma: no cover - resolved via the package path in some entry points
+    from backend.forecast_integrity import write_gate
+
+
 # Optional libraries
 try:
     from xgboost import XGBRegressor  # type: ignore
@@ -62,6 +76,16 @@ try:
     HAVE_LGBM = True
 except Exception:
     HAVE_LGBM = False
+
+# CatBoost is optional and NOT currently installed in the project venv, so the two
+# CatBoost entries below do not register. The code is here so adding the dependency is a
+# one-line change rather than a code change -- but nothing has been measured with it, and
+# no result anywhere in this repository involves CatBoost.
+try:
+    from catboost import CatBoostRegressor  # type: ignore
+    HAVE_CATBOOST = True
+except Exception:
+    HAVE_CATBOOST = False
 
 
 # =========================
@@ -145,8 +169,10 @@ def ensure_dirs(root: Path):
     (root / "artifacts").mkdir(parents=True, exist_ok=True)
 
 
-def is_stock(target: str) -> bool:
-    return target.strip().lower() in {"state budget balance", "balance", "t0"}
+# One definition for all four families (backend/target_kinds.py). Four divergent copies used
+# to exist; A_STAT's set differed, so a column named "t0" would have been modelled as a delta
+# here and as a level there.
+from target_kinds import is_stock  # noqa: E402,F401
 
 
 def to_business_index(df: pd.DataFrame, date_col: str, target: str) -> pd.Series:
@@ -409,6 +435,20 @@ def available_models() -> Dict[str, object]:
         )
         models["LightGBM"] = LGBMRegressor(**_lgbm)
         models["LightGBM_L1"] = LGBMRegressor(objective="l1", **_lgbm)
+    if HAVE_CATBOOST:
+        # Same discipline as the other L1 variants: hyperparameters are principled
+        # defaults, and the L1 entry differs from nothing else because there is no
+        # squared-error CatBoost twin to compare against yet. UNABLATED -- these have
+        # not been run on any fold, so they must not be promoted or quoted until they
+        # have been through the same TRAIN-folds-then-one-DEV-confirmation protocol as
+        # workstream 1.
+        _cb = dict(iterations=800, learning_rate=0.05, depth=6, l2_leaf_reg=3.0,
+                   random_seed=0, verbose=False, allow_writing_files=False)
+        models["CatBoost_L1"] = CatBoostRegressor(loss_function="MAE", **_cb)
+        # Quantile loss at alpha=0.5 is absolute error, so this is the interval-capable
+        # sibling rather than a different model class.
+        models["CatBoost_Quantile"] = CatBoostRegressor(
+            loss_function="Quantile:alpha=0.5", **_cb)
     return models
 
 
@@ -694,6 +734,33 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
     if cfg.eval_start or cfg.eval_end:
         print(f"[pipeline] Evaluation window bounded: "
               f"[{cfg.eval_start or 'start'} .. {cfg.eval_end or 'end'}] -> {len(folds)} fold(s)")
+
+    # The last of the four families to route its holdout read through the ledger. A_STAT and
+    # C_DL were fixed in P1, E_QUANTILE on 2026-08-17; B_ML was the remaining gap
+    # (docs/sessions/2026-08-17-interval-calibration.md §7 item 5).
+    #
+    # It was not a theoretical one. The daily runner passes {"folds":1,"min_train_years":4} with
+    # no `eval_start`, and `folds_override` keeps the LAST fold -- which on this index is
+    # train<=2024-12-31 / test 2025-01-01..2025-08-06, i.e. nothing but the sealed holdout. So
+    # every B_ML daily run evaluated the holdout end to end while `experiments/test_access.log`
+    # recorded zero B_ML reads against 16 for A_STAT and 121 for C_DL.
+    #
+    # Reporting on the holdout is legitimate -- it is what the holdout is for -- so this records
+    # rather than refuses. Fold construction chooses nothing. Crowning a champion from these rows
+    # IS a selection, and that is refused separately by `assert_selection_free` further down.
+    #
+    # `test_start`/`test_end` are TARGET dates here (positions below are target positions and the
+    # origin is `pos - h`), so the dates gated are the dates scored, with no conversion needed.
+    from evaluation_windows import PURPOSE_REPORT, require_test_access, window_for
+    _holdout = [t for (_tr_end, _ts, _te) in folds
+                for t in s.index[(s.index >= _ts) & (s.index <= _te)]
+                if window_for(t) == "test"]
+    if _holdout:
+        require_test_access(
+            f"B_ML reporting evaluation for {cfg.target!r} at h={cfg.horizon} covers "
+            f"{len(_holdout)} holdout target date(s) from {min(_holdout).date()} to "
+            f"{max(_holdout).date()}",
+            caller="b_ml_pipeline.run_pipeline_ml", purpose=PURPOSE_REPORT)
     lags, wins = choose_recipe(cfg)
     print(f"[pipeline] Recipe: lags={lags}, windows={wins}, "
           f"delta_modeling={cfg.use_delta_modeling}, is_stock={is_stock(cfg.target)}")
@@ -834,6 +901,11 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 val_mae_fold = float(np.mean(abs_residuals))
                 train_mae_fold = float(np.mean(np.abs(y_tr_fit - estimator.predict(X_tr_fit))))
                 conformal_radius = float(np.quantile(abs_residuals, cfg.nominal_pi))
+                # C8: the advertised level is a property of the published interval, so it is
+                # recorded as DATA. Without it a consumer has y_lo/y_hi with no idea what
+                # coverage they claim, and scoring them against a guessed level produces a
+                # confident verdict about nothing (the lab rendered "not reported" instead).
+                _nominal_pi_used = float(cfg.nominal_pi)
                 ratio = val_mae_fold / train_mae_fold if train_mae_fold > 0 else np.nan
                 print(f"[pipeline] {model_name} fold {fold_idx}: "
                       f"train_MAE={train_mae_fold:.2f}, val_MAE={val_mae_fold:.2f}, "
@@ -1011,7 +1083,40 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                 glb["rank"] = range(len(glb))
                 print(f"[leaderboard] Persistence baseline MAE = {_mae_persist:.4f}")
 
-        glb[["target", "horizon", "model", "MAE", "rank"]].to_csv(out_root / "leaderboard.csv", index=False)
+        # BOTH comparators on every leaderboard row. "Better than a naive weekday repeat" and
+        # "better than the Treasury's current planning method" are different questions, and only
+        # the second is client-facing. Reporting only -- select_best_model and the publication
+        # gate are untouched and still turn on the naive ruler alone.
+        _lb_cols = ["target", "horizon", "model", "MAE", "rank"]
+        try:
+            import ops_baseline as _ops
+            _pl = pred_long.dropna(subset=["y_true", "y_pred"])
+            _tds = pd.to_datetime(_pl["target_date"], errors="coerce")
+            _ogs = (pd.to_datetime(_pl["origin_date"], errors="coerce")
+                    if "origin_date" in _pl.columns else _tds)
+            _ops.log_sealed_window_read(cfg.target, _tds.dropna(),
+                                        caller="b_ml_pipeline.leaderboard")
+            _cache = _ops.vintage_cache(cfg.data_path, cfg.target, _ogs.fillna(_tds), _tds)
+            _op = [_ops.ops_prediction_for(t, o, _cache)[0] for t, o in zip(_tds, _ogs.fillna(_tds))]
+            _pl = _pl.assign(_ops=_op)
+            _ok = _pl["_ops"].notna()
+            if _ok.any():
+                _ops_mae = float(np.mean(np.abs(_pl.loc[_ok, "y_true"] - _pl.loc[_ok, "_ops"])))
+                _per_model = (_pl[_ok].groupby("model")
+                              .apply(lambda g: float(np.mean(np.abs(g["y_true"] - g["y_pred"]))),
+                                     include_groups=False))
+                glb["ops_MAE"] = _ops_mae
+                glb["skill_vs_ops_pct"] = glb["model"].map(
+                    lambda m: _ops.skill_vs(_per_model.get(m, np.nan), _ops_mae))
+                _lb_cols += ["ops_MAE", "skill_vs_ops_pct"]
+            else:
+                glb["ops_MAE"] = np.nan
+                glb["skill_vs_ops_pct"] = np.nan
+                glb["ops_note"] = _ops.REASON_STOCK if is_stock(cfg.target) else _ops.REASON_NO_VINTAGE
+                _lb_cols += ["ops_MAE", "skill_vs_ops_pct", "ops_note"]
+        except Exception as _e:                     # noqa: BLE001 - reporting must not break a run
+            print(f"[ops] leaderboard comparison unavailable: {type(_e).__name__}: {_e}")
+        glb[_lb_cols].to_csv(out_root / "leaderboard.csv", index=False)
     
     # ✅ Forecast integrity checks with HARD GATE - run ALWAYS when predictions exist
     try:
@@ -1019,6 +1124,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
         
         # Compute integrity report — pick best *trained* model (skip baseline row)
         if glb is not None and len(glb) > 0:
+            # P1 (LIVE window): crowning a best model IS a selection, so the rows the
+            # leaderboard was built from must come only from selectable windows. Without
+            # this, a client whose file extends past the seal would produce folds over LIVE
+            # data and a champion chosen on it -- silently, because nothing else looks at
+            # which window an evaluation row belongs to. Raises rather than trimming: a
+            # quiet trim would change what was measured without saying so.
+            if "target_date" in pred_long.columns:
+                from evaluation_windows import assert_selection_free
+                assert_selection_free(
+                    pd.to_datetime(pred_long["target_date"], errors="coerce").dropna(),
+                    f"b_ml_pipeline.select_best_model({cfg.target!r}, h={cfg.horizon})")
             best_model, _excluded = select_best_model(glb, overfit_ratios)
             if _excluded:
                 print(f"[M-4] Excluded from best-model selection (val/train ratio > "
@@ -1348,17 +1464,17 @@ def run_pipeline_ml(cfg: ConfigBML) -> str:
                     print(f"[WARN] Run status: FAILED_QUALITY (outputs still written)")
                     # ✅ FIX 3: Store status but don't raise - outputs are still valid
                     integrity_report["run_status"] = "FAILED_QUALITY"
-                    integrity_report["quality_gate_failed"] = True
+                    write_gate(integrity_report, False)   # X9: canonical + legacy, kept in sync
                     # Save updated report (but don't abort)
                     with open(out_root / "artifacts" / "integrity_report.json", "w", encoding="utf-8") as f:
                         json.dump(integrity_report, f, indent=2, default=str)
                 else:
                     integrity_report["run_status"] = "SUCCESS"
-                    integrity_report["quality_gate_failed"] = False
+                    write_gate(integrity_report, True)    # X9: canonical + legacy, kept in sync
                     print(f"[OK] Quality gate passed: skill={skill_pct:.2f}% >= {_QUALITY_GATE_SKILL_PCT}%")
             else:
                 integrity_report["run_status"] = "SUCCESS" if not integrity_report.get("lag_warning", False) else "WARNING"
-                integrity_report["quality_gate_failed"] = False
+                write_gate(integrity_report, True)    # X9: canonical + legacy, kept in sync
             
             # Save final report with run_status
             with open(out_root / "artifacts" / "integrity_report.json", "w", encoding="utf-8") as f:

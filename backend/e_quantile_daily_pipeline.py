@@ -32,6 +32,8 @@ class Config:
     eval_end: Optional[str] = None
     # Workstream 3 fiscal-calendar feature groups; None == pre-WS3 feature set.
     fiscal_groups: Optional[Tuple[str, ...]] = None
+    # Workstream 2: tuned LightGBM quantile hyperparameters. None == library defaults.
+    lgbm_params: Optional[Dict] = None
     model_filter: Optional[str] = None   # "GBQuantile", "ResidualRF" | None => all
     quantiles: Tuple[float, ...] = (0.10, 0.50, 0.90)
     lags_daily: Tuple[int, ...] = (1, 5, 20)
@@ -40,6 +42,16 @@ class Config:
     out_root: str = "outputs"
     demo_clip_months: Optional[int] = None  # None => full data; int => keep last N months
     variant: str = "univariate"          # "univariate" | "multivariate"
+    # Conformalise the outer quantiles against a causal slice of each fold's OWN training
+    # data. Off by default: it changes published band widths, so it is a deliberate act.
+    #
+    # Measured motivation (backend/coverage_report.py over the logged runs): on the state
+    # budget balance the nominal-80% band covers 73.7% (GBQuantile), 66.7% (LGBMQuantile)
+    # and 53.8% (ResidualRF) of outcomes. Those are marginal shortfalls that survive
+    # correcting the day-size metric, so they are the real defect rather than an artifact
+    # of how "a large day" was defined -- and a marginal shortfall is exactly what
+    # split-conformal calibration is guaranteed to repair.
+    cqr: bool = False
 
 # ---------- tiny utils ----------
 
@@ -123,13 +135,10 @@ def _time_folds(n: int, horizon: int, folds: Optional[int], min_train: int,
     indices.reverse()   # earliest fold first
     return indices
 
-def is_stock(target: str) -> bool:
-    """Level (stock) targets vs flow targets.
-
-    Kept byte-identical to b_ml_pipeline.is_stock and c_dl_pipeline.is_stock so the
-    three families cannot disagree about what kind of series they are modelling.
-    """
-    return str(target).strip().lower() in {"state budget balance", "balance", "t0"}
+# Level (stock) vs flow. This used to be a fourth copy whose docstring claimed byte-identity
+# with b_ml and c_dl -- true of those three, and silent about run_a_stat, which used a
+# different alias set. One definition now: backend/target_kinds.py.
+from target_kinds import is_stock  # noqa: E402,F401
 
 
 def to_business_index(df: pd.DataFrame, target: str) -> pd.DataFrame:
@@ -295,11 +304,130 @@ def _plot_quantiles(df_fold: pd.DataFrame, out_dir: str, title: str) -> None:
 
 # ---------- models ----------
 
+def registry_models() -> Dict[str, str]:
+    """The quantile models this family offers, as {name: description}.
+
+    Single source of truth so a model cannot be added to the run loop without appearing in
+    the reports and tests that enumerate the family.
+    """
+    return {
+        "GBQuantile": "GradientBoosting (quantile loss)",
+        "ResidualRF": "RandomForest + residual quantiles (baseline)",
+        # Workstream 2 port. Crossing-safe by construction and early-stopped with an h-row
+        # gap, so the stopping decision is not made against rows whose targets fall inside
+        # the validation block. See backend/tuning.py.
+        "LGBMQuantile": "LightGBM (quantile loss, crossing-safe, h-gapped early stopping)",
+    }
+
+
 def _fit_gb_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
     # Gradient Boosting quantile (pinball loss). Separate model per quantile.
     model = GradientBoostingRegressor(loss="quantile", alpha=q, random_state=42)
     model.fit(X_tr, y_tr)
     return model.predict(X_te)
+
+
+def _predict_quantiles(model_name: str, CONFIG: "Config", X_tr, y_tr, X_new,
+                       quantiles: Sequence[float]) -> Tuple[Dict[float, np.ndarray], int]:
+    """Fit ``model_name`` on (X_tr, y_tr) and predict ``quantiles`` on ``X_new``.
+
+    Returns ``(predictions, n_crossed_rows_repaired)``.
+
+    This is the single definition of "how this model predicts", used by the fold loop and by
+    the conformal step. They must not diverge: a correction calibrated from one model's
+    residuals and applied to a band another code path produced is not a calibration.
+    """
+    if model_name == "GBQuantile":
+        return {q: _fit_gb_quantile(X_tr, y_tr, X_new, q) for q in quantiles}, 0
+    if model_name == "ResidualRF":
+        return _fit_residual_rf_quantiles(X_tr, y_tr, X_new, tuple(quantiles)), 0
+    if model_name == "LGBMQuantile":
+        from tuning import fit_quantiles
+        return fit_quantiles("LGBMQuantile", X_tr, y_tr, X_new,
+                             dict(CONFIG.lgbm_params or {}), CONFIG.horizon,
+                             quantiles=tuple(quantiles))
+    raise ValueError(f"Unknown model '{model_name}'")
+
+
+def _conformalise(model_name: str, CONFIG: "Config", X_tr, y_tr,
+                  q_preds: Dict[float, np.ndarray], *, lo_q: float, hi_q: float,
+                  alpha: float) -> Tuple[Dict[float, np.ndarray], str]:
+    """Widen the outer quantiles by a split-conformal correction. Returns (preds, note).
+
+    Split-conformal quantile regression (Romano, Patterson & Candès 2019). The guarantee is
+    **marginal**: coverage of at least ``1-alpha`` averaged over the calibration distribution,
+    with no assumption about the model or the noise. That is precisely the defect measured
+    here -- bands narrower than they advertise on average -- so it is the right instrument.
+
+    What it does not promise is per-bucket coverage, and this deliberately applies ONE global
+    width rather than a per-magnitude one. WS7 measured grouped corrections on this data and
+    they were not uniformly better (on the stock target, splitting 502 calibration rows three
+    ways cost more in variance than it gained in targeting: 72.0% global against 68.4%
+    grouped). A single width is also the only form whose guarantee survives a 156-row window.
+
+    Never widens on failure. If the geometry cannot support a causal split, or the requested
+    level needs more calibration rows than exist, the band is returned untouched with the
+    reason -- a band that quietly skipped its correction while reporting as conformalised
+    would be worse than one that was never corrected.
+    """
+    from conformal import (causal_calibration_split, conformal_width, conformity_scores)
+
+    h = int(CONFIG.horizon)
+    n = int(len(X_tr))
+
+    # TWO embargoes are needed, and only one of them is `causal_calibration_split`'s job.
+    #
+    # That helper separates the FIT slice from the CALIBRATION slice by h rows, so the model
+    # whose residuals are being measured has not seen the calibration answers. It does not, and
+    # cannot, know what the calibration slice is being used to correct.
+    #
+    # The second embargo is between the calibration slice and the EVALUATION origin. X_tr ends at
+    # the row before this fold's first origin, so its final row carries a target h rows further
+    # on -- a target that has not happened yet at that origin. Calibrating on it would measure
+    # the correction partly against answers unavailable when the band is issued, which is the
+    # precise defect this session exists to remove; a test asserts the gap end to end.
+    #
+    # So drop the last h rows of the training block before splitting.
+    n_eff = n - h
+    if n_eff <= h + 4:
+        return q_preds, (f"no correction applied: {n} training rows leave too few after the "
+                         f"{h}-row evaluation embargo")
+    try:
+        fit_ix, cal_ix = causal_calibration_split(n_eff, h)
+    except ValueError as exc:
+        return q_preds, f"no correction applied: {exc}"
+
+    qc, _ = _predict_quantiles(model_name, CONFIG, X_tr.iloc[fit_ix],
+                               np.asarray(y_tr)[fit_ix], X_tr.iloc[cal_ix], (lo_q, hi_q))
+    y_cal = np.asarray(y_tr, dtype=float)[cal_ix]
+    scores = conformity_scores(y_cal, qc[lo_q], qc[hi_q])
+    width = conformal_width(scores, alpha)
+
+    if not np.isfinite(width):
+        return q_preds, (f"no correction applied: {len(cal_ix)} calibration rows cannot "
+                         f"support a {1 - alpha:.0%} band at finite width")
+
+    # A NEGATIVE width is not an error and must not be clamped away: it means the band was
+    # already wider than it needed to be, and tightening it is the correction doing its job.
+    # WS7 saw exactly this on revenues, where the width came out at -0 and the band was
+    # correctly left alone.
+    #
+    # What a negative width must NOT do is tighten so far that the edges cross. A p10 above its
+    # own p90 is not a narrow interval, it is a meaningless one, and this family already treats
+    # crossing as a reportable defect rather than something to silently sort. If the correction
+    # would invert any row, none of it is applied and the reason is returned.
+    lo_new = np.asarray(q_preds[lo_q], dtype=float) - width
+    hi_new = np.asarray(q_preds[hi_q], dtype=float) + width
+    if np.any(lo_new > hi_new):
+        n_bad = int(np.sum(lo_new > hi_new))
+        return q_preds, (f"no correction applied: a width of {width:+,.0f} would invert the band "
+                         f"on {n_bad} of {len(lo_new)} row(s)")
+
+    out = dict(q_preds)
+    out[lo_q], out[hi_q] = lo_new, hi_new
+    return out, (f"conformal width {width:+,.0f} from {len(cal_ix)} causal calibration rows "
+                 f"(fit/calibration gap {h}, calibration/evaluation embargo {h}), "
+                 f"targeting {1 - alpha:.0%}")
 
 def _fit_residual_rf_quantiles(X_tr, y_tr, X_te, quantiles: Tuple[float, ...]) -> Dict[float, np.ndarray]:
     """
@@ -351,27 +479,154 @@ def _fit_residual_rf_quantiles(X_tr, y_tr, X_te, quantiles: Tuple[float, ...]) -
         preds[hi] = np.maximum(preds[hi], preds[lo])
     return preds
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE NOMINAL LEVEL IS DATA, NOT A KEY NAME
+#
+# Audit field #2. The level a coverage figure describes used to live ONLY in the string
+# `coverage_p10_p90`. A consumer -- the backtest report, the Dashboard, a Treasury reader --
+# takes that name as authoritative, while nothing tied it to the alphas actually fitted.
+#
+# The dangerous case is not a renamed key, it is a re-configured one. `Config.quantiles` is
+# ordinary configuration: set it to (0.05, 0.50, 0.95) and the family produces a **90%**
+# interval. Before this block the gate still tested that coverage against [0.70, 0.90] -- a band
+# built around an assumed nominal 80% -- so a perfectly calibrated 90% interval would have been
+# FAILED for miscalibration, and a badly calibrated one could have passed. The verdict would have
+# been wrong for a reason no artifact recorded.
+#
+# So the level is derived from the fitted alphas, written as data next to the number, and the key
+# name is asserted against it. A key that no longer matches its alphas is a hard error, because
+# emitting `coverage_p10_p90` for a 5/95 interval is not a cosmetic defect -- it is a mislabelled
+# measurement.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Half-width of the accepted coverage band, in coverage points. ~3-sigma binomial at ~150 points.
+COVERAGE_TOLERANCE = 0.10
+
+
+class CoverageLevelMismatch(ValueError):
+    """A coverage key claims quantiles the pipeline did not fit."""
+
+
+def coverage_spec(quantiles: Sequence[float]) -> Dict:
+    """What interval a coverage number over ``quantiles`` actually describes.
+
+    The widest pair is the interval: coverage is reported for the outermost quantiles, so the
+    nominal level is ``max - min``. Everything downstream reads the level from here rather than
+    assuming 80%.
+    """
+    qs = sorted(float(q) for q in quantiles)
+    if len(qs) < 2:
+        return {"measurable": False, "coverage_key": None, "coverage_nominal": None,
+                "coverage_lower_quantile": None, "coverage_upper_quantile": None,
+                "reason": (f"an interval needs two quantiles; the pipeline is configured with "
+                           f"{qs} so no coverage can be measured")}
+    lo, hi = qs[0], qs[-1]
+    return {
+        "measurable": True,
+        "coverage_lower_quantile": lo,
+        "coverage_upper_quantile": hi,
+        "coverage_nominal": round(hi - lo, 10),
+        "coverage_key": f"coverage_p{int(round(lo * 100))}_p{int(round(hi * 100))}",
+        "reason": None,
+    }
+
+
+def assert_coverage_key_matches_alphas(key: str, quantiles: Sequence[float]) -> Dict:
+    """Refuse a coverage key that does not name the quantiles actually fitted.
+
+    Raises rather than warning: a mislabelled coverage figure is read as authoritative by every
+    consumer, and there is no safe degraded behaviour for publishing one.
+    """
+    spec = coverage_spec(quantiles)
+    if not spec["measurable"]:
+        raise CoverageLevelMismatch(
+            f"cannot emit {key!r}: {spec['reason']}")
+    if key != spec["coverage_key"]:
+        raise CoverageLevelMismatch(
+            f"coverage key {key!r} does not match the fitted quantiles "
+            f"{sorted(float(q) for q in quantiles)}, which describe a "
+            f"{spec['coverage_nominal']:.0%} interval and would be reported as "
+            f"{spec['coverage_key']!r}. The key name is what consumers read as the nominal "
+            f"level, so a mismatch is a mislabelled measurement, not a cosmetic defect.")
+    return spec
+
+
+#: The key this family has always published, and which `scripts/backtest_report.py` and the
+#: Dashboard read. It is a *claim about the alphas*, so it is only emitted when it is true.
+LEGACY_COVERAGE_KEY = "coverage_p10_p90"
+
+
+def emit_coverage(into: Dict, coverage: Optional[float],
+                  quantiles: Sequence[float]) -> Dict:
+    """Write a coverage number together with the level it describes.
+
+    One emitter for all three artifacts (leaderboard, metrics_long, integrity report) so the
+    number and its level cannot drift apart in one of them.
+
+    The derived key is always correct by construction. ``LEGACY_COVERAGE_KEY`` is written *only*
+    when it genuinely names the fitted alphas -- so a reconfigured pipeline degrades to a
+    consumer finding no `coverage_p10_p90` and rendering "not reported", rather than reading a
+    90% coverage figure under a name that says 80%. Silence beats a mislabelled number.
+    """
+    spec = coverage_spec(quantiles)
+    into["coverage_key"] = spec["coverage_key"]
+    into["coverage_nominal"] = spec["coverage_nominal"]
+    into["coverage_lower_quantile"] = spec["coverage_lower_quantile"]
+    into["coverage_upper_quantile"] = spec["coverage_upper_quantile"]
+    if not spec["measurable"]:
+        into["coverage_unavailable_reason"] = spec["reason"]
+        return spec
+
+    into[spec["coverage_key"]] = coverage
+    into["coverage_band"] = list(coverage_band_for(spec["coverage_nominal"]))
+    try:
+        assert_coverage_key_matches_alphas(LEGACY_COVERAGE_KEY, quantiles)
+        into[LEGACY_COVERAGE_KEY] = coverage
+    except CoverageLevelMismatch as exc:
+        into["legacy_coverage_key_omitted"] = str(exc)
+    return spec
+
+
+def coverage_band_for(nominal: float,
+                      tolerance: float = COVERAGE_TOLERANCE) -> Tuple[float, float]:
+    """The accepted band around a nominal level, clamped to [0, 1].
+
+    Rounded because it is published: an unrounded ``0.7000000000000001`` in an artifact invites a
+    reader to wonder what it means.
+    """
+    return (round(max(0.0, nominal - tolerance), 10),
+            round(min(1.0, nominal + tolerance), 10))
+
+
 def quantile_quality_gate(skill_pct: float, coverage: Optional[float],
                           min_skill: float = 5.0,
-                          coverage_band: Tuple[float, float] = (0.70, 0.90),
+                          coverage_band: Optional[Tuple[float, float]] = None,
+                          nominal: float = 0.80,
                           ) -> Tuple[bool, List[str]]:
     """Quality gate for a quantile model: skill AND calibrated intervals.
 
-    A quantile family exists to produce intervals a treasury can plan
-    around, so miscalibrated coverage fails the gate even when P50 skill
-    is excellent.  The band is the nominal 80% (P10–P90) ± 10pp, roughly
-    a 3-sigma binomial tolerance at ~150 evaluation points.
-    Returns (passed, reasons); reasons is empty when passed.
+    A quantile family exists to produce intervals a treasury can plan around, so miscalibrated
+    coverage fails the gate even when P50 skill is excellent.
+
+    ``nominal`` is the level the intervals were fitted for and must be passed from
+    ``coverage_spec()`` rather than assumed; the band defaults to nominal ± ``COVERAGE_TOLERANCE``
+    (~3-sigma binomial at ~150 evaluation points). An explicit ``coverage_band`` still overrides,
+    for callers that have a reason. The default ``nominal=0.80`` reproduces the previous
+    ``(0.70, 0.90)`` exactly, so existing verdicts do not move.
+
+    Every reason names which of the two conditions failed, so a coverage failure is never read as
+    a skill failure -- the four verdicts stay four.
     """
+    band = coverage_band if coverage_band is not None else coverage_band_for(nominal)
     reasons: List[str] = []
     if not np.isfinite(skill_pct) or skill_pct < min_skill:
         reasons.append(f"skill {skill_pct:.2f}% < {min_skill:.1f}% required")
     if coverage is None or not np.isfinite(coverage):
-        reasons.append("coverage not measurable (P10/P90 missing)")
-    elif not (coverage_band[0] <= coverage <= coverage_band[1]):
+        reasons.append("coverage not measurable (interval quantiles missing)")
+    elif not (band[0] <= coverage <= band[1]):
         reasons.append(
             f"coverage {coverage:.1%} outside "
-            f"[{coverage_band[0]:.0%}, {coverage_band[1]:.0%}] (nominal 80%)"
+            f"[{band[0]:.0%}, {band[1]:.0%}] (nominal {nominal:.0%})"
         )
     return (len(reasons) == 0, reasons)
 
@@ -460,11 +715,37 @@ def run_pipeline(CONFIG: Config) -> None:
     if not folds:
         raise ValueError("Unable to create CV folds — series too short for requested horizon/folds.")
 
+    # The hole A_STAT and C_DL already closed. E_QUANTILE's runners pin eval_start to
+    # 2025-01-01 -- every logged run.json says so -- and that read went through neither the
+    # gate nor the ledger, so `experiments/test_access.log` recorded nothing while the holdout
+    # was being evaluated on each daily run. There is a retrospective disclosure in that log
+    # covering exactly this gap; this is the enforcement that makes further ones unnecessary.
+    #
+    # Reporting on the holdout is legitimate -- it is what the holdout is for -- so this
+    # records rather than refuses. Fold construction chooses nothing, so no selection guard.
+    # Target dates are derived exactly as the fold loop derives them -- origin position in the
+    # business-day index, plus the horizon -- so the dates gated here are the dates scored.
+    from evaluation_windows import PURPOSE_REPORT, require_test_access, window_for
+    _idx = df.index
+    _pos_of = {d: i for i, d in enumerate(_idx)}
+    _holdout = []
+    for (_tr_end, _te_end) in folds:
+        for _od in od_all.iloc[_tr_end:_te_end].values:
+            _p = _pos_of.get(pd.Timestamp(_od))
+            if _p is None or _p + CONFIG.horizon >= len(_idx):
+                continue
+            _t = _idx[_p + CONFIG.horizon]
+            if window_for(_t) == "test":
+                _holdout.append(_t)
+    if _holdout:
+        require_test_access(
+            f"E_QUANTILE reporting evaluation for {CONFIG.target!r} at h={CONFIG.horizon} "
+            f"covers {len(_holdout)} holdout target date(s) from {min(_holdout).date()} to "
+            f"{max(_holdout).date()}",
+            caller="e_quantile_daily_pipeline.run_pipeline", purpose=PURPOSE_REPORT)
+
     # Model registry (you can add more later without touching the bridge/UI)
-    registry = {
-        "GBQuantile": "GradientBoosting (quantile loss)",
-        "ResidualRF": "RandomForest + residual quantiles (baseline)"
-    }
+    registry = registry_models()
     chosen = list(registry.keys()) if not CONFIG.model_filter or CONFIG.model_filter.strip() == "" else [CONFIG.model_filter]
     chosen = [m for m in chosen if m in registry]
 
@@ -481,6 +762,7 @@ def run_pipeline(CONFIG: Config) -> None:
         fold_ix = 0
         pinballs: Dict[float, List[float]] = {q: [] for q in CONFIG.quantiles}
         coverages: List[float] = []
+        cqr_notes: List[str] = []
 
         for (tr_end, te_end) in folds:
             fold_ix += 1
@@ -490,14 +772,32 @@ def run_pipeline(CONFIG: Config) -> None:
             ov_te = ov_all.iloc[tr_end:te_end]  # origin values for test
 
             # Fit/predict per model
-            if model_name == "GBQuantile":
-                q_preds = {}
-                for q in CONFIG.quantiles:
-                    q_preds[q] = _fit_gb_quantile(X_tr, y_tr, X_te, q)
-            elif model_name == "ResidualRF":
-                q_preds = _fit_residual_rf_quantiles(X_tr, y_tr, X_te, CONFIG.quantiles)
-            else:
-                raise ValueError(f"Unknown model '{model_name}'")
+            q_preds, n_cross = _predict_quantiles(model_name, CONFIG, X_tr, y_tr, X_te,
+                                                  CONFIG.quantiles)
+            if n_cross:
+                # Reported, never swallowed: frequent crossing means the model is
+                # misconfigured, and silently sorting would hide that.
+                print(f"[quantile] {model_name} fold {fold_ix}: repaired {n_cross} "
+                      f"crossed row(s) of {len(X_te)}")
+
+            # ── conformalise the outer quantiles, if asked ────────────────────
+            # The correction is measured on the LAST rows of this fold's own training data,
+            # with a `horizon`-row gap so no conformity score comes from a target that was
+            # still in the future at the origin being calibrated. Nothing here touches X_te
+            # or y_te, so the correction cannot see the window it is scored on -- which is
+            # what makes it a calibration rather than a fit to the answer.
+            if CONFIG.cqr:
+                _cs = coverage_spec(CONFIG.quantiles)
+                if not _cs["measurable"]:
+                    print(f"[cqr] fold {fold_ix}: {_cs['reason']}; no correction applied")
+                else:
+                    q_preds, _cqr_note = _conformalise(
+                        model_name, CONFIG, X_tr, y_tr, q_preds,
+                        lo_q=_cs["coverage_lower_quantile"],
+                        hi_q=_cs["coverage_upper_quantile"],
+                        alpha=1.0 - _cs["coverage_nominal"])
+                    print(f"[cqr] fold {fold_ix}: {_cqr_note}")
+                    cqr_notes.append(_cqr_note)
 
             # ✅ FIX QUANT-2: Compute target_dates from origin + h steps.
             # The origin dates (dates_te / od_te) are the feature dates; the
@@ -556,9 +856,11 @@ def run_pipeline(CONFIG: Config) -> None:
                 pl = _pinball_loss(y_te_out, q_preds[q], q)
                 pinballs[q].append(pl)
 
-            if 0.1 in CONFIG.quantiles and 0.9 in CONFIG.quantiles:
-                lower = q_preds[0.1]
-                upper = q_preds[0.9]
+            # The interval is whatever the configured alphas describe -- not a hardcoded 10/90.
+            _cspec = coverage_spec(CONFIG.quantiles)
+            if _cspec["measurable"]:
+                lower = q_preds[_cspec["coverage_lower_quantile"]]
+                upper = q_preds[_cspec["coverage_upper_quantile"]]
                 cov = float(((y_te_out >= lower) & (y_te_out <= upper)).mean())
                 coverages.append(cov)
 
@@ -587,7 +889,14 @@ def run_pipeline(CONFIG: Config) -> None:
         for q in sorted(CONFIG.quantiles):
             agg[f"pinball_q{int(q*100)}"] = float(np.mean(pinballs[q]))
         if coverages:
-            agg["coverage_p10_p90"] = float(np.mean(coverages))
+            # The level travels WITH the number, so a reader never parses the key name.
+            emit_coverage(agg, float(np.mean(coverages)), CONFIG.quantiles)
+        # Whether the band was conformalised travels with it. A coverage figure means something
+        # different for a corrected band than for a raw one, and a consumer that cannot tell
+        # them apart will compare the two as if they were the same measurement.
+        agg["cqr_applied"] = bool(CONFIG.cqr)
+        if CONFIG.cqr:
+            agg["cqr_note"] = "; ".join(cqr_notes) if cqr_notes else "no fold produced a correction"
         leaderboard_rows.append(agg)
 
         # Long metrics for each fold/quantile
@@ -602,11 +911,14 @@ def run_pipeline(CONFIG: Config) -> None:
                     "value": float(pinballs[q][i-1])
                 })
         if coverages:
+            _spec = coverage_spec(CONFIG.quantiles)
             for i, v in enumerate(coverages, 1):
                 metrics_rows.append({
                     "model": model_name, "fold": i,
-                    "metric": "coverage_p10_p90",
-                    "quantile": None, "value": float(v)
+                    "metric": _spec["coverage_key"],
+                    # `quantile` was always blank on a coverage row, which is exactly the field
+                    # that should have carried the level. It now does.
+                    "quantile": _spec["coverage_nominal"], "value": float(v)
                 })
 
     # Write master outputs
@@ -633,20 +945,32 @@ def run_pipeline(CONFIG: Config) -> None:
             mae_persist = compute_persistence_baseline(g)["mae_persistence"]
             mae_p50 = float(np.mean(np.abs(g["y_true"].values - g["yhat_p50"].values)))
             skill_pct = ((mae_persist - mae_p50) / mae_persist * 100.0) if mae_persist > 0 else float("nan")
+            # Read the interval off the fitted alphas, then look for the columns THOSE imply.
+            cspec = coverage_spec(CONFIG.quantiles)
             coverage = None
-            if {"yhat_p10", "yhat_p90"}.issubset(g.columns):
-                coverage = float(np.mean((g["y_true"].values >= g["yhat_p10"].values)
-                                         & (g["y_true"].values <= g["yhat_p90"].values)))
-            gate_passed, gate_reasons = quantile_quality_gate(skill_pct, coverage)
-            per_model[str(model_name)] = {
+            lo_col = hi_col = None
+            if cspec["measurable"]:
+                lo_col = f"yhat_p{int(round(cspec['coverage_lower_quantile'] * 100))}"
+                hi_col = f"yhat_p{int(round(cspec['coverage_upper_quantile'] * 100))}"
+                if {lo_col, hi_col}.issubset(g.columns):
+                    coverage = float(np.mean((g["y_true"].values >= g[lo_col].values)
+                                             & (g["y_true"].values <= g[hi_col].values)))
+            # The band follows the nominal level. Assuming 80% here would fail a correctly
+            # calibrated 90% interval for miscalibration -- a wrong verdict for a recorded reason.
+            nominal = cspec["coverage_nominal"] if cspec["measurable"] else 0.80
+            gate_passed, gate_reasons = quantile_quality_gate(
+                skill_pct, coverage, nominal=nominal)
+            entry = {
                 "n_predictions": int(len(g)),
                 "mae_p50": mae_p50,
                 "mae_persistence": mae_persist,
                 "skill_pct": skill_pct,
-                "coverage_p10_p90": coverage,
+                "coverage_source_columns": [lo_col, hi_col],
                 "gate_passed": gate_passed,
                 "gate_reasons": gate_reasons,
             }
+            emit_coverage(entry, coverage, CONFIG.quantiles)
+            per_model[str(model_name)] = entry
             cov_s = f"{coverage:.1%}" if coverage is not None else "n/a"
             print(f"[quantile] {model_name}: n={len(g)}, P50 MAE={mae_p50:,.2f}, "
                   f"Persistence MAE={mae_persist:,.2f}, Skill={skill_pct:.2f}%, "
@@ -657,6 +981,13 @@ def run_pipeline(CONFIG: Config) -> None:
             # calibrated intervals are the point of this family, so a model
             # with broken coverage cannot be "best" merely on median MAE.
             # If no model passes, fall back to lowest MAE (and the gate fails).
+            # P1 follow-up: choosing a best model is a selection, so the rows it is chosen
+            # from must sit in a selectable window. Previously unguarded here.
+            if "target_date" in valid_all.columns:
+                from evaluation_windows import assert_selection_free
+                assert_selection_free(
+                    pd.to_datetime(valid_all["target_date"], errors="coerce").dropna(),
+                    f"e_quantile.best_model({CONFIG.target!r}, h={CONFIG.horizon})")
             passing = [m for m in per_model if per_model[m]["gate_passed"]]
             pool = passing if passing else list(per_model)
             best_model = min(pool, key=lambda m: per_model[m]["mae_p50"])
@@ -673,7 +1004,9 @@ def run_pipeline(CONFIG: Config) -> None:
                 "mae_p50": best["mae_p50"],
                 "mae_persistence": best["mae_persistence"],
                 "skill_pct": best["skill_pct"],
-                "coverage_p10_p90": best["coverage_p10_p90"],
+                # Carried through from the winning model, level included -- see emit_coverage.
+                **{k: v for k, v in best.items() if k.startswith("coverage")
+                   or k == LEGACY_COVERAGE_KEY},
                 "quality_gate_passed": best["gate_passed"],
                 "quality_gate_reasons": best["gate_reasons"],
                 "run_status": "SUCCESS" if best["gate_passed"] else "FAILED_QUALITY",

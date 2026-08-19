@@ -92,7 +92,11 @@ def test_the_deprecated_module_still_re_exports_the_sentinel():
     import preprocessing.integrity as legacy
     import forecast_integrity as shared
 
-    for name in ("signal_sentinel", "leakage_sentinel", "MIN_SIGNAL_RATIO"):
+    # `compute_persistence_baseline` is in this list because the duplicate that was retired was
+    # a baseline, not a sentinel: without it the identity check guarded the wrong symbols and a
+    # shim-level copy of the ruler would have gone unnoticed (item 5 mutation testing).
+    for name in ("signal_sentinel", "leakage_sentinel", "MIN_SIGNAL_RATIO",
+                 "compute_persistence_baseline"):
         assert hasattr(legacy, name), f"{name} vanished from the deprecated shim"
         assert getattr(legacy, name) is getattr(shared, name), (
             f"{name} is a COPY in the shim rather than a re-export -- that is a "

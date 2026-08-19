@@ -24,6 +24,11 @@ matplotlib>=3.9
 # ---- Gradient-boosted libraries (optional but used if present) ----
 xgboost>=2.1
 lightgbm>=4.5
+# CatBoost enters the model pool in workstream 2 (tuning). Installed 2026-08-05; the
+# available_models() hooks activate on its presence.
+catboost>=1.2
+# Optuna drives the workstream-2 hyperparameter search. Installed 2026-08-05.
+optuna>=4.0
 
 # ---- Deep Learning (C · DL — PyTorch CPU build) ----
 # NOTE: versions here assume a relatively recent PyTorch CPU wheel.

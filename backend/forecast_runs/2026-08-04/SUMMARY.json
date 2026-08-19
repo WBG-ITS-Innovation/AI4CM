@@ -1,0 +1,178 @@
+{
+  "run_id": "2026-08-04",
+  "schema_version": 2,
+  "run_date": "2026-08-04",
+  "target": "Revenues",
+  "cadence": "Daily",
+  "horizon": "5",
+  "data_file": "master_daily_clean_treasury.csv",
+  "client_framing": "13 machine-learning models, 5 deep-learning models and 4 statistical models compete on each target; prediction intervals come from 3 quantile methods; 3 further entries are reference baselines, not competitors.",
+  "model_composition": {
+    "counts": {
+      "machine-learning models": 13,
+      "deep-learning models": 5,
+      "statistical models": 4,
+      "quantile methods": 3,
+      "reference baselines": 3
+    },
+    "members": {
+      "machine-learning models": [
+        "CatBoost_L1",
+        "CatBoost_Quantile",
+        "ElasticNet",
+        "ExtraTrees",
+        "HistGBDT",
+        "HistGBDT_L1",
+        "Lasso",
+        "LightGBM",
+        "LightGBM_L1",
+        "RandomForest",
+        "Ridge",
+        "XGBoost",
+        "XGBoost_L1"
+      ],
+      "deep-learning models": [
+        "DCNN",
+        "GRU",
+        "LSTM",
+        "MLP",
+        "TRANSFORMER"
+      ],
+      "statistical models": [
+        "ETS",
+        "SARIMAX",
+        "STL_ARIMA",
+        "THETA"
+      ],
+      "quantile methods": [
+        "GBQuantile",
+        "LGBMQuantile",
+        "ResidualRF"
+      ],
+      "reference baselines": [
+        "MOVAVG",
+        "NAIVE",
+        "WEEKDAY_MEAN"
+      ]
+    },
+    "champion_pool": [
+      "CatBoost_L1",
+      "CatBoost_Quantile",
+      "ElasticNet",
+      "ExtraTrees",
+      "HistGBDT",
+      "HistGBDT_L1",
+      "Lasso",
+      "LightGBM",
+      "LightGBM_L1",
+      "RandomForest",
+      "Ridge",
+      "XGBoost",
+      "XGBoost_L1"
+    ],
+    "champion_pool_category": "machine-learning models",
+    "daily_best_model_families": [
+      "A_STAT",
+      "B_ML",
+      "C_DL",
+      "E_QUANTILE"
+    ],
+    "promoted_by_registry": [
+      "HistGBDT_L1",
+      "LightGBM_L1"
+    ],
+    "promoted_outside_champion_pool": []
+  },
+  "families": [
+    {
+      "name": "A_STAT",
+      "ok": true,
+      "models": "ETS, Persistence (baseline)",
+      "best_model": "ETS (MAE 44,199,748)",
+      "best_model_display": "ETS (MAE 44,199,748)",
+      "skill_pct": "27.51%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": true,
+      "gate_reasons": [],
+      "gate_source": "published by the family's integrity_report.json",
+      "gate_published_by_family": true,
+      "n_prediction_rows": 156,
+      "baseline_without_predictions": false,
+      "leakage_flag": false,
+      "shift_flag": false
+    },
+    {
+      "name": "B_ML",
+      "ok": true,
+      "models": "\u26a1 Persistence (baseline), XGBoost, RandomForest, ExtraTrees, HistGBDT, LightGBM, Lasso, Ridge, ElasticNet",
+      "best_model": "RandomForest (MAE 38,565,591)",
+      "best_model_display": "WITHHELD \u2014 no signal beyond shuffled targets (ratio 1.13), not usable; RandomForest (MAE 38,565,591) for diagnosis only",
+      "skill_pct": "36.75%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": false,
+      "gate_reasons": [
+        "no signal beyond shuffled targets (ratio 1.13)"
+      ],
+      "gate_source": "derived: summary-side flags raised",
+      "gate_published_by_family": true,
+      "n_prediction_rows": 1248,
+      "baseline_without_predictions": false,
+      "leakage_flag": false,
+      "shift_flag": false
+    },
+    {
+      "name": "E_QUANTILE",
+      "ok": true,
+      "models": "ResidualRF, GBQuantile",
+      "best_model": "GBQuantile (MAE 33,964,365)",
+      "best_model_display": "GBQuantile (MAE 33,964,365)",
+      "skill_pct": "48.45%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": true,
+      "gate_reasons": [],
+      "gate_source": "published by the family's integrity_report.json",
+      "gate_published_by_family": true,
+      "n_prediction_rows": 410,
+      "baseline_without_predictions": false,
+      "leakage_flag": false,
+      "shift_flag": false
+    },
+    {
+      "name": "C_DL",
+      "ok": true,
+      "models": "MLP, TRANSFORMER, DCNN, LSTM, GRU",
+      "best_model": "MLP (MAE 47,217,031)",
+      "best_model_display": "WITHHELD \u2014 forecast is persistence-like (shift diagnostic), not usable; MLP (MAE 47,217,031) for diagnosis only",
+      "skill_pct": "10.84%",
+      "run_status": "SUCCESS",
+      "integrity_verified": true,
+      "gate_passed": false,
+      "gate_reasons": [
+        "forecast is persistence-like (shift diagnostic)"
+      ],
+      "gate_source": "derived: summary-side flags raised",
+      "gate_published_by_family": true,
+      "n_prediction_rows": 8610,
+      "baseline_without_predictions": false,
+      "leakage_flag": false,
+      "shift_flag": true
+    }
+  ],
+  "overall": {
+    "families_requested": 4,
+    "families_ok": 4,
+    "families_gate_passed": 2,
+    "leakage_flags": 0,
+    "shift_flags": 1,
+    "quality_gate_failures": 2
+  },
+  "mode": "backtest",
+  "freshness": {
+    "line": "Latest data date: 2025-08-06 (363 day(s) before run date 2026-08-04)",
+    "stale": true,
+    "backtest": true
+  }
+}

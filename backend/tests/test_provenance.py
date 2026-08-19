@@ -131,10 +131,57 @@ def test_environment_captures_the_optional_boosters(csv):
         assert name in pkgs, f"{name} version not recorded"
 
 
-def test_git_dirty_is_recorded_so_a_sha_is_not_over_trusted():
+def _throwaway_repo(path: Path) -> Path:
+    """A real git repo, so the three states are driven rather than mocked."""
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    run = lambda *a: subprocess.run(("git", *a), cwd=path, check=True,  # noqa: E731
+                                    capture_output=True, text=True)
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@t.t")
+    run("config", "user.name", "t")
+    (path / "a.txt").write_text("one\n")
+    run("add", "a.txt")
+    run("commit", "-qm", "first")
+    return path
+
+
+def test_a_clean_tree_records_dirty_false_not_unknown(tmp_path):
+    """The state that was unreachable until 2026-08-15.
+
+    ``_git`` returned ``None`` for an empty stdout, so ``git status --porcelain`` on a clean
+    tree -- whose empty output IS the answer -- was indistinguishable from git failing, and
+    ``git_dirty`` came back ``None``. A published artifact could therefore never assert that
+    its SHA fully identified what ran, which is the whole point of recording the flag.
+    """
+    code = describe_code(repo=_throwaway_repo(tmp_path / "clean"))
+    assert code["git_dirty"] is False, (
+        "a clean tree must record False, not None -- None means 'could not be answered'")
+    assert code["git_dirty_files"] == 0
+    assert code["git_sha"] and code["git_branch"] == "main"
+
+
+def test_a_dirty_tree_records_dirty_true_and_counts_the_files(tmp_path):
     """A dirty tree means the SHA alone does not identify what ran."""
-    code = describe_code()
-    assert "git_dirty" in code and "git_dirty_files" in code
+    repo = _throwaway_repo(tmp_path / "dirty")
+    (repo / "a.txt").write_text("two\n")
+
+    code = describe_code(repo=repo)
+    assert code["git_dirty"] is True
+    assert code["git_dirty_files"] == 1
+
+    (repo / "b.txt").write_text("new\n")          # untracked counts too: it can change a run
+    assert describe_code(repo=repo)["git_dirty_files"] == 2
+
+
+def test_no_repository_records_unknown_rather_than_clean(tmp_path):
+    """The third state must stay distinct: absent evidence is not evidence of cleanliness."""
+    bare = tmp_path / "not-a-repo"
+    bare.mkdir()
+    code = describe_code(repo=bare)
+    assert code["git_dirty"] is None, "unknown must not collapse into False"
+    assert code["git_sha"] is None
 
 
 def test_stale_override_is_recorded_when_used(csv, monkeypatch):

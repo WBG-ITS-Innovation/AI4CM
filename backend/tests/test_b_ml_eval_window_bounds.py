@@ -122,3 +122,36 @@ def test_l1_variants_differ_from_their_twins_only_in_the_objective():
         assert differing <= {"loss", "objective"}, (
             f"{l1} differs from {base} in more than the objective: {differing}"
         )
+
+
+# ── CatBoost is now installed and must register correctly ─────────────────────
+
+def test_catboost_hooks_are_active():
+    """Decision 4: catboost is installed, so the guarded entries must now register.
+
+    Pinned because the failure is silent in the other direction too: if the package were
+    removed, these models would vanish from the pool without any test noticing, and a
+    workstream-2 comparison would quietly shrink.
+    """
+    from b_ml_pipeline import HAVE_CATBOOST, available_models
+
+    assert HAVE_CATBOOST is True, "catboost is expected in the backend venv"
+    models = available_models()
+    assert "CatBoost_L1" in models
+    assert "CatBoost_Quantile" in models
+    assert models["CatBoost_L1"].get_params()["loss_function"] == "MAE"
+    assert models["CatBoost_Quantile"].get_params()["loss_function"] == "Quantile:alpha=0.5"
+
+
+def test_catboost_is_not_promoted_anywhere():
+    """CatBoost is UNABLATED: it enters the pool in WS2 and must not be a champion yet.
+
+    A model that has never been run on a fold cannot be in the registry, however good it
+    might turn out to be.
+    """
+    from registry import load_registry
+
+    for r in load_registry()["recipes"]:
+        assert "CatBoost" not in r["point_model"], (
+            f"{r['id']} promoted CatBoost before it was ablated"
+        )

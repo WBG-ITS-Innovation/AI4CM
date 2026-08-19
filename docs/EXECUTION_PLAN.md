@@ -1,5 +1,15 @@
 # Phase 1 — Trust Execution Plan
 
+> **Historical as of 2026-08-19 — this is the Phase 1 plan, and Phase 1 is done.**
+>
+> Kept for the decision table below (D1–D8), which records what was chosen over
+> what and why. The branch it names, `fix/trust-phase`, is merged; the current
+> branch is `model/excellence`.
+>
+> For where the project is now see [`README.md`](../README.md),
+> [`ROADMAP.md`](ROADMAP.md) for what is queued, and
+> [`docs/sessions/`](sessions/README.md) for what has actually happened since.
+
 **Branch:** `fix/trust-phase`
 **Source review:** [`docs/reviews/2026-08-04_review.md`](reviews/2026-08-04_review.md)
 **Started:** 2026-08-04

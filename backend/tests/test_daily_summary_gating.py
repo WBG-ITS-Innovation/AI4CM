@@ -22,16 +22,22 @@ RUN_DATE = "2026-07-29"
 
 
 def _write_family(fam_dir: Path, run_status: str) -> None:
+    """Uses a REAL model name (Ridge), not a placeholder.
+
+    The item-6 contract validator refuses a champion that is in no pipeline pool, and it runs
+    at the end of daily_summary. A fixture naming "m1" was one the real pipeline would have
+    rejected, so it is not a useful stand-in for a run.
+    """
     fam_dir.mkdir(parents=True)
     pd.DataFrame({
-        "model": ["m1", "m1"],
+        "model": ["Ridge", "Ridge"],
         "origin_date": ["2026-07-27", "2026-07-27"],
         "target_date": ["2026-07-28", "2026-07-29"],
         "y_true": [100.0, 110.0],
         "y_pred": [101.0, 108.0],
     }).to_csv(fam_dir / "predictions_long.csv", index=False)
     pd.DataFrame({
-        "model": ["m1", "persistence_baseline"],
+        "model": ["Ridge", "persistence_baseline"],
         "MAE": [1.5, 3.0],
     }).to_csv(fam_dir / "leaderboard.csv", index=False)
     (fam_dir / "integrity_report.json").write_text(json.dumps({
@@ -71,7 +77,7 @@ def test_failed_quality_best_model_is_withheld(run_dir: Path):
     txt = (run_dir / "SUMMARY.txt").read_text()
 
     a_stat, b_ml = txt.split("[B_ML]")
-    assert "Best model: m1 (MAE 2)" in a_stat  # clean family keeps its line
+    assert "Best model: Ridge (MAE 2)" in a_stat  # clean family keeps its line
     assert "Quality gate: PASSED" in a_stat
     assert "WITHHELD" in b_ml
     assert "run_status=FAILED_QUALITY" in b_ml
