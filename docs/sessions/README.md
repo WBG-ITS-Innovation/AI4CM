@@ -10,7 +10,9 @@ name a flag without proving it works" is the kind of lesson that only survives
 if it is written down next to the bug it produced.
 
 Several records also carry a **suite count** at the top. Read together they are
-the growth curve of the test suite, from 569 to 942.
+the growth curve of the test suite, from 569 to 1,698 across the two interpreters
+(1,209 under `backend/.venv` and 489 under `frontend/.venv`; neither run alone is the
+whole suite, which the 2026-08-19 MVP record explains).
 
 ## The records
 
@@ -40,6 +42,7 @@ the growth curve of the test suite, from 569 to 942.
 | 2026-08-18 | [Regenerating stale artifacts](2026-08-18-artifact-regeneration.md) | Two more live copies of the zero-baseline bug; a new sealed-window harness; **the client-facing measured table**, superseding the July deck; and the finding that the champion credentials are not reproducible |
 | 2026-08-18 | [The ws2_tune DEV-fold holdout leak](2026-08-18-dev-fold-holdout-leak.md) | A fold selected rows by origin and scored them against holdout truth. Folds now require an evaluation row's **target date** to sit in an allowed window. No verdict or champion moved |
 | 2026-08-19 | [README and docs hygiene](2026-08-19-readme-and-docs-hygiene.md) | Making the repository presentable to a Treasury reader. Found four durable documents stating the opposite of the code — `SIGNAL_FINDING.md`'s conclusion is inverted by the sentinel recalibration. Documentation only |
+| 2026-08-19 | [MVP consolidation](2026-08-19-mvp-consolidation.md) | Seven tasks across the interface, the registry and the copy. Found that **seven of thirteen models the Lab offered had no recorded result on any target**, Ridge among them; that the full suite is two commands and every previous "green" skipped the page tests; and that the Dashboard crashed outright on any run with no integrity report |
 
 ## How to read them
 
