@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPOROOT / "backend"))
 from forward_forecast import BENCHMARK_LABEL as _BENCH_LABEL  # noqa: E402
 from forward_forecast import benchmark_mae_for_target as _benchmark_mae  # noqa: E402
 from forward_forecast import benchmark_series as _benchmark_series  # noqa: E402
+from model_shelf import shelf_for as _shelf_for  # noqa: E402
 from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
 from ui_styles import TOK as _TOK  # noqa: E402
 from ui_styles import HELP, reading_this_chart  # noqa: E402
@@ -132,6 +133,145 @@ st.markdown(data["narrative"]["narrative"]["signal_finding"])
 
 st.divider()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ONE INTERPRETER OWNS THE MODELS
+#
+# The modelling stack (sklearn, lightgbm, xgboost, catboost, matplotlib) lives in the BACKEND
+# interpreter. Importing the pipeline from here crashed on matplotlib and would then have crashed
+# on sklearn in turn -- so this page dispatches to that interpreter and reads JSON, the same
+# pattern the Lab page uses.
+#
+# This block used to sit further down, next to the "Generate a forecast" section that was its
+# only caller. The per-target Models panel needs it too -- to ask which estimators this build can
+# actually fit, and to run a comparison -- so it moves above the first use rather than being
+# duplicated.
+# ══════════════════════════════════════════════════════════════════════════════
+import json as _json
+import subprocess as _sp
+
+_DATA = REPOROOT / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
+_BACKEND_PY = next((p for p in (REPOROOT / "backend" / ".venv" / "bin" / "python",
+                                REPOROOT / "backend" / ".venv" / "Scripts" / "python.exe")
+                    if p.exists()), None)
+_modes_ok = _BACKEND_PY is not None
+
+VALIDATED_HORIZON = 5
+EXPLORATORY_LABEL = "exploratory — not gated, not published"
+
+#: Verdict codes in the words a reader uses. The codes themselves are terms of art.
+_VERDICT_WORDS = {
+    "publishable": "usable as a forecast",
+    "withheld_as_forecast": "shown as a guide only",
+    "withheld": "not usable",
+    "unknown": "not decided",
+}
+
+
+def _dispatch(args: list, timeout: int = 600) -> dict:
+    """Run backend/forecast_modes.py and return its JSON, or an explained failure."""
+    if not _modes_ok:
+        return {"ok": False, "refused": False,
+                "reason": "the backend interpreter (backend/.venv) was not found"}
+    try:
+        out = _sp.run([str(_BACKEND_PY), "backend/forecast_modes.py", *args],
+                      cwd=str(REPOROOT), capture_output=True, text=True, timeout=timeout)
+    except Exception as exc:
+        return {"ok": False, "refused": False, "reason": f"could not start the backend: {exc}"}
+    line = next((l for l in reversed(out.stdout.splitlines()) if l.strip().startswith("{")), "")
+    if not line:
+        return {"ok": False, "refused": False,
+                "reason": (out.stderr.strip().splitlines() or ["no output from the backend"])[-1]}
+    try:
+        return _json.loads(line)
+    except Exception as exc:
+        return {"ok": False, "refused": False, "reason": f"unreadable backend output: {exc}"}
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _model_pool() -> list:
+    """Estimator names this build can actually fit, read live from the backend interpreter."""
+    if not _modes_ok:
+        return []
+    out = _sp.run([str(_BACKEND_PY), "-c",
+                   "import sys;sys.path.insert(0,'backend');"
+                   "from b_ml_pipeline import available_models;"
+                   "print('\\n'.join(sorted(available_models())))"],
+                  cwd=str(REPOROOT), capture_output=True, text=True, timeout=120)
+    return [l for l in out.stdout.split("\n") if l.strip()] if out.returncode == 0 else []
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _shelf_state(target: str) -> dict:
+    """The champion and its runners-up for one target, read from the recorded evidence.
+
+    Cached because it re-reads the whole experiment ledger and recomputes the Treasury
+    method's own 2024 error, and neither changes while a reader is on the page.
+    """
+    return _shelf_for(target, data_path=_DATA, runnable_models=set(_model_pool()))
+
+
+def _render_compare_alternatives(target: str, shelf: dict) -> None:
+    """Run the champion and its runners-up side by side, exploratorily.
+
+    Every run here goes through ``forecast_modes.exploratory_run``, which returns a type with
+    no publish path at all. That is the reason this button is safe to offer: the separation is
+    enforced in the backend, so forgetting a flag on this page cannot leak a comparison into
+    the published record, the official artifacts or the scorecard.
+    """
+    comparable = shelf.get("comparable") or []
+    if not comparable:
+        return
+
+    with st.expander(f"Compare alternatives for {target}", expanded=False):
+        st.warning(
+            "**EXPLORATORY.** Anything produced here is a side-by-side experiment. It is not "
+            "published, not written to the official forecast, and not entered in the "
+            "scorecard. The official forecast always uses the champion."
+        )
+        st.caption(
+            "Each model is refitted on all data through the end of the file and asked for the "
+            "same working days as the official forecast. Comparing them here shows how much "
+            "the choice of model actually moves the number."
+        )
+        if st.button(f"Run the comparison for {target}",
+                     key=f"cmp_{target}", disabled=not _modes_ok):
+            _names = [shelf["champion_model"]] + list(comparable)
+            _frames, _failed = [], []
+            for _name in _names:
+                with st.spinner(f"Running {_name} on {target} …"):
+                    _res = _dispatch(["--mode", "exploratory", "--target", target,
+                                      "--model", _name, "--horizon", str(VALIDATED_HORIZON),
+                                      "--data", str(_DATA)])
+                if not _res.get("ok"):
+                    _failed.append((_name, _res.get("reason", "no reason reported")))
+                    continue
+                _df = pd.DataFrame(_res["forecasts"])
+                _df["target_date"] = pd.to_datetime(_df["target_date"])
+                _frames.append((_name, _df))
+
+            for _name, _why in _failed:
+                st.error(f"**{_name} did not produce a comparison.** {_why}")
+
+            if _frames:
+                _out = pd.DataFrame({
+                    "Date": _frames[0][1]["target_date"].dt.strftime("%a %d %b")})
+                for _name, _df in _frames:
+                    _label = (f"{_name} (champion)" if _name == shelf["champion_model"]
+                              else _name)
+                    _out[_label] = _df["p50"].map(m).to_list()
+                st.dataframe(_out, hide_index=True, use_container_width=True)
+                st.caption(
+                    f"{UNIT_LABEL.capitalize()}. Central estimates only. These are exploratory "
+                    "results and no gate verdict attaches to any of them, including the "
+                    "champion's column, because the gates were measured on 2024 and these "
+                    "dates have no actual value yet."
+                )
+                st.warning(
+                    "**EXPLORATORY.** Nothing above was published or scored. The official "
+                    "forecast for this line uses the champion."
+                )
+
+
 # ── Per target ────────────────────────────────────────────────────────
 sections = {s["target"]: s for s in data["narrative"]["narrative"]["sections"]}
 
@@ -148,21 +288,31 @@ for target in fc["target"].unique():
     st.markdown(section_header(target, f"{rec['point_model']} · recipe {rec['id']}"),
                 unsafe_allow_html=True)
 
-    # Verdict banner — never hidden.
+    # Verdict banner — never hidden. Each verdict now opens with one sentence saying what
+    # the verdict IS, because "withheld as a forecast" and "withheld" are terms of art here
+    # and a reader meeting them for the first time cannot tell them apart.
     if publishable:
-        st.success(f"**Usable as a forecast.** {pub['reason_plain']}")
+        st.success(
+            "**Usable as a forecast.** Every check this model was put through passed, so "
+            "the numbers below are the best estimate we have for these days. "
+            + pub["reason_plain"]
+        )
     elif pub["verdict"] == "withheld":
         # P2 made these two mean different things, and the page used to render both as
         # "shown as a guide to the typical level". That is wrong for `withheld`: it means a
         # documented trivial benchmark is MORE accurate, so the numbers are not a guide to
         # anything and presenting them as one would invite a worse decision.
         st.error(
-            f"**WITHHELD — do not use these numbers.**\n\n{pub['reason_plain']}"
+            "**Do not use these numbers.** A simple rule of thumb was more accurate than "
+            "this model on data it had never seen, so acting on its figures would be worse "
+            "than acting on the rule of thumb.\n\n" + pub["reason_plain"]
         )
     else:
         st.error(
-            f"**WITHHELD as a forecast — shown as a guide to the typical level.**\n\n"
-            f"{pub['reason_plain']}"
+            "**Shown as a guide to the typical level, not as a forecast.** The model is "
+            "about as accurate as we would want, but it could not show that it anticipates "
+            "individual days rather than tracking the usual level, so we will not call it a "
+            "forecast.\n\n" + pub["reason_plain"]
         )
         if pub.get("named_fix"):
             st.warning(f"**What would change this:** {pub['named_fix']}")
@@ -272,6 +422,84 @@ for target in fc["target"].unique():
             st.markdown(f"{icon} **{g.get('name', key)}**")
             st.caption(g.get("reason_plain", ""))
 
+    # ══════════════════════════════════════════════════════════════════════
+    # MODELS PANEL — the champion, and what came second
+    #
+    # Before this the page showed one model per target and nothing else, which reads as
+    # "here is our model" rather than "here is the best of what we measured". The runners-up
+    # come from experiments/log.csv, judged by the same publication_gates code that decided
+    # the champion's own verdict, so nothing here is a second opinion about the gates.
+    #
+    # Nothing in this panel selects anything. The champion is read from the registry, which
+    # is hand-edited; displaying a ranking of past measurements does not change it.
+    # ══════════════════════════════════════════════════════════════════════
+    _shelf = _shelf_state(target)
+    st.markdown("**Models measured on this line**")
+    st.caption(
+        "The champion is the model the official forecast uses. It was chosen once, on "
+        "recorded evidence, and no run re-chooses it. The alternatives below are the next "
+        "best models that also cleared the accuracy gate, shown so the choice can be "
+        "checked rather than taken on trust."
+    )
+
+    _mc1, _mc2 = st.columns([1.15, 0.85], gap="large")
+    with _mc1:
+        st.markdown(f"🏆 **{_shelf['champion_model']}** is the champion")
+        st.caption(_shelf["champion_sentence"])
+    with _mc2:
+        _ops = _shelf["ops"]
+        if _ops.get("available") and _ops.get("skill_pct") is not None:
+            st.metric("Better than the Treasury's current method by",
+                      pct_points(_ops["skill_pct"]),
+                      help="Both errors are averages over the same year, 2024. The current "
+                           "method is the Treasury's published planning construction: a "
+                           "three-year average annual total, split by month share and spread "
+                           "over working days.")
+            st.caption(f"Measured over {_ops['n']} working days in 2024.")
+        else:
+            st.metric("Better than the Treasury's current method by", NOT_REPORTED,
+                      help="No comparison is possible here. The reason is stated below.")
+            st.caption(f"Not comparable: {_ops.get('reason', 'reason not recorded')}.")
+
+    _alts = _shelf["alternatives"]
+    if not _alts:
+        st.info(_shelf["no_alternatives_reason"])
+    else:
+        st.dataframe(pd.DataFrame([{
+            "Model": a.model,
+            "Better than the naive rule by": f"{(1.0 - a.mase) * 100:.1f}%",
+            "Better than carrying forward by": (f"{a.skill_vs_ruler_pct:.1f}%"
+                                                if a.skill_vs_ruler_pct is not None
+                                                else NOT_REPORTED),
+            "Verdict if published": _VERDICT_WORDS.get(a.verdict, a.verdict),
+            "Can be re-run here": "yes" if a.runnable else "no",
+        } for a in _alts]), hide_index=True, use_container_width=True)
+        st.caption(
+            "Every figure is read from the recorded run that produced it, on 2024 data the "
+            "model was never fitted on. A model marked \"no\" in the last column was "
+            "measured but cannot be re-run as a forward forecast in this build."
+        )
+
+    with st.expander("What does this mean?"):
+        st.markdown(
+            "- **Champion** means the one model the official forecast uses for this line. "
+            "It was chosen on recorded evidence from 2024, and loading new data refits it "
+            "but never re-chooses it.\n"
+            "- **The naive rule** is repeating what happened on the same weekday last week. "
+            "A model that cannot beat it has no business being published.\n"
+            "- **Carrying forward** means assuming the value from five working days ago "
+            "repeats. It is the single shared benchmark every model family here is scored "
+            "against, which is what makes their numbers comparable.\n"
+            "- **The Treasury's current method** is the planning construction in use today: "
+            "a three-year average annual total, split by month share and spread evenly over "
+            "working days. It is not defined for a balance level, which has no annual total.\n"
+            "- An alternative appearing here has **not** replaced the champion and is not "
+            "published. Comparing them below runs them exploratorily, and nothing that runs "
+            "there is written to the official record."
+        )
+
+    _render_compare_alternatives(target, _shelf)
+
     if sec:
         with st.expander("In plain language", expanded=not publishable):
             for p in sec["paragraphs"]:
@@ -303,43 +531,11 @@ st.markdown(section_header("Generate a forecast",
                            "Official runs use the registry champion; exploratory runs do not"),
             unsafe_allow_html=True)
 
-_DATA = REPOROOT / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
-# The modelling stack (sklearn, lightgbm, xgboost, catboost, matplotlib) lives in the BACKEND
-# interpreter. Importing the pipeline from here crashed on matplotlib and would then have crashed
-# on sklearn in turn -- so this page dispatches to that interpreter and reads JSON, the same
-# pattern the Lab page and the model-pool lookup use. One interpreter owns the models.
-import json as _json
-import subprocess as _sp
-
-_BACKEND_PY = next((p for p in (REPOROOT / "backend" / ".venv" / "bin" / "python",
-                                REPOROOT / "backend" / ".venv" / "Scripts" / "python.exe")
-                    if p.exists()), None)
-_modes_ok = _BACKEND_PY is not None
 if not _modes_ok:
     st.warning(
         "**Forecast generation needs the backend interpreter** (`backend/.venv`), which was not "
         "found. The models and their libraries live there, not in the interpreter running this "
-        "page. Published forecasts above are unaffected — they are read from artifacts.")
-
-VALIDATED_HORIZON = 5
-EXPLORATORY_LABEL = "exploratory — not gated, not published"
-
-
-def _dispatch(args: list, timeout: int = 600) -> dict:
-    """Run backend/forecast_modes.py and return its JSON, or an explained failure."""
-    try:
-        out = _sp.run([str(_BACKEND_PY), "backend/forecast_modes.py", *args],
-                      cwd=str(REPOROOT), capture_output=True, text=True, timeout=timeout)
-    except Exception as exc:
-        return {"ok": False, "refused": False, "reason": f"could not start the backend: {exc}"}
-    line = next((l for l in reversed(out.stdout.splitlines()) if l.strip().startswith("{")), "")
-    if not line:
-        return {"ok": False, "refused": False,
-                "reason": (out.stderr.strip().splitlines() or ["no output from the backend"])[-1]}
-    try:
-        return _json.loads(line)
-    except Exception as exc:
-        return {"ok": False, "refused": False, "reason": f"unreadable backend output: {exc}"}
+        "page. Published forecasts above are unaffected, because they are read from artifacts.")
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -382,7 +578,13 @@ if _modes_ok:
             st.caption("Will run: " + ", ".join(
                 f"**{t}** → `{_reg[t]['recipe_id']}` ({_reg[t]['model']})" for t in _runnable))
         _pub = st.checkbox("Publish to forecasts/published/ under a new issue date", value=False)
-        if st.button("Run", disabled=not _runnable, type="primary"):
+        st.caption(
+            "The model is not selectable in this mode, and that is deliberate. An official "
+            "forecast is the champion recipe, which was chosen once on recorded evidence. "
+            "To try a different model, use the comparison in each target's Models panel "
+            "above, or Exploratory mode here."
+        )
+        if st.button("Run the champion recipe", disabled=not _runnable, type="primary"):
             for _t in _runnable:
                 with st.spinner(f"Running {_t} …"):
                     _args = ["--mode", "official", "--target", _t, "--data", str(_DATA)]
@@ -409,15 +611,6 @@ if _modes_ok:
                     f"truth. Nothing here is approved: every recipe's status is *candidate*.")
     else:
         _t = st.selectbox("Target", _all_targets, index=0 if _all_targets else None)
-
-        @st.cache_data(show_spinner=False, ttl=300)
-        def _model_pool() -> list:
-            out = _sp.run([str(_BACKEND_PY), "-c",
-                           "import sys;sys.path.insert(0,'backend');"
-                           "from b_ml_pipeline import available_models;"
-                           "print('\\n'.join(sorted(available_models())))"],
-                          cwd=str(REPOROOT), capture_output=True, text=True, timeout=120)
-            return [l for l in out.stdout.split("\n") if l.strip()] if out.returncode == 0 else []
 
         _pool = _model_pool()
         if not _pool:
@@ -488,15 +681,20 @@ else:
         with st.expander(_label, expanded=bool(_n_changed)):
             for r in _rows:
                 _then, _now = r["verdict_at_issue"], r["verdict_today"]
+                # `withheld_as_forecast` and its siblings are codes in the registry, not
+                # words. Printing them raw asked the reader to learn a vocabulary in order
+                # to read a verdict history.
+                _then_w = _VERDICT_WORDS.get(_then, _then)
+                _now_w = _VERDICT_WORDS.get(_now, _now)
                 if r.get("changed"):
                     st.markdown(
-                        f"**{r['target']}** &nbsp; `{_then}` &nbsp;→&nbsp; `{_now}`",
+                        f"**{r['target']}** &nbsp; {_then_w} &nbsp;→&nbsp; {_now_w}",
                         unsafe_allow_html=True)
                     # The one actionable sentence: it names only the gates that drove the
                     # change, not every gate that differs.
                     st.caption(r["why"])
                 else:
-                    st.markdown(f"**{r['target']}** &nbsp; `{_then}` &nbsp;(unchanged)",
+                    st.markdown(f"**{r['target']}** &nbsp; {_then_w} &nbsp;(unchanged)",
                                 unsafe_allow_html=True)
             st.caption("The published issue is immutable and its gates.json correctly records "
                        "what was decided on the issue date. This is a comparison, not a "
