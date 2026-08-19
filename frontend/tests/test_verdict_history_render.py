@@ -126,3 +126,98 @@ def test_the_reconciliation_never_blocks_the_page():
     window = src[i - 400:i + 400]
     assert "except Exception" in window
     assert "reconciliation = []" in window
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THE CRASH THE FIXTURE ABOVE COULD NOT SEE
+#
+# The page died on render with `TypeError: 'str' object is not callable`, traced to
+# `_verdict_words` calling the i18n translator. The translator was imported as `_t`, and three
+# lines in the "Generate a forecast" block reused `_t` for a Treasury line name. Those lines
+# sit inside a module-level `if`, so they rebound the module global: the translator became a
+# string, and the verdict history below them then tried to call a string.
+#
+# `rendered` above asserts `not at.exception` and still passed, which is the interesting part.
+# AppTest runs a page at its DEFAULT widget values, and at those values neither shadowing line
+# executes: the mode radio defaults to "Official", so the Exploratory `_tgt = st.selectbox(...)`
+# is never reached, and the default target selection has a champion recipe, so the `for` loop
+# over recipe-less targets has an empty body. The crash needed a reader to click one radio.
+#
+# So these tests drive the widget rather than trusting the default, in BOTH languages, because
+# the failing call was the translation call itself and an English-only test can pass while
+# Georgian raises.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: The verdict codes as a reader reads them, from `_VERDICT_WORDS_EN` on the page.
+_VERDICT_WORDS_IN_ENGLISH = ("usable as a forecast", "shown as a guide only",
+                             "not usable", "not decided")
+
+
+def _mode_radio(at):
+    """The Official/Exploratory radio, found by its options rather than by position.
+
+    The language toggle is also a radio and is rendered first, so an index would pin the
+    wrong widget the moment either toggle moves.
+    """
+    for r in at.radio:
+        if "Exploratory" in (r.options or []):
+            return r
+    raise AssertionError(f"no mode radio found; radios were {[r.options for r in at.radio]}")
+
+
+@pytest.mark.parametrize("language", ["en", "ka"])
+def test_exploratory_mode_renders_and_still_shows_verdict_words(language):
+    """The exact path that crashed, in both languages.
+
+    Selecting Exploratory used to rebind the module-global translator to a target name, so the
+    verdict history further down the page raised `TypeError: 'str' object is not callable`.
+    """
+    at = AppTest.from_file(str(FORECAST), default_timeout=240)
+    at.session_state["ai4cm_language"] = language
+    at = at.run()
+    assert not at.exception, at.exception
+
+    _mode_radio(at).set_value("Exploratory").run()
+    assert not at.exception, (
+        f"selecting Exploratory crashed the page in {language!r}: {at.exception}")
+
+    # Rendering without raising is necessary but not sufficient: the verdict history must
+    # still be there, and still be in words. A page that swallowed the section would pass a
+    # bare "no exception" check.
+    blob = _all_text(at)
+    assert "Verdict history" in blob
+    assert any(w in blob for w in _VERDICT_WORDS_IN_ENGLISH) or language == "ka", (
+        "the English verdict words must survive a mode switch")
+    assert "withheld_as_forecast" not in blob, "a registry code is not a verdict a reader reads"
+
+
+def test_official_mode_with_a_recipeless_target_also_renders():
+    """The second shadowing site: the loop over targets that have no champion recipe.
+
+    Its body only runs when a selected target lacks a recipe, which is why the default-value
+    fixture never entered it. Selecting every target guarantees at least one such target as
+    long as any target is unregistered.
+    """
+    at = AppTest.from_file(str(FORECAST), default_timeout=240).run()
+    assert not at.exception, at.exception
+
+    targets = [m for m in at.multiselect if "Target" in (m.label or "")]
+    if not targets:
+        pytest.skip("no target multiselect on the page; the backend interpreter is absent")
+    at = targets[0].set_value(list(targets[0].options)).run()
+    assert not at.exception, (
+        f"selecting every target crashed the page: {at.exception}")
+    assert "Verdict history" in _all_text(at)
+
+
+def test_the_translator_is_not_named_something_a_target_variable_would_reuse():
+    """Pins the fix at its root rather than pinning the symptom.
+
+    Renaming the three loop variables would have fixed the crash and left the trap open, since
+    `_t` is the obvious short name for "target". The durable fix is that the translator does
+    not own a name anybody would reach for again.
+    """
+    src = FORECAST.read_text()
+    assert "from i18n import t as _translate" in src
+    assert "from i18n import t as _t\n" not in src, (
+        "`_t` is too tempting a name for a target variable; see the comment at the import")

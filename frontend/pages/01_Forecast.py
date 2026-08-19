@@ -36,7 +36,12 @@ from ui_styles import HELP, reading_this_chart  # noqa: E402
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
-from i18n import t as _t  # verdict sentences are fixed copy and are translated
+# Imported as `_translate`, deliberately not as `_t`. It was `_t`, and three lines in the
+# "Generate a forecast" block below used `_t` for a Treasury line name. Those lines sit in a
+# module-level `if`, so they rebound the module global and the translator became a string:
+# the page then died on `TypeError: 'str' object is not callable` the moment it reached the
+# verdict history. `test_no_i18n_shadowing` fails if any page rebinds its i18n import again.
+from i18n import t as _translate  # verdict sentences are fixed copy and are translated
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Forecast · Treasury Forecast", page_icon="🔭", layout="wide")
@@ -185,7 +190,7 @@ _VERDICT_WORDS_EN = {
 
 def _verdict_words(code: str) -> str:
     """A verdict in the reader's own words, in the reader's own language."""
-    return _t(_VERDICT_WORDS_EN.get(code, code))
+    return _translate(_VERDICT_WORDS_EN.get(code, code))
 
 
 class _VerdictWords(dict):
@@ -324,7 +329,7 @@ for target in fc["target"].unique():
     # and a reader meeting them for the first time cannot tell them apart.
     if publishable:
         st.success(
-            _t("**Usable as a forecast.** Every check this model was put through passed, so "
+            _translate("**Usable as a forecast.** Every check this model was put through passed, so "
                "the numbers below are the best estimate we have for these days.")
             + " " + pub["reason_plain"]
         )
@@ -334,14 +339,14 @@ for target in fc["target"].unique():
         # documented trivial benchmark is MORE accurate, so the numbers are not a guide to
         # anything and presenting them as one would invite a worse decision.
         st.error(
-            _t("**Do not use these numbers.** A simple rule of thumb was more accurate than "
+            _translate("**Do not use these numbers.** A simple rule of thumb was more accurate than "
                "this model on data it had never seen, so acting on its figures would be "
                "worse than acting on the rule of thumb.")
             + "\n\n" + pub["reason_plain"]
         )
     else:
         st.error(
-            _t("**Shown as a guide to the typical level, not as a forecast.** The model is "
+            _translate("**Shown as a guide to the typical level, not as a forecast.** The model is "
                "about as accurate as we would want, but it could not show that it "
                "anticipates individual days rather than tracking the usual level, so we "
                "will not call it a forecast.")
@@ -603,8 +608,8 @@ if _modes_ok:
         st.caption(f"Horizon is fixed at {VALIDATED_HORIZON} business days, the only horizon at "
                    f"which the benchmark, recipe selection and gates were measured.")
         _runnable = [t for t in _sel if t in _reg]
-        for _t in [t for t in _sel if t not in _reg]:
-            st.error(f"**{_t} has no champion recipe, so no official forecast can be issued for "
+        for _tgt in [t for t in _sel if t not in _reg]:
+            st.error(f"**{_tgt} has no champion recipe, so no official forecast can be issued for "
                      f"it.** Substituting another target's recipe would attach five folds of "
                      f"evidence to a model it was never measured on. Use exploratory mode, where "
                      f"nothing is published and no gate is claimed.")
@@ -619,17 +624,17 @@ if _modes_ok:
             "above, or Exploratory mode here."
         )
         if st.button("Run the champion recipe", disabled=not _runnable, type="primary"):
-            for _t in _runnable:
-                with st.spinner(f"Running {_t} …"):
-                    _args = ["--mode", "official", "--target", _t, "--data", str(_DATA)]
+            for _tgt in _runnable:
+                with st.spinner(f"Running {_tgt} …"):
+                    _args = ["--mode", "official", "--target", _tgt, "--data", str(_DATA)]
                     if _pub:
                         _args.append("--publish")
                     _r = _dispatch(_args)
                 if not _r.get("ok"):
-                    st.error(f"**{_t}**: {_r.get('reason', 'unknown failure')}")
+                    st.error(f"**{_tgt}**: {_r.get('reason', 'unknown failure')}")
                     continue
                 _appr = _r.get("approved_by")
-                st.success(f"**{_t}** · recipe `{_r['recipe_id']}` · model `{_r['model']}` · "
+                st.success(f"**{_tgt}** · recipe `{_r['recipe_id']}` · model `{_r['model']}` · "
                            f"approved by **{_appr if _appr else 'none'}**"
                            + (f" · published to `{_r['published_to']}`"
                               if _r.get("published_to") else ""))
@@ -645,7 +650,7 @@ if _modes_ok:
                     f"have no truth yet. Nothing here is approved: every recipe's status is "
                     f"*candidate*.")
     else:
-        _t = st.selectbox("Target", _all_targets, index=0 if _all_targets else None)
+        _tgt = st.selectbox("Target", _all_targets, index=0 if _all_targets else None)
 
         _pool = _model_pool()
         if not _pool:
@@ -662,9 +667,9 @@ if _modes_ok:
                        f"horizon {_h} no recipe was selected and no gate was measured.")
         st.error(f"**{EXPLORATORY_LABEL}.** Nothing below is published, enters the track record, "
                  f"or carries a gate verdict.")
-        if st.button("Run (exploratory)", disabled=not (_t and _mdl)):
+        if st.button("Run (exploratory)", disabled=not (_tgt and _mdl)):
             with st.spinner("Running …"):
-                _r = _dispatch(["--mode", "exploratory", "--target", _t, "--model", _mdl,
+                _r = _dispatch(["--mode", "exploratory", "--target", _tgt, "--model", _mdl,
                                 "--horizon", str(_h), "--data", str(_DATA)])
             if not _r.get("ok"):
                 st.error(_r.get("reason", "unknown failure"))
