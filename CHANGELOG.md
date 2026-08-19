@@ -1,5 +1,18 @@
 # Changelog
 
+> **Outdated as of 2026-08-19 — kept for its reasoning, not its status.**
+>
+> The "Unreleased — Phase 2" status line below states that no modelling has been
+> done, that no per-target candidates exist, and that `experiments/test_access.log`
+> is empty. **All three are now false:** three champion recipes are registered, the
+> sealed holdout has been evaluated and reported on, and the ledger records
+> hundreds of reporting reads. Entries after 2026-08-14 were not added here.
+>
+> For the current state see [`README.md`](README.md) and
+> [`docs/sessions/`](docs/sessions/README.md). Any figure below of the form "N%
+> better than the Treasury's current method" is **withdrawn** — see
+> [`docs/sessions/2026-08-18-session6-prep.md`](docs/sessions/2026-08-18-session6-prep.md).
+
 All notable changes to AI4CM. Newest first.
 
 Numbers quoted here were produced by running code, not by reading it. Where a measurement

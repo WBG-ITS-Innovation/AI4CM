@@ -1,5 +1,18 @@
 # Verification
 
+> **Outdated as of 2026-08-19 — kept for its reasoning, not its expected outputs.**
+>
+> Section 1 expects `225 passed`. The suite is now **942 passed, 4 skipped**, and
+> runs as `./backend/.venv/bin/python -m pytest backend/tests frontend/tests -q`.
+> The Treasury dataset was removed from this repository on 2026-08-14, so the
+> data-dependent commands below need it restored from secure storage; without it
+> those tests skip rather than fail.
+>
+> The *method* here — exact commands, expected outputs, stated tolerances — is
+> still how this project verifies itself. Each session record carries its own
+> Reproduction section, which is the current equivalent. See
+> [`README.md`](README.md) and [`docs/sessions/`](docs/sessions/README.md).
+
 Exact commands for a third party to re-run every check that currently exists, with expected outputs and
 tolerances. Nothing here requires reading the locked TEST window.
 

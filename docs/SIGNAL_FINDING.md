@@ -1,5 +1,24 @@
 # The signal finding
 
+> **Outdated in one important respect as of 2026-08-19.**
+>
+> This finding predates the sentinel recalibration of 2026-08-13, which replaced
+> an uncalibrated threshold of 1.50 with a measured **1.15** (360 permutation
+> draws, false-positive rate 0.00%). At 1.15, **Revenues clears the signal gate**
+> — so the summary below, which reads the two flow targets as carrying no signal
+> and the stock target as the one that forecasts genuinely, is inverted relative
+> to the current verdicts. Today Revenues is `publishable`, and the stock target
+> is `withheld` on accuracy.
+>
+> The header's "**TEST (2025) reads: 0**" is also no longer true; the holdout has
+> since been reported on and logged.
+>
+> **The method is not superseded** — the three-instrument robustness study, and
+> the distinction between an event forecast and a calibrated central-tendency
+> guide, are still the right frame. See
+> [`backend/publication_gates.py`](../backend/publication_gates.py) for the
+> calibrated threshold and `reports/sentinel_calibration.md` for the null study.
+
 **What we established, how, and what would change it.** Every figure traces to a row in
 `experiments/log.csv`; none is quoted from a summary table.
 
