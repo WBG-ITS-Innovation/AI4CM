@@ -12,13 +12,20 @@ from pathlib import Path
 
 import streamlit as st
 
-from ui_styles import inject_design_system, inject_global_css, page_header, render_app_header
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from ui_styles import inject_design_system, inject_global_css, page_header, page_intro
+from ui_styles import render_app_header
 from ui_styles import section_header
 
 st.set_page_config(page_title="Start here · Treasury Forecast", page_icon="🧭", layout="wide")
 inject_global_css()
 inject_design_system()
 render_app_header("Start here", "What this Lab is, and where to go for each question")
+page_intro(
+    "This page is the way in. It says what each page of the Lab is for, what you can do "
+    "there, and the difference between an official forecast and an experiment."
+)
+glossary_note("champion", "exploratory", "withheld", "gate", "sealed window", "baseline")
 
 st.markdown(
     page_header("🧭 Start here",
@@ -183,37 +190,54 @@ st.markdown(
 
 left, right = st.columns(2, gap="large")
 
+def _door(rows) -> None:
+    """One labelled point per paragraph.
+
+    Written as separate blocks rather than one long string on purpose: this is the section
+    a new reader is most likely to actually read, and a single 800-character paragraph is
+    the surest way to make sure they do not.
+    """
+    for label, body in rows:
+        st.markdown(f"**{label}** {body}")
+
+
 with left:
     st.success("### 🔒 Official")
-    st.markdown(
-        "**What it is.** A forecast produced by the champion model for that Treasury line, at "
-        "the one horizon everything here was measured at.\n\n"
-        "**How the model was chosen.** Once, on recorded evidence, from data it had never been "
-        "fitted on. Loading new data refits the model but never re-chooses it, and no run can "
-        "change the choice.\n\n"
-        "**What it went through.** Every publication check, each with a plain-language reason "
-        "attached to its verdict. Where a check failed, the forecast is either withheld or "
-        "shown as a guide to the typical level rather than as a forecast, and the page says "
-        "which and why.\n\n"
-        "**What you may do with it.** Publish it. It is written once with the date it was "
-        "issued, never edited afterwards, and scored against the actual figure when that day "
-        "arrives.\n\n"
-        "**Where.** The Forecast page, in Official mode."
-    )
+    _door([
+        ("What it is.",
+         "A forecast produced by the champion model for that Treasury line, at the one "
+         "horizon everything here was measured at."),
+        ("How the model was chosen.",
+         "Once, on recorded evidence, from data it had never been fitted on. Loading new "
+         "data refits the model but never re-chooses it, and no run can change the choice."),
+        ("What it went through.",
+         "Every publication check, each with a plain-language reason attached to its "
+         "verdict. Where a check failed, the forecast is either withheld or shown as a "
+         "guide to the typical level rather than as a forecast, and the page says which "
+         "and why."),
+        ("What you may do with it.",
+         "Publish it. It is written once with the date it was issued, never edited "
+         "afterwards, and scored against the actual figure when that day arrives."),
+        ("Where.", "The Forecast page, in Official mode."),
+    ])
 
 with right:
     st.warning("### 🧪 Exploratory")
-    st.markdown(
-        "**What it is.** Any model, on any line, at any horizon, because somebody wanted to "
-        "see what it would do.\n\n"
-        "**How the model was chosen.** By you, from a list. That is the point of it.\n\n"
-        "**What it went through.** Nothing. No check was measured for the combination you "
-        "chose, so no verdict attaches to the result, and none is claimed.\n\n"
-        "**What you may do with it.** Look at it, compare it, learn from it. It is never "
-        "published, never written to the official forecast folders, and never entered in the "
-        "scorecard. Every page that produces one says so on screen while it is showing it.\n\n"
-        "**Where.** The Lab, the Forecast page in Exploratory mode, and Compare alternatives."
-    )
+    _door([
+        ("What it is.",
+         "Any model, on any line, at any horizon, because somebody wanted to see what it "
+         "would do."),
+        ("How the model was chosen.", "By you, from a list. That is the point of it."),
+        ("What it went through.",
+         "Nothing. No check was measured for the combination you chose, so no verdict "
+         "attaches to the result, and none is claimed."),
+        ("What you may do with it.",
+         "Look at it, compare it, learn from it. It is never published, never written to "
+         "the official forecast folders, and never entered in the scorecard. Every page "
+         "that produces one says so on screen while it is showing it."),
+        ("Where.",
+         "The Lab, the Forecast page in Exploratory mode, and Compare alternatives."),
+    ])
 
 with st.expander("Why the separation is worth this much trouble"):
     st.markdown(

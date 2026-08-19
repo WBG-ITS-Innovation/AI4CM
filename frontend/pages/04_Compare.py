@@ -18,11 +18,16 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Compare · Treasury Forecast", page_icon="⚖️", layout="wide")
 inject_global_css()
 inject_design_system()
 render_app_header("Compare runs", "Put several runs side by side on the same target and horizon")
+page_intro(
+    "This page puts two or more experimental runs side by side on the same axes, so a "
+    "difference between them can be seen rather than assumed."
+)
 st.markdown(
     page_header("📊 Compare Runs",
                 "Select 2-6 runs to compare forecasts, metrics, and find the best model"),

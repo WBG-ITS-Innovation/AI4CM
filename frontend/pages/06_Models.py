@@ -12,11 +12,18 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system  # presentation only
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
 inject_design_system()
 render_app_header("Models", "Model families, promoted recipes and their evidence")
+page_intro(
+    "This page is the shelf: every model available here, what it does in plain language, "
+    "and whether anybody has recorded a measured result for it."
+)
+glossary_note("MASE", "champion", "withheld", "gate", "baseline")
 st.markdown(
     page_header("🧩 Model Families & Parameters",
                 "Reference guide for all available forecasting models and their configurations"),
@@ -54,7 +61,7 @@ def _render_registry() -> None:
         st.warning(str(exc))
         return
 
-    st.subheader("Promoted recipes — one per target")
+    st.subheader("Promoted recipes, one per target")
     st.caption(
         "Champions selected on training folds and confirmed on 2024. "
         "**Nothing here is approved**: no approval workflow exists yet, and neither "
@@ -68,13 +75,13 @@ def _render_registry() -> None:
         rows.append({
             "Target": r["target"],
             "Model": r["point_model"],
-            "Intervals": r.get("interval_model", "—"),
+            "Intervals": r.get("interval_model", "not recorded"),
             "Typical error 2024 (M GEL)": _gel_m(cred["dev_mae"]),
             "vs benchmark": f"{cred['skill_vs_ruler_pct']:.1f}% better",
             "Verdict": ("✅ forecast" if pub["verdict"] == "publishable"
                         else "❌ withheld as forecast"),
             "Status": r["status"],
-            "Approved by": r["approved_by"] or "— nobody —",
+            "Approved by": r["approved_by"] or "nobody",
         })
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
@@ -92,16 +99,16 @@ def _render_registry() -> None:
         cred, pub = r["dev_credentials"], r["publication"]
         verdict = ("usable as a forecast" if pub["verdict"] == "publishable"
                    else "WITHHELD as a forecast")
-        with st.expander(f"{r['target']} — {r['point_model']} · {verdict}"):
+        with st.expander(f"{r['target']}: {r['point_model']} · {verdict}"):
             st.markdown(f"**Recipe id** `{r['id']}`  \n"
                         f"**Family** {r['family']} · **Intervals** "
-                        f"{r.get('interval_model', '—')}  \n"
+                        f"{r.get('interval_model', 'not recorded')}  \n"
                         f"**Target scaling** {r['scaling']}  \n"
                         f"**Fiscal calendar version** `{r['calendar_version']}`")
             st.markdown("**Feature groups**: " + ", ".join(r["feature_groups"]) +
                         (("  \n**Exogenous blocks**: " + ", ".join(r["exog_blocks"]))
                          if r.get("exog_blocks") else ""))
-            st.markdown(f"**Why this recipe** — {r['provenance_note']}")
+            st.markdown(f"**Why this recipe.** {r['provenance_note']}")
 
             st.markdown("**Evidence (2024 confirmation)**")
             e1, e2, e3 = st.columns(3)
@@ -114,7 +121,7 @@ def _render_registry() -> None:
             st.markdown("**Checks**")
             for key, g in cred["gates"].items():
                 icon = "✅" if g.get("passed") else "❌"
-                st.markdown(f"- {icon} **{g.get('name', key)}** — "
+                st.markdown(f"- {icon} **{g.get('name', key)}.** "
                             f"{g.get('reason_plain', '')}")
                 if g.get("corroboration"):
                     st.caption(f"  {g['corroboration']}")
@@ -204,7 +211,7 @@ def defaults_a():
 
 def table_a() -> pd.DataFrame:
     rows = [
-        dict(Model="NaiveLast", Parameter="—",
+        dict(Model="NaiveLast", Parameter="none",
              Meaning="Forecast equals the last observed value.",
              WhyItMatters="Establishes a sanity baseline and helps detect random-walk behavior.",
              Suggested="No tuning.", Runtime="⚡"),
@@ -329,7 +336,7 @@ def table_c() -> pd.DataFrame:
         dict(Model="Global", Parameter="batch_size",
              Meaning="Mini-batch size during training.",
              WhyItMatters="Impacts speed and memory; too large can cause memory errors.",
-             Suggested="CPU: 16–64; GPU: 32–128", Runtime="—"),
+             Suggested="CPU: 16 to 64; GPU: 32 to 128", Runtime="not recorded"),
         dict(Model="Global", Parameter="max_epochs / early stopping",
              Meaning="Training duration and stopping behavior.",
              WhyItMatters="More epochs can improve accuracy but increases runtime and overfit risk.",
@@ -684,8 +691,8 @@ def _render_model_detail() -> None:
     }
     st.dataframe(pd.DataFrame([{
         "Model": n,
-        "Family": models[n].get("pipeline", "—"),
-        "Status": _STATUS_LABEL.get(models[n].get("status"), models[n].get("status", "—")),
+        "Family": models[n].get("pipeline", "not recorded"),
+        "Status": _STATUS_LABEL.get(models[n].get("status"), models[n].get("status", "not recorded")),
         "Measured on": ", ".join(models[n].get("measured_on") or []) or "nothing yet",
         "Can be a champion": "yes" if models[n].get("gate_eligible") else "no",
     } for n in _names]), hide_index=True, use_container_width=True)
@@ -735,8 +742,8 @@ def _render_model_detail() -> None:
 
     # ── description: general, not measured ────────────────────────────────────
     st.markdown(f"#### {_pick}")
-    st.caption(f"{m.get('family', '—')} · {m.get('pipeline')} · class "
-               f"`{m.get('class', '—')}`")
+    st.caption(f"{m.get('family', 'not recorded')} · {m.get('pipeline')} · class "
+               f"`{m.get('class', 'not recorded')}`")
     if m.get("summary"):
         st.markdown(m["summary"])
         st.caption(f"_{m['description_kind']}._ It describes how the model works; it says nothing "
@@ -749,7 +756,7 @@ def _render_model_detail() -> None:
             st.success(f"**Promoted as champion for {rec['target']}** · recipe `{rec['id']}`")
             st.markdown(
                 f"**Status** {rec['status']}  \n"
-                f"**Approved by** {rec['approved_by'] or 'none — no approval workflow exists yet'}  \n"
+                f"**Approved by** {rec['approved_by'] or 'nobody, because no approval workflow exists yet'}  \n"
                 f"**Target scaling** {rec['scaling']}  \n"
                 f"**Feature groups** {', '.join(rec['feature_groups'])}"
                 + (f"  \n**Exogenous blocks** {', '.join(rec['exog_blocks'])}"
@@ -773,7 +780,7 @@ def _render_model_detail() -> None:
     _set = hp.get("set_by_pipeline", [])
     if _set:
         st.caption(f"{len(_set)} of {hp['n_total']} parameters are set by the pipeline; the rest "
-                   f"are library defaults. Read live from the code — if a value changes in the "
+                   f"are library defaults. Read live from the code, so if a value changes in the "
                    f"pipeline, it changes here.")
         st.dataframe(pd.DataFrame([{
             "Parameter": p["name"], "Current value": p["value"],
@@ -781,7 +788,7 @@ def _render_model_detail() -> None:
             "Sensible range": p["range"] or NOT_REPORTED} for p in _set]),
             hide_index=True, use_container_width=True)
     elif m["available"]:
-        st.caption("This model holds no explicitly set parameters — it runs on library defaults, "
+        st.caption("This model holds no explicitly set parameters. It runs on library defaults, "
                    "or is constructed per fold.")
     if hp.get("library_default"):
         with st.expander(f"Inherited library defaults ({len(hp['library_default'])})"):
@@ -801,7 +808,7 @@ def _render_model_detail() -> None:
                 looked_in=str(_repo / "experiments"),
                 command="Run an ablation for this model; runs append to the log automatically"),
             unsafe_allow_html=True)
-        st.caption("A model with no logged run is not a bad model — it is an unmeasured one. "
+        st.caption("A model with no logged run is not a bad model. It is an unmeasured one. "
                    "Nothing here is inferred from a sibling model.")
     else:
         _tsel = st.multiselect("Target", sorted({r["target"] for r in rows}), default=[])

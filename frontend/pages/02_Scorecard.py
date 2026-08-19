@@ -32,12 +32,17 @@ from format_gel import gel_millions as m  # noqa: E402
 from paths import scorecard_is_overridden, scorecard_path  # noqa: E402
 from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
 from ui_styles import inject_design_system, plotly_chrome  # noqa: E402
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # noqa: E402
 
 st.set_page_config(page_title="Scorecard · Treasury Forecast", page_icon="🎯", layout="wide")
 inject_global_css()
 inject_design_system()
 render_app_header("Scorecard", "What was forecast, and what actually happened")
+page_intro(
+    "This page compares published forecasts to what actually happened, once the day "
+    "arrives. It is also where newly reported actuals are uploaded."
+)
 
 DATA = REPOROOT / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
 UPLOAD_DIR = APPROOT / "runs_uploads" / "actuals"

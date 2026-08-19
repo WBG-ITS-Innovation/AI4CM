@@ -33,13 +33,21 @@ from ui_styles import TOK as _TOK  # noqa: E402
 from ui_styles import HELP, reading_this_chart  # noqa: E402
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Forecast · Treasury Forecast", page_icon="🔭", layout="wide")
 inject_global_css()
 
 inject_design_system()
 
-render_app_header("Forward forecast", "The next working days — dates beyond the end of the data")
+render_app_header("Forward forecast", "The next working days, which are dates beyond the end of the data")
+page_intro(
+    "This page holds the forecast itself: what each Treasury line is expected to do over "
+    "the next few working days, which model produced each figure, and what earned that "
+    "model its place."
+)
+glossary_note("champion", "exploratory", "holdout", "withheld", "P10", "P50", "P90", "baseline", "skill")
 GEN_CMD = "./backend/.venv/bin/python backend/run_forward_forecast.py"
 
 
@@ -85,7 +93,7 @@ from format_gel import gel_millions as m  # noqa: E402
 # Page
 # ──────────────────────────────────────────────────────────────────────
 st.markdown(page_header("🔭 Forward forecast",
-                        "The next five working days — dates that are not yet in the data"),
+                        "The next five working days, which are dates not yet in the data"),
             unsafe_allow_html=True)
 
 data = load_all()
@@ -120,8 +128,8 @@ with c2:
                    "with the reason stated on each one.")
 with c3:
     st.metric("Working days ahead", str(int(fc["horizon"].max())),
-              help="How far ahead the forecast runs, counted in Georgian working days — "
-                   "weekends and public holidays are skipped.")
+              help="How far ahead the forecast runs, counted in Georgian working days. "
+                   "Weekends and public holidays are skipped.")
 with c4:
     st.metric("Data through", str(pd.to_datetime(
         prov.get("data", {}).get("latest_data_date", fc["origin_date"].max())).date()),
@@ -339,8 +347,9 @@ for target in fc["target"].unique():
                       else NOT_REPORTED,
                       help=HELP["skill"])
         st.caption(f"Both figures come from run `{_bm['run_id']}` on {_bm.get('window')} "
-                   f"(n={_bm.get('n')}). They describe how this recipe performed on 2024 — not the "
-                   f"forecast below, which has no actual values to be scored against yet.")
+                   f"(n={_bm.get('n')}). They describe how this recipe performed on 2024. They do "
+                   f"not describe the forecast below, which has no actual values to be scored "
+                   f"against yet.")
     else:
         st.caption(f"No audited benchmark error is recorded for {target}: "
                    f"{_bm.get('ruler_note', NOT_REPORTED)}.")
@@ -396,7 +405,7 @@ for target in fc["target"].unique():
             "same origin. Every accuracy figure in this project is stated as an improvement over "
             "that line, which is what makes figures from different model families comparable. "
             "<b>These dates have no actual value yet</b>, so the benchmark here is a rival "
-            "prediction to compare against — not an error."), unsafe_allow_html=True)
+            "prediction to compare against rather than an error."), unsafe_allow_html=True)
 
     # Table in millions
     with right:
@@ -414,7 +423,7 @@ for target in fc["target"].unique():
 
     # Gate badges with plain-language reasons
     gates = rec["dev_credentials"]["gates"]
-    st.markdown("**Checks** — tested on 2024")
+    st.markdown("**Checks**, tested on 2024")
     gcols = st.columns(len(gates))
     for col, (key, g) in zip(gcols, gates.items()):
         with col:
@@ -508,7 +517,7 @@ for target in fc["target"].unique():
     # The honest "not the best" disclosure, where it applies.
     nb = rec["dev_credentials"].get("not_the_dev_best")
     if nb:
-        with st.expander("⚠️ This is not the single best 2024 result — why it was chosen"):
+        with st.expander("This is not the single best 2024 result, and here is why it was chosen"):
             st.markdown(
                 f"A different model did better on 2024: **{nb['better_option']}**, with a "
                 f"typical error of {m(nb['its_dev_mae'])} million lari versus "
@@ -556,9 +565,9 @@ if _modes_ok:
     _mode = st.radio(
         "Mode", ["Official", "Exploratory"], horizontal=True,
         help=("Official: the target's champion recipe, refitted on all data and published "
-              "immutably. The model is not selectable — the champion was chosen on recorded "
-              "evidence.  Exploratory: any model, any target, any horizon; shown but never "
-              "published, never scored."))
+              "immutably. The model is not selectable, because the champion was chosen on "
+              "recorded evidence.  Exploratory: any model, any target, any horizon, shown "
+              "but never published and never scored."))
 
     _tr = _targets_and_recipes()
     _all_targets, _reg = _tr["targets"], _tr["recipes"]
@@ -566,7 +575,7 @@ if _modes_ok:
     if _mode == "Official":
         _sel = st.multiselect("Target(s)", _all_targets,
                               default=[t for t in _all_targets if t in _reg][:1])
-        st.caption(f"Horizon is fixed at {VALIDATED_HORIZON} business days — the only horizon at "
+        st.caption(f"Horizon is fixed at {VALIDATED_HORIZON} business days, the only horizon at "
                    f"which the benchmark, recipe selection and gates were measured.")
         _runnable = [t for t in _sel if t in _reg]
         for _t in [t for t in _sel if t not in _reg]:
@@ -607,15 +616,17 @@ if _modes_ok:
                     "High": _f["p90"].map(m)}), hide_index=True, use_container_width=True)
                 st.caption(
                     f"{UNIT_LABEL.capitalize()}. Gate verdicts are inherited by recipe_id from the "
-                    f"2024 credentials run — never recomputed on forward dates, which have no "
-                    f"truth. Nothing here is approved: every recipe's status is *candidate*.")
+                    f"2024 credentials run and are never recomputed on forward dates, which "
+                    f"have no truth yet. Nothing here is approved: every recipe's status is "
+                    f"*candidate*.")
     else:
         _t = st.selectbox("Target", _all_targets, index=0 if _all_targets else None)
 
         _pool = _model_pool()
         if not _pool:
             st.warning("**The model pool could not be read** from the backend interpreter. "
-                       "Published forecasts above are unaffected — they come from artifacts.")
+                       "Published forecasts above are unaffected, because they come from "
+                       "stored artifacts.")
         _mdl = st.selectbox("Model", _pool,
                             help="Any model in the pool, including ones never ablated on this "
                                  "target. Read live from the backend, so it cannot go stale.")
@@ -640,8 +651,8 @@ if _modes_ok:
                     "Date": _f["target_date"].dt.strftime("%a %d %b"),
                     "Low": _f["p10"].map(m), "Central": _f["p50"].map(m),
                     "High": _f["p90"].map(m)}), hide_index=True, use_container_width=True)
-                st.caption(f"{UNIT_LABEL.capitalize()}. Exploratory — not written to "
-                           f"`forecasts/published/`, not exportable as official.")
+                st.caption(f"{UNIT_LABEL.capitalize()}. This is exploratory. It is not written to "
+                           f"`forecasts/published/` and cannot be exported as official.")
 
 st.divider()
 
@@ -667,8 +678,9 @@ else:
     if _changed:
         st.warning(
             f"**{len(_changed)} published verdict(s) would differ today.** The forecast numbers "
-            f"in those issues have not changed — only the verdict attached to them, because the "
-            f"publication gates were corrected. The published files are left exactly as issued."
+            f"in those issues have not changed, only the verdict attached to them, because "
+            f"the publication gates were corrected. The published files are left exactly as "
+            f"issued."
         )
     else:
         st.success("Every published verdict still holds under the current gates.")
@@ -730,8 +742,8 @@ elif tr["scored"] == 0:
     st.info(
         f"**Nothing scoreable yet.** {n_issues} forecast issue(s) retained, "
         f"{tr['pending']} predicted days still in the future.\n\n"
-        "A published forecast is scored only once its actual value arrives in the data — "
-        "the scorer refuses to evaluate a date whose truth we do not yet hold. That is "
+        "A published forecast is scored only once its actual value arrives in the data. "
+        "The scorer refuses to evaluate a date whose truth we do not yet hold, which is "
         "what keeps this an honest track record rather than a re-run of history."
         + (f"\n\nEarliest awaiting truth: **{tr['pending_dates'][0][1]}**."
            if tr.get("pending_dates") else "")
@@ -777,7 +789,7 @@ with pcols[2]:
     st.code(prov.get("calendar_version", "—"), language=None)
 with pcols[3]:
     st.caption("2025 holdout used?")
-    st.code("No — sealed" if prov.get("test_window_touched") is False else "CHECK",
+    st.code("No, still sealed" if prov.get("test_window_touched") is False else "CHECK",
             language=None)
 
 with st.expander("Limitations, in plain language"):
