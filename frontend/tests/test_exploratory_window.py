@@ -123,6 +123,7 @@ def test_unknown_family_is_refused():
 # ---------------------------------------------------------------------------
 
 def test_b_ml_folds_stay_inside_the_selectable_region():
+    pytest.importorskip("sklearn", reason="b_ml_pipeline needs the modelling stack")
     from b_ml_pipeline import build_yearly_folds
 
     ov = exploratory_overrides("B_ML", PROFILE_OVERRIDES["Thorough"])
@@ -135,12 +136,14 @@ def test_b_ml_folds_stay_inside_the_selectable_region():
 
 def test_b_ml_unbounded_folds_still_reach_the_holdout():
     """The hazard the bound exists to remove. If this stops holding, the data changed."""
+    pytest.importorskip("sklearn", reason="b_ml_pipeline needs the modelling stack")
     from b_ml_pipeline import build_yearly_folds
 
     assert "test" in _windows_touched(build_yearly_folds(IDX, 4, None))
 
 
 def test_a_stat_folds_stay_inside_the_selectable_region():
+    pytest.importorskip("statsmodels", reason="run_a_stat needs the modelling stack")
     import run_a_stat
 
     ov = exploratory_overrides("A_STAT", PROFILE_OVERRIDES["Thorough"])
@@ -152,6 +155,7 @@ def test_a_stat_folds_stay_inside_the_selectable_region():
 
 
 def test_a_stat_unbounded_folds_still_reach_the_holdout():
+    pytest.importorskip("statsmodels", reason="run_a_stat needs the modelling stack")
     import run_a_stat
 
     assert "test" in _windows_touched(run_a_stat._yearly_folds(IDX, 4, None))
@@ -163,6 +167,7 @@ def test_a_stat_fallback_fold_respects_the_bound():
     On a bounded run those are exactly the rows the bound excludes, so before this fix a
     configuration that produced no yearly folds silently scored the holdout instead.
     """
+    pytest.importorskip("statsmodels", reason="run_a_stat needs the modelling stack")
     import run_a_stat
 
     folds = run_a_stat._fallback_fold(IDX, 6, eval_start=None, eval_end=EXPLORATORY_EVAL_END)
@@ -208,6 +213,7 @@ def test_guard_still_raises_on_a_bound_edited_past_the_dev_end():
     The Lab's advanced JSON box is an escape hatch by design. This asserts that using it
     to reach the holdout produces a refusal rather than a result.
     """
+    pytest.importorskip("sklearn", reason="b_ml_pipeline needs the modelling stack")
     from b_ml_pipeline import build_yearly_folds
 
     tampered = dict(exploratory_overrides("B_ML", {"folds": 5}), eval_end="2025-03-31")

@@ -35,19 +35,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
+# The guide comes first and is called out on its own, because the row of six links below it
+# was the whole of the app's navigation and none of the labels tells a new reader which page
+# answers their question.
+st.info(
+    "**New here?** The Start here page says what each page is for, what you can do there, and "
+    "one thing to try, and it explains the difference between an official forecast and an "
+    "experiment. It is the shortest way in."
+)
+st.page_link("pages/00_Start_here.py", label="🧭 Start here — the guide to this Lab")
+st.write("")
+
+c1, c2, c3, c4, c5, c6, c7 = st.columns([1,1,1,1,1,1,1])
 with c1:
-    st.page_link("pages/08_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
+    st.page_link("pages/01_Forecast.py", label="🔭 Forecast", help="The forecast for the next working days, and the evidence behind it.")
 with c2:
-    st.page_link("pages/03_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
+    st.page_link("pages/02_Scorecard.py", label="🎯 Scorecard", help="How past published forecasts actually did, and where new actuals are uploaded.")
 with c3:
-    st.page_link("pages/04_Compare.py", label="🔀 Compare Runs", help="Side-by-side comparison of 2-6 runs.")
+    st.page_link("pages/08_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
 with c4:
-    st.page_link("pages/05_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
+    st.page_link("pages/03_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
 with c5:
-    st.page_link("pages/06_Models.py", label="📚 Read about Models", help="Deep guide to model families and parameters.")
+    st.page_link("pages/04_Compare.py", label="🔀 Compare Runs", help="Side-by-side comparison of 2 to 6 runs.")
 with c6:
-    st.page_link("pages/07_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardize and clean source data files.")
+    st.page_link("pages/05_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
+with c7:
+    st.page_link("pages/06_Models.py", label="🧩 Models", help="Every model on the shelf, and whether anyone has measured it.")
+st.page_link("pages/07_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardise and clean source data files.")
 
 st.markdown("---")
 

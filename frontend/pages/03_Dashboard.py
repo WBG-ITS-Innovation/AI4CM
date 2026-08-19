@@ -216,10 +216,20 @@ _integrity_path = base_dir / "artifacts" / "integrity_report.json"
 if not _integrity_path.exists():
     _integrity_path = out_root / "artifacts" / "integrity_report.json"
 
-_integ = None
+# An empty dict rather than None when the report is absent or unreadable.
+#
+# Both are falsy, so every `if _integ:` below behaves exactly as it did. The difference is
+# the reads that are NOT inside one of those blocks: `_integ.get(...)` on None raises an
+# AttributeError that takes the entire page down, and a run with no
+# artifacts/integrity_report.json is the ordinary state of an older run and of any run
+# that failed before it could write one. Two such reads existed, at the leaderboard's
+# overfit annotations and at the best-model cross-check, and either would replace the
+# Dashboard with a raw traceback.
+_integ: dict = {}
 if _integrity_path.exists():
     try:
-        _integ = json.loads(_integrity_path.read_text(encoding="utf-8"))
+        _loaded = json.loads(_integrity_path.read_text(encoding="utf-8"))
+        _integ = _loaded if isinstance(_loaded, dict) else {}
     except Exception:
         pass
 
@@ -388,7 +398,19 @@ if metr is not None and not metr.empty:
 _mae_persist = _integ.get("mae_persistence", np.nan) if _integ else np.nan
 _skill_pct = _integ.get("skill_pct", np.nan) if _integ else np.nan
 _sent = _integ.get("shuffled_to_normal_ratio", np.nan) if _integ else np.nan
-_SENTINEL_THRESHOLD = 1.50
+# The threshold the signal check actually applies, read from the code that applies it.
+#
+# This was the constant 1.50, which P2 superseded: the sentinel threshold was calibrated
+# against a measured null distribution and moved to 1.15, and 1.50 survives in
+# publication_gates only as SENTINEL_MIN_UNCALIBRATED. So the KPI beside every run was
+# telling a reader that a stricter bar was in force than the one any verdict was decided
+# by. Imported rather than retyped, because retyping it is how it went stale the first time.
+try:
+    import sys as _sys_pg
+    _sys_pg.path.insert(0, str(REPOROOT_BACKEND))
+    from publication_gates import SENTINEL_MIN as _SENTINEL_THRESHOLD
+except Exception:                                 # noqa: BLE001 - a KPI, not the run
+    _SENTINEL_THRESHOLD = 1.15
 
 # Gate: the single canonical reader, so a run that wrote only the legacy inverted key is read
 # correctly instead of appearing to pass by absence.
@@ -743,6 +765,8 @@ with tab_leader:
             # best-model selection (overfit_excluded_models). This page previously ignored
             # that field entirely, so an excluded model could sit at the top of the
             # leaderboard looking like the winner.
+            # An absent integrity report means nothing was excluded, which is what the
+            # empty defaults below say. See where `_integ` is loaded for why it is a dict.
             _excluded = set(_integ.get("overfit_excluded_models", []) or [])
             _ratios = _integ.get("overfit_ratios", {}) or {}
             _gate_r = _integ.get("overfit_gate_ratio", None)
