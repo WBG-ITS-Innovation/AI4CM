@@ -772,7 +772,16 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
             if not stock:
                 y_daily = resample_cadence(df, target, "daily")
                 m_base  = ops_monthly_baseline_treasury(y_daily)
-                d_base  = ops_daily_from_monthly(y_daily, m_base, method="profile")
+                # FLAT is the canonical spread. It is the Treasury method as stated ("spread
+                # across working days"), it emits no negative planning figures, and it is the
+                # harsher comparison, so no margin is claimed that a softer construction
+                # manufactured. `profile` remains available and remains correct arithmetic, but on
+                # this data it inherits the series' negative days -- 22 negative daily revenue
+                # baselines over this run's rows -- which is not defensible as a planning figure.
+                # Keeping this aligned with `ops_baseline.DEFAULT_SPREAD` is what stops the
+                # leaderboard and the scorecard reporting against two different comparators.
+                from ops_baseline import DEFAULT_SPREAD
+                d_base  = ops_daily_from_monthly(y_daily, m_base, method=DEFAULT_SPREAD)
                 if cadence.lower()=="daily":
                     ops_series = d_base
                 elif cadence.lower()=="weekly":

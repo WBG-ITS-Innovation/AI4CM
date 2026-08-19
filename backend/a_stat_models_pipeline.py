@@ -175,75 +175,36 @@ def coverage_width(y_true: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> Tuple[
     return float(cover), width
 
 def ops_monthly_baseline(series: pd.Series, years_window: int = 3) -> pd.Series:
-    m = series.resample("ME").sum().astype(float)
-    if len(m) < 24:
-        return m.groupby(m.index.month).transform(
-            lambda x: x.shift(12).rolling(36, min_periods=1).mean()
-        )
-    y = m.to_period("Y")
-    annual = y.groupby(y.index).sum().astype(float)
-    annual_full = annual[annual.index.isin(
-        m.index.to_period("Y")[m.index.to_period("Y").value_counts().eq(12)].unique()
-    )]
-    out = []
-    for month_end in m.index:
-        Y = month_end.year
-        prev_years = [Y-k for k in (1,2,3)]
-        if not all((str(py) in annual_full.index.astype(str)) for py in prev_years):
-            out.append(np.nan); continue
-        A = np.mean([annual_full.loc[annual_full.index.astype(str)==str(py)].values[0] for py in prev_years])
-        shares, mo = [], month_end.month
-        for py in prev_years:
-            mask = (m.index.year==py) & (m.index.month==mo)
-            if not mask.any(): continue
-            msum = m[(m.index.year==py)].sum()
-            val  = float(m[mask].values[0])
-            shares.append(val / msum if msum>0 else np.nan)
-        share = np.nanmean(shares) if shares else np.nan
-        out.append(A * share if np.isfinite(share) else np.nan)
-    return pd.Series(out, index=m.index).ffill()
+    """Monthly Treasury baseline. Delegated -- this module's own copy was broken twice over.
+
+    THIS MODULE IS LEGACY AND UNREFERENCED: ``run_a_stat.py`` says so explicitly ("not the
+    unreferenced `a_stat_models_pipeline.py`") and ``family_capabilities`` lists it as legacy. It
+    is not deleted here, because that is a larger decision than an artifact-correction session
+    should take, but its ops arithmetic is delegated so a future caller cannot revive a defect.
+
+    Both faults in the local copy were measured, not inferred:
+
+    * this function raised ``IndexError: Boolean index has wrong length: 11 instead of 128`` on the
+      real series -- it indexed a 128-row month-end index with an 11-row year-level boolean mask,
+      so it could not run at all;
+    * ``ops_daily_from_monthly`` carried the zero-baseline bug -- the intraday profile was built
+      from a previous year's dates and mapped onto the current year's with
+      ``.reindex(days, fill_value=0.0)``, which never matches, so every weight became zero.
+    """
+    from c_dl_pipeline import ops_monthly_baseline_treasury
+    return ops_monthly_baseline_treasury(series, years_window=years_window)
+
 
 def ops_daily_from_monthly(series: pd.Series, monthly_baseline: pd.Series,
-                           method: str = "profile") -> pd.Series:
-    daily = series.copy()
-    mb = monthly_baseline.dropna()
-    if mb.empty:
-        return pd.Series(index=daily.index, dtype=float)
-    result_index = pd.date_range(min(daily.index.min().normalize(), mb.index.min().replace(day=1)),
-                                 max(daily.index.max().normalize(), mb.index.max().normalize()), freq="B")
-    result = pd.Series(index=result_index, dtype=float)
-    for m, mval in mb.items():
-        m_start = m.replace(day=1)
-        days = pd.date_range(m_start, m, freq="B")
-        if method == "profile":
-            profiles = []
-            for k in (1, 2, 3):
-                my = m - pd.DateOffset(years=k)
-                hist_days = pd.date_range(my.replace(day=1), my, freq="B")
-                s = daily[(daily.index >= hist_days.min()) & (daily.index <= hist_days.max())]
-                s = s.reindex(hist_days, fill_value=0.0)
-                if s.sum() > 0:
-                    p = (s / s.sum()).reindex(days, fill_value=0.0).values
-                    profiles.append(p)
-            if profiles:
-                p = np.mean(np.vstack(profiles), axis=0); s = p.sum(); p = p / s if s > 0 else np.ones(len(days)) / len(days)
-            else:
-                p = np.ones(len(days)) / len(days
-                                            )
-            result.loc[days] = float(mval) * p
-        else:
-            vals = []
-            for d in days:
-                samples = [daily.get(d - pd.DateOffset(years=k), np.nan) for k in (1, 2, 3)]
-                samples = [x for x in samples if pd.notna(x)]
-                vals.append(np.mean(samples) if samples else np.nan)
-            v = np.array(vals, dtype=float); s = np.nansum(v)
-            if not np.isfinite(v).any() or s == 0:
-                v = np.ones(len(days)) * (float(mval) / len(days))
-            else:
-                v = (v / s) * float(mval)
-            result.loc[days] = v
-    return result.reindex(daily.index)
+                           method: str = "flat") -> pd.Series:
+    """Spread the monthly baseline over working days. See ``ops_monthly_baseline`` above.
+
+    ``flat`` is the canonical spread -- the method as stated, no negative planning figures, and the
+    harsher comparison. See ``backend/ops_baseline`` for the measured reasoning.
+    """
+    from c_dl_pipeline import ops_daily_from_monthly as _spread
+    return _spread(series, monthly_baseline, method=method).dropna()
+
 
 def build_yearly_folds(y_index: pd.DatetimeIndex, min_train_years: int = 4) -> List[Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]]:
     years = sorted(set(y_index.year))
