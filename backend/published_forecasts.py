@@ -929,26 +929,62 @@ def reconcile_verdicts(published_root: Optional[Path] = None,
     return out
 
 
+#: The verdict codes in the words a reader uses.
+#:
+#: The codes are how the registry and the gate code name a decision, and they are the right
+#: names there. They are the wrong names in a sentence a Treasury reader is asked to act on:
+#: `withheld_as_forecast` and `withheld` differ by one word and mean two quite different
+#: things, and this sentence was putting both in front of the reader unexplained.
+VERDICT_WORDS = {
+    "publishable": "usable as a forecast",
+    "withheld_as_forecast": "shown as a guide only",
+    "withheld": "not usable",
+}
+
+
+def verdict_in_words(verdict: Optional[str]) -> str:
+    """The plain-language name for a verdict code, or the code when it is unrecognised."""
+    return VERDICT_WORDS.get(str(verdict), str(verdict))
+
+
+#: How a gate name reads in a sentence. Absent names fall back to the gate name itself.
+GATE_WORDS = {
+    "accuracy_vs_naive": "accuracy against the naive rule of thumb",
+    "signal": "the signal self-test",
+    "leakage": "the leakage check",
+    "persistence_mimicry": "the check that a forecast is not a delayed copy",
+    "coverage": "the check that the predicted range is the right width",
+    "overfitting": "the check that the model has not memorised its history",
+}
+
+
+def _gate_in_words(gate: Optional[str]) -> str:
+    return GATE_WORDS.get(str(gate), str(gate))
+
+
 def _why_changed(target: Optional[str], then: str, now: str,
                  deltas: List[Dict]) -> str:
     """One sentence a reader can act on."""
+    then_w, now_w = verdict_in_words(then), verdict_in_words(now)
     if then == now:
-        return (f"Unchanged: {target} was {then} at issue and is {now} today.")
+        return f"Unchanged: {target} was {then_w} at issue and is {now_w} today."
 
-    # Only the gates that actually drove the change. Listing every added gate -- including the
-    # three that pass -- buried the one that mattered.
+    # Only the gates that actually drove the change. Listing every added gate, including the
+    # three that pass, buried the one that mattered.
     bits = []
     for d in deltas:
         if d["change"] == "added" and d.get("passed_now") is False:
-            bits.append(f"a new gate it fails was added ({d['gate']}, measured "
-                        f"{d.get('measured')} against a limit of {d.get('threshold_now')})")
+            bits.append(f"a new check it fails was added ({_gate_in_words(d['gate'])}, "
+                        f"measured {d.get('measured')} against a limit of "
+                        f"{d.get('threshold_now')})")
         elif (d["change"] == "rethresholded"
               and d.get("passed_at_issue") is not d.get("passed_now")):
-            bits.append(f"{d['gate']} was re-thresholded from {d['threshold_at_issue']} to "
-                        f"{d['threshold_now']}, which flipped its outcome from "
-                        f"{d.get('passed_at_issue')} to {d.get('passed_now')} on an unchanged "
-                        f"measurement of {d.get('measured')}")
+            was = "passed" if d.get("passed_at_issue") else "failed"
+            became = "passes" if d.get("passed_now") else "fails"
+            bits.append(f"the limit on {_gate_in_words(d['gate'])} moved from "
+                        f"{d['threshold_at_issue']} to {d['threshold_now']}, so a "
+                        f"measurement of {d.get('measured')} that {was} now {became}")
     detail = "; ".join(bits) if bits else "the publication policy changed"
-    return (f"{target} was {then} at issue and is {now} today because {detail}. The forecast "
-            f"numbers in the published issue have not changed -- only the verdict attached to "
-            f"them.")
+    return (f"{target} was {then_w} at issue and is {now_w} today because {detail}. The "
+            f"forecast numbers in the published issue have not changed, only the verdict "
+            f"attached to them.")
