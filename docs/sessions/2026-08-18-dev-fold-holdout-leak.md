@@ -8,6 +8,21 @@
 > That record said the client-facing table must not go to a client until this was fixed. It is
 > fixed, **no verdict or champion moved, and no number in the client-facing table changed.** The
 > gate is lifted on the evidence below, not on assertion.
+>
+> **What is still open, so it is not discovered late:**
+>
+> * **The training embargo is the new top item** (open item 1) — 5 training rows still carry targets
+>   inside the evaluation block. Not a holdout breach; its effect is model variance rather than bias
+>   (Revenues −2.98%, Expenditure **+0.65%**), so it needs its own scoped session and must not be
+>   waved through as an obvious correctness win. Its inverted pin holds.
+> * **The sentinel could not be recomputed** (open item 2) — so this fix's effect on the `signal`
+>   gate is **unmeasured, not zero**.
+> * **Expenditure's MASE is 0.9961 reconstructed against 1.1039 logged** (open item 3) — an 8.6%
+>   harness disagreement, not this fix. Which side of the threshold it falls on depends on which
+>   harness is asked.
+>
+> None of the three affects the client-facing table, which is measured on the holdout fold rather
+> than the DEV fold these concern.
 
 ---
 
@@ -160,13 +175,18 @@ real and separate, and its pin still holds.
 
 ## Open items
 
-### 1. The training embargo, still open and now the largest known gap
+### 1. NEW TOP PRIORITY — the training embargo, for its own scoped session
 
-Training rows are `origins ≤ train_end`, and 5 of them carry targets **inside the evaluation block**.
-For a DEV fold those targets are DEV, so it is not a holdout breach — but the model is fitted on
-answers from the block it is then scored on.
+**Reviewed and accepted as the next item. Its pin holds:**
+`backend/tests/test_sealed_window_report.py::test_the_borrowed_selection_path_still_lacks_the_embargo`
+passes while the gap exists and fails once it is fixed, with an assertion message telling the fixer
+to delete it. Same inverted-pin discipline that carried the DEV-boundary leak to resolution.
 
-Measured cost of removing them, and it is **not** a systematic inflation:
+**What it is.** Training rows are `origins ≤ train_end`, and 5 of them carry targets **inside the
+evaluation block**. For a DEV fold those targets are DEV, so it is **not** a holdout breach — but the
+model is fitted on answers from the very block it is then scored on.
+
+**Measured cost of removing them, and it is not a systematic inflation:**
 
 | Target | DEV MAE with the 5 rows | without | delta |
 |---|---|---|---|
@@ -174,22 +194,45 @@ Measured cost of removing them, and it is **not** a systematic inflation:
 | Expenditure | 46,566,923 | 46,870,622 | **+0.65%** |
 | State budget balance | 157,489,983 | 155,557,963 | −1.23% |
 
-Revenues improves, Expenditure gets *worse*. With 5 rows out of ~2,400 that is model variance from a
-0.2% change in training data, not a bias being removed. Deliberately **not** applied here: it is
-outside "the DEV-fold holdout leak", it changes training rather than scoring, and it moves credentials
-by up to 3% — three times this session's fix. It should be its own scoped session, and
-`sealed_window_report` already implements the embargo, so the pattern exists to copy.
+Revenues improves, Expenditure gets **worse**. With 5 rows out of ~2,400 that is **model variance
+from a 0.2% change in training data, not a bias being removed** — which is exactly why it should not
+be waved through as an obvious correctness win.
 
-### 2. The champion credentials remain unreproducible
+**Why it was not done here**, recorded so the scoping decision is not re-litigated:
 
-Unchanged from the previous record. This session adds one detail: the **sentinel specifically**
-cannot be reconstructed — the attempt returns 1.0000 against a logged 1.2255 — so any future work on
-the `signal` gate must reconstruct the harness first.
+* it is outside "the DEV-fold holdout leak" — it is a different property;
+* it changes **training** rather than **scoring**, so unlike this session's fix it cannot be computed
+  exactly without refitting, and the model itself changes;
+* it moves credentials by up to **3%** — three times this session's effect — so it interacts with
+  items 2 and 3 below rather than being independent of them.
 
-### 3. Expenditure sits on the accuracy threshold
+**Head start for that session:** `backend/sealed_window_report.sealed_folds` already implements this
+embargo (a training origin is kept only if its target predates the first evaluation origin, asserted
+rather than trusted), so the pattern exists to copy rather than design.
 
-Reconstructed MASE 0.9961 against a logged 1.1039. Not caused by this fix. Resolving it means
-deciding which harness owns the credentials — see item 2.
+### 2. Known limit — the sentinel cannot be recomputed
+
+The `signal` gate's input could not be reconstructed. The attempt returns **exactly 1.0000** against
+a logged **1.2255** on Revenues, which is the known missing-harness problem (the WS4 script that
+produced the credentials is absent from the repository).
+
+So **the fix's effect on the `signal` gate is unmeasured, not zero.** It was held fixed at the logged
+value when re-deriving verdicts, and the verdicts stand on the gate that actually decided them:
+`signal` sits *below* `accuracy_vs_naive` in severity, and no MASE crosses its 1.0 threshold. That is
+a real gap in the answer, not a formality — any future work on the `signal` gate must reconstruct the
+harness first.
+
+### 3. Known limit — Expenditure's harness disagreement
+
+Its **reconstructed MASE is 0.9961 — under the 1.0 threshold — against a logged 1.1039.**
+
+That is an **8.6% harness disagreement, not this fix**, whose own −1.27% leaves the logged value
+failing at 1.0898. The registry was not touched, and Expenditure's verdict did not move.
+
+Resolving it means deciding **which harness owns the credentials** — reconstruct WS4 so the logged
+values are reproducible, or formally supersede them with figures from a harness that is. Until then,
+Expenditure sits on the accuracy threshold and which side it falls on depends on which harness is
+asked. See item 2; the two are the same underlying problem.
 
 ---
 
