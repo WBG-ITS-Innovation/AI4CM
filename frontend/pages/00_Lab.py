@@ -19,6 +19,12 @@ from backend_consts import (
     PROFILE_DEFAULTS, HORIZON_PRESETS,
 )
 from data_preflight import run_preflight
+from exploratory import (
+    DEMO_CLIP_NOTE, EXPLORATORY_EVAL_END, EXPLORATORY_NOTE,
+    check_can_run, contains_report_only_dates, describe_bound,
+    exploratory_overrides, is_exploratory_safe,
+)
+from run_errors import explain_failure, is_guard_refusal
 from ui_styles import inject_global_css, page_header, section_header, callout_box, info_tip, COLORS
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
@@ -31,6 +37,16 @@ inject_global_css()
 inject_design_system()
 
 render_app_header("Lab", "Configure and launch a backtest run")
+
+# ── The exploratory contract, stated where nobody can miss it ────────────────
+# Everything launched from this page is exploratory. It is bounded to train and dev
+# data by construction, never published, and never written to the official forecast
+# folders. See ``frontend/exploratory.py`` for why the bound is applied here rather
+# than left to whatever each backend family defaults to.
+st.info(
+    "**Exploratory runs.** " + EXPLORATORY_NOTE + " Nothing launched from this page is "
+    "published, and nothing here changes the official forecast."
+)
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
 RUNS_DIR = runs_dir()
@@ -470,6 +486,7 @@ profile = st.radio(
     index=0,
     help=HELP["profile"],
 )
+st.caption(DEMO_CLIP_NOTE)
 
 # Profile → default override payload
 ov: Dict[str, Any] = {
@@ -564,18 +581,46 @@ Quantile models output multiple forecast levels (e.g., P10/P50/P90) which can be
     except Exception:
         ov["quantiles"] = [0.1, 0.5, 0.9]
 
+# ── Bind the evaluation to data a choice may be made on ─────────────────────
+# This is the whole of the Task 1 fix at the caller level. Every family folds forward
+# to the last year in the file when it is given no bound, and on this dataset that year
+# is the sealed holdout, so a UI run would build a leaderboard from holdout rows and be
+# refused by ``assert_selection_free`` -- correctly. The guard is untouched; it is simply
+# no longer handed report-only data.
+ov = exploratory_overrides(family, ov)
+
 # Advanced overrides
 st.subheader("Advanced overrides (JSON)")
 st.caption(
     "This JSON is passed directly to the backend. It is exposed for transparency and advanced tuning. "
-    "Most users can keep defaults unless they are experimenting with model behavior."
+    "Most users can keep defaults unless they are experimenting with model behaviour. "
+    f"The evaluation end date is set to {EXPLORATORY_EVAL_END} because this page runs "
+    "exploratory experiments only."
 )
 ov_text = st.text_area("OVERRIDES_JSON", json.dumps(ov, indent=2), height=200, help=HELP["overrides"])
 try:
     ov_final: Dict[str, Any] = json.loads(ov_text)
 except Exception as e:
-    st.error(f"Invalid JSON: {e}")
+    st.error(
+        "The advanced settings are not valid JSON, so the defaults shown above will be "
+        f"used instead. The parser reported: {e}."
+    )
     ov_final = ov
+
+# The text area is an escape hatch by design, so someone can type a later end date into
+# it. Catching that here turns a several-minute run ending in a guard refusal into an
+# immediate sentence, and re-applying the bound means the page cannot launch an
+# exploratory run that reads report-only data.
+if not is_exploratory_safe(ov_final) or contains_report_only_dates(ov_final):
+    st.warning(
+        "The advanced settings asked for an evaluation window that reaches past "
+        f"{EXPLORATORY_EVAL_END}. Exploratory runs are measured on train and dev data "
+        "only, so the window has been reset to end on that date. To read the sealed "
+        "window, publish an official forecast instead."
+    )
+    ov_final = exploratory_overrides(family, ov_final)
+
+st.caption(describe_bound())
 
 # -------------------------------------------------------------------
 # 3) Launch
@@ -640,7 +685,21 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         st.error("Backend directory missing/invalid. Go to Overview and confirm backend path.")
         st.stop()
     if not runner.exists():
-        st.error(f"Runner script missing: `{runner}`")
+        st.error(
+            "The backend script for this family was not found, so the run cannot start. "
+            f"Expected it at {runner}. Confirm the backend folder on the Overview page."
+        )
+        st.stop()
+
+    # ── Pre-flight: can this configuration honestly run at all? ──────────────
+    # An exploratory run is bounded to train and dev data, so a file whose usable span is
+    # too short cannot produce a single fold. Saying so here costs a second; discovering
+    # it from the backend costs a run and produces a traceback.
+    _dates = pd.to_datetime(df[date_col], errors="coerce").dropna()
+    _blocked = check_can_run(_dates, horizon, int(ov_final.get("min_train_years") or 0))
+    if _blocked:
+        st.error(_blocked)
+        st.caption(EXPLORATORY_NOTE)
         st.stop()
 
     # ── Create run folder structure ─────────────────────────────────
@@ -684,14 +743,34 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
             pass
 
     if rc != 0:
-        st.error(f"Run failed (exit code {rc}). Check the log below for details.")
+        # A refusal by one of the discipline guards is the system working, and a fault is
+        # the system failing. They read completely differently to a Treasury reader, so
+        # they are shown differently. Neither shows a traceback above the fold.
+        try:
+            _log_text = Path(log_path).read_text(encoding="utf-8")
+        except OSError:
+            _log_text = ""
+        _failure = explain_failure(out_real, _log_text, exit_code=rc)
+        if is_guard_refusal(_failure):
+            st.warning("**This run was stopped on purpose.** " + _failure.headline)
+            st.caption(EXPLORATORY_NOTE)
+        else:
+            st.error("**This run did not finish.** " + _failure.headline)
+        with st.expander("Technical detail", expanded=False):
+            if _failure.error_type:
+                st.caption(f"Reported by the backend as {_failure.error_type}.")
+            st.code(_failure.detail[-5000:] or "(no output)", language="text")
     elif _failed_quality:
         st.warning(
-            f"⚠️ **Model underperforms baseline** ({model}). "
-            "Plots shown below, but model does not beat the persistence baseline."
+            f"**This model did not beat the simple baseline** ({model}). The charts below "
+            "still show what it produced, which is worth looking at, but a model that "
+            "cannot beat carrying the last value forward is not a candidate to publish."
         )
     else:
-        st.success(f"Finished in {elapsed:.1f}s • outputs in `{out_real}`")
+        st.success(
+            f"Finished in {elapsed:.1f}s. Results were written to {out_real}. "
+            + EXPLORATORY_NOTE
+        )
 
     # Overlay preview
     st.subheader("Overlay preview — Actual vs model predictions")
@@ -766,5 +845,6 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         else:
             st.caption("No predictions_long.csv found in the outputs folder.")
 
-    st.markdown("**Log tail**")
-    st.code(Path(log_path).read_text(encoding="utf-8")[-5000:], language="text")
+    if rc == 0:
+        with st.expander("Backend log", expanded=False):
+            st.code(Path(log_path).read_text(encoding="utf-8")[-5000:], language="text")

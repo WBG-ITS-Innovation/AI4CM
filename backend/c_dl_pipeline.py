@@ -53,6 +53,11 @@ class ConfigDL:
     # family lands on the same window -- and the same persistence number --
     # as A_STAT, B_ML and E_QUANTILE.
     eval_start: Optional[str] = None
+    # Inclusive upper bound on the TARGET dates a fold scores. Absent it, this family
+    # could be pointed at a window's start but never at its end, so 'evaluate on train
+    # and dev only' was not expressible here -- the runners' default eval_start of
+    # TEST_START made the holdout the floor rather than the ceiling.
+    eval_end: Optional[str] = None
 
     # Sequence lengths (history window)
     seq_len_daily: int = 64
@@ -362,7 +367,8 @@ def plot_monthly_bars(df_slice, target, h, cadence, ops_series, out_png):
     fig.tight_layout(); fig.savefig(out_png); plt.close(fig)
 
 def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int,
-                       eval_start: Optional[str] = None):
+                       eval_start: Optional[str] = None,
+                       eval_end: Optional[str] = None):
     """Annual rolling-origin folds on label times.
 
     ``eval_start`` pins the reporting window (item 1b).  Without it C_DL folded over
@@ -374,6 +380,11 @@ def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int,
     family reports on the same window -- and therefore against the same persistence
     number -- as everyone else.
 
+    ``eval_end`` is the symmetric bound, and it is the one an exploratory run needs:
+    without it a caller could say where an evaluation began but not where it stopped, so
+    every bounded run still ran forward into the sealed holdout. Same rule as the floor --
+    drop a block that falls entirely past it, trim a block that straddles it.
+
     C_DL stays parked for Phase 2 (decision Q6); this pin exists so the one-ruler
     check can include it rather than exempt it.
     """
@@ -381,6 +392,7 @@ def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int,
     if not years: return []
     first_year, last_year = min(years), max(years)
     cutoff = pd.Timestamp(eval_start) if eval_start else None
+    ceiling = pd.Timestamp(eval_end) if eval_end else None
     folds = []
     dropped = 0
     for Y in range(first_year+min_train_years, last_year+1):
@@ -405,10 +417,22 @@ def build_yearly_folds(idx: pd.DatetimeIndex, min_train_years: int,
                 dropped += 1
                 continue
             test_start = trimmed[0]
+        if ceiling is not None:
+            if test_start > ceiling:
+                dropped += 1
+                continue
+            if test_end > ceiling:
+                trimmed = idx[(idx >= test_start) & (idx <= ceiling)]
+                if trimmed.empty:
+                    dropped += 1
+                    continue
+                test_end = trimmed[-1]
         folds.append((train_end, test_start, test_end))
     if cutoff is not None:
         print(f"[DL] eval_start={cutoff.date()} pinned: {len(folds)} fold(s) kept, "
               f"{dropped} dropped for starting before it")
+    if ceiling is not None:
+        print(f"[DL] eval_end={ceiling.date()} pinned: {len(folds)} fold(s) kept")
 
     # The same hole A_STAT had. C_DL's runners default eval_start to TEST_START -- it reports on
     # the holdout by design -- and that read went through neither the gate nor the log. Reporting
@@ -811,7 +835,8 @@ def _run_family(config: ConfigDL, out_root: str, family: str):
                 # Primary: yearly folds on label times
                 fld = build_yearly_folds(pd.DatetimeIndex(ld_all),
                                          config.min_train_years,
-                                         eval_start=config.eval_start)
+                                         eval_start=config.eval_start,
+                                         eval_end=config.eval_end)
                 masks: List[Tuple[np.ndarray,np.ndarray]] = []
                 for (tr_end, ts_start, ts_end) in fld:
                     ld = pd.to_datetime(ld_all)
