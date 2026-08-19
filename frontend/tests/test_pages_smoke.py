@@ -37,13 +37,14 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 PAGES = [
     FRONTEND / "Overview.py",
-    FRONTEND / "pages" / "00_Data_Preprocessing.py",
-    FRONTEND / "pages" / "00_Lab.py",
-    FRONTEND / "pages" / "01_Dashboard.py",
-    FRONTEND / "pages" / "02_History.py",
-    FRONTEND / "pages" / "03_Models.py",
+    FRONTEND / "pages" / "02_Scorecard.py",
+    FRONTEND / "pages" / "07_Data_Preprocessing.py",
+    FRONTEND / "pages" / "08_Lab.py",
+    FRONTEND / "pages" / "03_Dashboard.py",
+    FRONTEND / "pages" / "05_History.py",
+    FRONTEND / "pages" / "06_Models.py",
     FRONTEND / "pages" / "04_Compare.py",
-    FRONTEND / "pages" / "05_Forecast.py",
+    FRONTEND / "pages" / "01_Forecast.py",
 ]
 
 TIMEOUT = 60
@@ -150,8 +151,8 @@ def test_withheld_verdict_is_visible_on_the_forecast_page():
     If the page can render them without the word appearing, the honesty guarantee is only
     in the data and not in the product. This asserts existing behaviour; it does not add it.
     """
-    at = _run(FRONTEND / "pages" / "05_Forecast.py")
-    _assert_clean(at, FRONTEND / "pages" / "05_Forecast.py", "repository artifacts")
+    at = _run(FRONTEND / "pages" / "01_Forecast.py")
+    _assert_clean(at, FRONTEND / "pages" / "01_Forecast.py", "repository artifacts")
     blob = " ".join(
         str(getattr(el, "value", "") or getattr(el, "body", "") or "")
         for el in list(at.markdown) + list(at.error) + list(at.warning) + list(at.info)

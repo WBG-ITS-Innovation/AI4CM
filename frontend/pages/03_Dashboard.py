@@ -1,4 +1,4 @@
-# pages/01_Dashboard.py — Dashboard (interactive overlays, diagnostics, downloads)
+# pages/03_Dashboard.py — Dashboard (interactive overlays, diagnostics, downloads)
 # Redesigned UI: modern analytics aesthetic with strong information hierarchy
 from __future__ import annotations
 from pathlib import Path

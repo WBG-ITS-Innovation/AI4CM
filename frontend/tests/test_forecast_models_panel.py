@@ -31,7 +31,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from registry import load_registry  # noqa: E402
 
-PAGE = FRONTEND / "pages" / "05_Forecast.py"
+PAGE = FRONTEND / "pages" / "01_Forecast.py"
 SOURCE = PAGE.read_text(encoding="utf-8")
 TARGETS = [r["target"] for r in load_registry()["recipes"]]
 

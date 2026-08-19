@@ -521,7 +521,7 @@ class TestDashboardSkillThreshold:
 
     def test_dashboard_imports_constant(self):
         """Dashboard file must contain the import of QUALITY_GATE_SKILL_PCT."""
-        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "01_Dashboard.py"
+        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "03_Dashboard.py"
         text = dashboard_path.read_text(encoding="utf-8")
         assert "QUALITY_GATE_SKILL_PCT" in text, (
             "Dashboard does not import QUALITY_GATE_SKILL_PCT — "
@@ -733,7 +733,7 @@ class TestDashboardTrustBadge:
     """Verify Dashboard shows pipeline trust status."""
 
     def test_dashboard_shows_trust_badge(self):
-        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "01_Dashboard.py"
+        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "03_Dashboard.py"
         text = dashboard_path.read_text(encoding="utf-8")
         assert "Quality gate PASSED" in text, "Dashboard must show quality gate passed message"
         assert "Quality gate FAILED" in text, "Dashboard must show quality gate failed message"

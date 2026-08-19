@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO / "backend"))
 pytest.importorskip("streamlit", reason="streamlit is installed in frontend/.venv only")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-FORECAST = FRONTEND / "pages" / "05_Forecast.py"
+FORECAST = FRONTEND / "pages" / "01_Forecast.py"
 
 
 @pytest.fixture(scope="module")

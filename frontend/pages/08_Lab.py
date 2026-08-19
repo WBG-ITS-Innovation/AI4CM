@@ -1,4 +1,4 @@
-# pages/00_Lab.py — Lab (run models + live log + overlay + REAL hover help + batch runs)
+# pages/08_Lab.py — Lab (run models + live log + overlay + REAL hover help + batch runs)
 from __future__ import annotations
 
 import html

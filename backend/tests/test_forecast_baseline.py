@@ -182,7 +182,7 @@ def test_benchmark_labels_state_it_is_a_prediction_not_an_error():
 # ── the page must not grow its own implementation ─────────────────────────────
 
 def test_forecast_page_reads_the_shared_reader_and_computes_nothing():
-    page = (REPO / "frontend" / "pages" / "05_Forecast.py").read_text()
+    page = (REPO / "frontend" / "pages" / "01_Forecast.py").read_text()
     code = "\n".join(l for l in page.splitlines() if not l.lstrip().startswith("#"))
     assert "_benchmark_series(" in code and "_benchmark_mae(" in code
     for banned in ("compute_persistence_baseline", ".shift(", "mae_persistence ="):

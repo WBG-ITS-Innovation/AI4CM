@@ -37,17 +37,17 @@ st.markdown(
 
 c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
 with c1:
-    st.page_link("pages/00_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
+    st.page_link("pages/08_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
 with c2:
-    st.page_link("pages/01_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
+    st.page_link("pages/03_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
 with c3:
     st.page_link("pages/04_Compare.py", label="🔀 Compare Runs", help="Side-by-side comparison of 2-6 runs.")
 with c4:
-    st.page_link("pages/02_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
+    st.page_link("pages/05_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
 with c5:
-    st.page_link("pages/03_Models.py", label="📚 Read about Models", help="Deep guide to model families and parameters.")
+    st.page_link("pages/06_Models.py", label="📚 Read about Models", help="Deep guide to model families and parameters.")
 with c6:
-    st.page_link("pages/00_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardize and clean source data files.")
+    st.page_link("pages/07_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardize and clean source data files.")
 
 st.markdown("---")
 
@@ -182,7 +182,7 @@ else:
             with top[1]:
                 p = out_dir / "predictions_long.csv"
                 st.markdown("**predictions_long.csv**" + (" ✅" if p.exists() else " —"))
-                st.page_link("pages/01_Dashboard.py", label="➡️ View in Dashboard")
+                st.page_link("pages/03_Dashboard.py", label="➡️ View in Dashboard")
             with top[2]:
                 m = out_dir / "metrics_long.csv"
                 st.markdown("**metrics_long.csv**" + (" ✅" if m.exists() else " —"))
