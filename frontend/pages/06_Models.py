@@ -11,13 +11,21 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
+from ui_styles import help_text  # tooltips, translated at render time
 from ui_styles import inject_design_system  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
+from i18n import install as install_language  # language toggle + pending-review note
+from i18n import t as _t  # the shelf's status labels are fixed copy
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 render_app_header("Models", "Model families, promoted recipes and their evidence")
 page_intro(
     "This page is the shelf: every model available here, what it does in plain language, "
@@ -683,11 +691,14 @@ def _render_model_detail() -> None:
         f"recorded result yet. A candidate can be run as an experiment and cannot become "
         f"the model behind an official forecast until a result has been recorded for it."
     )
+    # Translated at lookup, like every other fixed label. These are the words the shelf
+    # table shows in its Status column, so leaving them out of the translation layer would
+    # have left the one column a reader scans in English while the rest of the page moved.
     _STATUS_LABEL = {
-        "evaluated": "measured",
-        "untested": "UNTESTED",
-        "baseline": "reference rule",
-        "unavailable": "not installed here",
+        "evaluated": _t("measured"),
+        "untested": _t("UNTESTED"),
+        "baseline": _t("reference rule"),
+        "unavailable": _t("not installed here"),
     }
     st.dataframe(pd.DataFrame([{
         "Model": n,
@@ -828,10 +839,10 @@ def _render_model_detail() -> None:
             "run_id": r["run_id"],
         } for r in _view]), hide_index=True, use_container_width=True,
             column_config={
-                "Skill vs ruler": st.column_config.TextColumn(help=HELP["skill"]),
-                "Signal": st.column_config.TextColumn(help=HELP["sentinel"]),
-                "MASE": st.column_config.TextColumn(help=HELP["mase"]),
-                "Coverage high": st.column_config.TextColumn(help=HELP["tercile_coverage"]),
+                "Skill vs ruler": st.column_config.TextColumn(help=help_text("skill")),
+                "Signal": st.column_config.TextColumn(help=help_text("sentinel")),
+                "MASE": st.column_config.TextColumn(help=help_text("mase")),
+                "Coverage high": st.column_config.TextColumn(help=help_text("tercile_coverage")),
                 "run_id": st.column_config.TextColumn(
                     help="The logged run this row came from. Its full record, including data and "
                          "code fingerprints, is in experiments/runs/<run_id>.json."),

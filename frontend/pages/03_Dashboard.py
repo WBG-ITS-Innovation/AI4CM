@@ -12,6 +12,7 @@ import streamlit as st
 
 from backend_consts import QUALITY_GATE_SKILL_PCT
 from recommender import recommend_model, format_scorecard_markdown
+from ui_styles import help_text  # tooltips, translated at render time
 from ui_styles import (
     inject_global_css, metric_card, status_badge, section_header,
     callout_box, page_header, info_tip, glossary_table,
@@ -30,11 +31,17 @@ from paths import runs_dir
 RUNS_DIR = runs_dir()
 
 from ui_styles import glossary_note  # plain-language definitions, on demand
+from i18n import install as install_language  # language toggle + pending-review note
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 
 render_app_header("Dashboard", "Evaluate one run: accuracy, intervals and integrity checks")
 page_intro(
@@ -440,29 +447,29 @@ with k1:
                     "recomputed here."))
 with k2:
     st.metric(f"Benchmark MAE ({UNIT_LABEL})", gel_millions(_mae_persist),
-              help=HELP["ruler"])
+              help=help_text("ruler"))
 with k3:
     st.metric("Skill vs benchmark",
               pct_points(_skill_pct) if not is_missing(_skill_pct) else NOT_REPORTED,
-              help=HELP["skill"])
+              help=help_text("skill"))
 with k4:
     st.metric("Scaled error (MASE)", number(_mase_v),
-              help=(HELP["mase"] + "  This run's artifacts do not record MASE, so it shows as "
+              help=(help_text("mase") + "  This run's artifacts do not record MASE, so it shows as "
                     "not reported; it is logged for the registry champions in "
                     "experiments/log.csv."
-                    if is_missing(_mase_v) else HELP["mase"]))
+                    if is_missing(_mase_v) else help_text("mase")))
 with k5:
     _sent_txt = (f"{float(_sent):.2f} / {_SENTINEL_THRESHOLD:.2f} needed"
                  if not is_missing(_sent) else NOT_REPORTED)
-    st.metric("Signal check", _sent_txt, help=HELP["sentinel"])
+    st.metric("Signal check", _sent_txt, help=help_text("sentinel"))
 with k6:
     _cov_txt = (f"{_pi_cov:.0%} of {_pi_nominal:.0%}"
                 if not is_missing(_pi_cov) and _pi_nominal is not None
                 else (pct(_pi_cov) if not is_missing(_pi_cov) else NOT_REPORTED))
     st.metric("Range coverage", _cov_txt,
-              help=(HELP["coverage"] + f"  Advertised level {_pi_source}."
+              help=(help_text("coverage") + f"  Advertised level {_pi_source}."
                     if _pi_nominal is not None
-                    else HELP["coverage"] + "  " + HELP["nominal"]))
+                    else help_text("coverage") + "  " + help_text("nominal")))
 
 # ── gate status and the best model, on their own row so neither is a number ──────────
 _gcol1, _gcol2 = st.columns([1, 2])
@@ -497,7 +504,7 @@ with st.expander("Detailed Scorecard & Recommendations", expanded=False):
             "sMAPE": "Symmetric MAPE — handles near-zero actuals better",
             "R2": "R-Squared — fraction of variance explained (1.0 = perfect)",
             "Monthly Accuracy (10% tol)": ("Share of MONTHS whose forecast total is within 10% of the actual total. Formula (b_ml_pipeline.py:517): mean(|monthly_actual - monthly_pred| / max(|monthly_actual|, 1e-9) <= 0.10). A composite, kept for continuity and not gated on."),
-            "PI Coverage": HELP["coverage"],
+            "PI Coverage": help_text("coverage"),
             "PI Avg Width": "Average width of prediction intervals (narrower = more precise)",
             "N predictions": "Number of out-of-sample prediction points used",
         }
@@ -949,11 +956,11 @@ with tab_intervals:
 
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric("Measured coverage", pct(_cov), help=HELP["coverage"])
+                st.metric("Measured coverage", pct(_cov), help=help_text("coverage"))
             with c2:
                 st.metric("Advertised level",
                           pct(_ispec.nominal) if _ispec.nominal_known else NOT_REPORTED,
-                          help=HELP["nominal"])
+                          help=help_text("nominal"))
             with c3:
                 st.metric("Predictions scored", f"{_n:,}")
             st.markdown(gate_badge_tri(_state, label="Calibration"),

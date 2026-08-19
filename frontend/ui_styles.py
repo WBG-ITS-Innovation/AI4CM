@@ -86,7 +86,14 @@ def status_badge(text: str, status: str = "neutral") -> str:
 
 
 def section_header(title: str, subtitle: str = "") -> str:
-    """Return HTML for a styled section header with optional subtitle."""
+    """Return HTML for a styled section header with optional subtitle.
+
+    Both halves go through the translation lookup, which returns its input unchanged when
+    the dictionary has no entry. That is what lets a header carrying a Treasury line name
+    pass through untouched while a fixed English heading beside it is translated.
+    """
+    title = _translate(title, domain="mixed")
+    subtitle = _translate(subtitle, domain="mixed")
     sub = f'<p class="sh-sub">{subtitle}</p>' if subtitle else ""
     return f"""
     <div class="section-header">
@@ -111,7 +118,9 @@ def callout_box(message: str, status: str = "info", *, icon: str = "") -> str:
 
 
 def page_header(title: str, subtitle: str = "") -> str:
-    """Return HTML for a styled page header."""
+    """Return HTML for a styled page header. See section_header on the lookup."""
+    title = _translate(title, domain="mixed")
+    subtitle = _translate(subtitle, domain="mixed")
     sub = f'<p class="page-subtitle">{subtitle}</p>' if subtitle else ""
     return f'<h1 class="page-title">{title}</h1>{sub}'
 
@@ -862,7 +871,7 @@ HELP = {
         "Coverage split by how large the day is: the smallest third, middle third and "
         "largest third of days by magnitude. This matters more than the overall figure "
         "because a range can look well calibrated on average while missing most of the "
-        "biggest days — and the biggest days are the ones a cash buffer exists for."
+        "biggest days, and the biggest days are the ones a cash buffer exists for."
     ),
     "withheld": (
         "The model's numbers are shown, but we are not calling them a forecast. It passed "
@@ -873,10 +882,11 @@ HELP = {
     "ruler": (
         "The single shared benchmark: predict that the value five working days ago repeats. "
         "One implementation is used by every model family so that skill numbers are "
-        "comparable. It is deliberately simple — beating it is a floor, not an achievement."
+        "comparable. It is deliberately simple, and beating it is a floor rather than an "
+        "achievement."
     ),
     "nominal": (
-        "The range's advertised coverage — how often the actual value is supposed to land "
+        "The range's advertised coverage, meaning how often the actual value is supposed to land "
         "inside it. Read from the run's own artifact. Where an artifact does not record it, "
         "this lab reports it as not reported rather than assuming a level, because scoring a "
         "range against the wrong advertised level produces a verdict about nothing."
@@ -911,15 +921,36 @@ HELP = {
 # also carries its definition, so a term cannot arrive unexplained.
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _translate(text: str, domain: str = "ui") -> str:
+    """The selected language's version of ``text``, or ``text`` itself.
+
+    Imported inside the function so ``ui_styles`` stays importable without the i18n layer,
+    and so a failure in translation can never take a page down: the worst outcome is
+    English, which every reader of this app can already read.
+
+    ``domain="mixed"`` marks a helper that receives data as well as copy, so a Treasury
+    line name passing through a header is not counted as a missing translation.
+    """
+    try:
+        from i18n import t
+
+        return t(text, domain=domain)
+    except Exception:                              # noqa: BLE001 - copy, not logic
+        return text
+
+
 def page_intro(text: str) -> None:
     """One or two sentences at the top of a page saying what it is for.
 
     Rendered as ordinary body text rather than a callout: a box at the top of every page
     stops being read after the second page, and this has to be read.
+
+    Translated here rather than at each call site. Ten pages call this once each, so one
+    translation lookup in this function covers every page intro in the app.
     """
     import streamlit as _st
 
-    _st.markdown(f'<p class="page-intro">{text}</p>', unsafe_allow_html=True)
+    _st.markdown(f'<p class="page-intro">{_translate(text)}</p>', unsafe_allow_html=True)
 
 
 #: Every term a reader might meet, and what it means in words they already have.
@@ -993,7 +1024,7 @@ def term_help(*terms: str) -> str:
     Unknown terms are skipped rather than raising: a tooltip is not worth taking a page
     down for, and a test already asserts the terms a page uses are all in the glossary.
     """
-    return "  ".join(GLOSSARY[t] for t in terms if t in GLOSSARY)
+    return "  ".join(_translate(GLOSSARY[t]) for t in terms if t in GLOSSARY)
 
 
 def glossary_note(*terms: str, title: str = "What do these words mean?") -> None:
@@ -1003,9 +1034,25 @@ def glossary_note(*terms: str, title: str = "What do these words mean?") -> None
     known = [t for t in terms if t in GLOSSARY]
     if not known:
         return
-    with _st.expander(title):
+    with _st.expander(_translate(title)):
         for term in known:
-            _st.markdown(f"**{term}.** {GLOSSARY[term]}")
+            # The term itself is translated too, with the English kept beside it: a reader
+            # meets the English word on the charts and in the artifacts, so replacing it
+            # outright would leave them unable to connect the definition to what they see.
+            shown = _translate(term)
+            label = term if shown == term else f"{shown} ({term})"
+            _st.markdown(f"**{label}.** {_translate(GLOSSARY[term])}")
+
+
+def help_text(key: str) -> str:
+    """One tooltip, translated.
+
+    ``HELP`` is read at many call sites and a dictionary cannot translate itself: the
+    language is chosen per session, so the lookup has to happen when the tooltip is
+    rendered rather than when the module is imported. Call sites use this instead of
+    subscripting ``HELP`` directly.
+    """
+    return _translate(HELP.get(key, ""))
 
 
 def plotly_layout(fig, *, height: int = 380, ytitle: str = "", xtitle: str = "",
@@ -1106,8 +1153,8 @@ def app_header(page_title: str = "", page_subtitle: str = "") -> str:
     """
     logo = _logo_svg()
     logo_html = f'<span class="ds-logo">{logo}</span>' if logo else ""
-    name = page_title or APP_NAME
-    sub = page_subtitle or APP_SUBTITLE
+    name = _translate(page_title or APP_NAME, domain="mixed")
+    sub = _translate(page_subtitle or APP_SUBTITLE, domain="mixed")
     return (f'<div class="ds-appbar">{logo_html}'
             f'<span><span class="ds-name">{name}</span><br>'
             f'<span class="ds-sub">{sub}</span></span></div>')

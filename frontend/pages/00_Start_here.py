@@ -12,6 +12,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from i18n import install as install_language  # language toggle + pending-review note
+from i18n import t  # this page carries most of the fixed copy in the app
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from ui_styles import inject_design_system, inject_global_css, page_header, page_intro
 from ui_styles import render_app_header
@@ -20,6 +22,11 @@ from ui_styles import section_header
 st.set_page_config(page_title="Start here · Treasury Forecast", page_icon="🧭", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 render_app_header("Start here", "What this Lab is, and where to go for each question")
 page_intro(
     "This page is the way in. It says what each page of the Lab is for, what you can do "
@@ -33,12 +40,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown(
+st.markdown(t(
     "This Lab forecasts daily Treasury cash lines, and it is built so that every number it "
     "shows can be checked. Nothing is published unless it has been measured on days the model "
     "was never shown, and where a model failed a check the Lab says so rather than quietly "
     "leaving it out."
-)
+))
 
 st.info(
     "**New here? Read the two doors at the bottom of this page first.** Everything in this "
@@ -75,8 +82,8 @@ def _link(path: str, label: str) -> None:
 def _page(icon: str, title: str, path: str, purpose: str, do: str, try_this: str) -> None:
     """One section per page. The same three questions each time, so the page scans."""
     st.markdown(section_header(f"{icon} {title}", purpose), unsafe_allow_html=True)
-    st.markdown(f"**What you can do there.** {do}")
-    st.markdown(f"**One thing to try.** {try_this}")
+    st.markdown(f"**{t('What you can do there.')}** {do}")
+    st.markdown(f"**{t('One thing to try.')}** {try_this}")
     _link(path, f"Open {title}")
     st.write("")
 
@@ -183,10 +190,10 @@ st.markdown(section_header("The two doors",
                            "Everything here is either official or exploratory, and they never mix"),
             unsafe_allow_html=True)
 
-st.markdown(
+st.markdown(t(
     "Every number this Lab produces comes through one of two doors. Which door it came through "
     "determines what you may do with it."
-)
+))
 
 left, right = st.columns(2, gap="large")
 
@@ -198,7 +205,7 @@ def _door(rows) -> None:
     the surest way to make sure they do not.
     """
     for label, body in rows:
-        st.markdown(f"**{label}** {body}")
+        st.markdown(f"**{t(label)}** {body}")
 
 
 with left:
@@ -257,7 +264,7 @@ with st.expander("Why the separation is worth this much trouble"):
     )
 
 st.divider()
-st.caption(
+st.caption(t(
     "Everything in this Lab is honestly evaluated on data the models were held back from. "
     "Nothing here has been proven in production, and no page claims otherwise."
-)
+))

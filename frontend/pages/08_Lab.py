@@ -30,6 +30,8 @@ from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
 from ui_styles import inject_design_system  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
+from i18n import install as install_language  # language toggle + pending-review note
+from i18n import t as _t  # this page's tooltips are its own, and are translated here
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import plotly_chrome  # presentation only
@@ -37,6 +39,11 @@ st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layo
 inject_global_css()
 
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 
 render_app_header("Lab", "Configure and launch a backtest run")
 page_intro(
@@ -83,7 +90,7 @@ HELP: Dict[str, str] = {
     "rows_keep": (
         "Number of rows kept in the quick sample.\n\n"
         "Practical guidance:\n"
-        "• 2,000–10,000 rows is typically enough for a demo\n"
+        "• 2,000 to 10,000 rows is typically enough for a demo\n"
         "• Larger samples improve training signal but increase runtime"
     ),
     "data_source": (
@@ -182,7 +189,7 @@ HELP: Dict[str, str] = {
         "• Controls feature explosion\n"
         "• Helps reduce overfitting\n\n"
         "Guidance:\n"
-        "• Start small (5–15)\n"
+        "• Start small (5 to 15)\n"
         "• Increase only if models are stable and data is sufficiently large"
     ),
     # DL knobs
@@ -191,7 +198,7 @@ HELP: Dict[str, str] = {
         "Example:\n"
         "• lookback 48 (daily) = use last 48 days to predict future.\n\n"
         "Guidance:\n"
-        "• Cover at least 1–2 major seasonal cycles when possible\n"
+        "• Cover at least one or two major seasonal cycles when possible\n"
         "• Larger lookback increases runtime and memory"
     ),
     "batch_size": (
@@ -254,6 +261,19 @@ HELP: Dict[str, str] = {
         "If a run fails, check backend_run.log for details."
     ),
 }
+
+
+def _lab_help(key: str) -> str:
+    """One of this page's own tooltips, translated at render time.
+
+    The Lab keeps its own HELP dictionary because its tooltips describe this page's
+    controls and belong nowhere else. A first pass at the translation work rewrote these
+    call sites to the SHARED ui_styles tooltips, which share none of these keys, so every
+    tooltip on this page silently became empty. Hence a local accessor with the same shape
+    as the shared one, and a test that every key it is called with exists.
+    """
+    return _t(HELP.get(key, ""))
+
 
 # -------------------------------------------------------------------
 # UI helpers
@@ -367,7 +387,7 @@ If you are iterating or running a live demo, consider creating a quick sample fo
 """
 )
 
-up = st.file_uploader("Upload CSV", type=["csv"], help=HELP["upload_csv"])
+up = st.file_uploader("Upload CSV", type=["csv"], help=_lab_help("upload_csv"))
 if up:
     dest = UPLOADS_ROOT / "uploaded.csv"
     dest.write_bytes(up.read())
@@ -380,8 +400,8 @@ This creates a smaller dataset from the end of your upload (the most recent rows
 It is intended for faster experimentation and demonstrations.
 """
     )
-    n = st.slider("Rows to keep (from end)", 200, 200_000, 2_000, step=200, help=HELP["rows_keep"])
-    if st.button("Create / Refresh sample from uploaded.csv", help=HELP["quick_sample"]):
+    n = st.slider("Rows to keep (from end)", 200, 200_000, 2_000, step=200, help=_lab_help("rows_keep"))
+    if st.button("Create / Refresh sample from uploaded.csv", help=_lab_help("quick_sample")):
         src = UPLOADS_ROOT / "uploaded.csv"
         if not src.exists():
             st.warning("Please upload a CSV first.")
@@ -404,7 +424,7 @@ use_label = st.radio(
     [lbl for lbl, _ in sources],
     index=0,
     horizontal=True,
-    help=HELP["data_source"],
+    help=_lab_help("data_source"),
 )
 
 data_path = Path(dict(sources)[use_label])
@@ -441,16 +461,16 @@ with L:
         "Date column",
         list(df.columns),
         index=(list(df.columns).index("date") if "date" in df.columns else 0),
-        help=HELP["date_col"],
+        help=_lab_help("date_col"),
     )
 
     num_cols = [c for c in df.columns if c != date_col]
-    target = st.selectbox("Target", num_cols, help=HELP["target"])
-    cadence = st.selectbox("Cadence", ["Daily", "Weekly", "Monthly"], index=0, help=HELP["cadence"])
-    horizon = st.slider("Horizon", 1, 24, 6, help=HELP["horizon"])
+    target = st.selectbox("Target", num_cols, help=_lab_help("target"))
+    cadence = st.selectbox("Cadence", ["Daily", "Weekly", "Monthly"], index=0, help=_lab_help("cadence"))
+    horizon = st.slider("Horizon", 1, 24, 6, help=_lab_help("horizon"))
 
     with st.expander(f"Target preview: {target} at {cadence} cadence", expanded=True):
-        st.caption(HELP["preview"])
+        st.caption(_lab_help("preview"))
         tmp = df[[date_col, target]].dropna()
         tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
         tmp = tmp.dropna(subset=[date_col]).set_index(date_col)
@@ -470,7 +490,7 @@ with R:
     fam_label = st.selectbox(
         "Family",
         ["A · Statistical", "B · Machine Learning", "C · Deep Learning", "E · Quantile"],
-        help=HELP["family"],
+        help=_lab_help("family"),
     )
     family = {
         "A · Statistical": "A_STAT",
@@ -483,7 +503,7 @@ with R:
         "Variant",
         ["Univariate", "Multivariate"],
         horizontal=True,
-        help=HELP["variant"],
+        help=_lab_help("variant"),
     )
 
 st.subheader("Run profile")
@@ -492,7 +512,7 @@ profile = st.radio(
     ["Demo (fast)", "Balanced", "Thorough"],
     horizontal=True,
     index=0,
-    help=HELP["profile"],
+    help=_lab_help("profile"),
 )
 st.caption(DEMO_CLIP_NOTE)
 
@@ -519,14 +539,14 @@ ML models require explicit features. This prototype uses lags (past values) and 
     )
 
     if cadence == "Daily":
-        ov["lags_daily"] = st.multiselect("lags_daily", [1, 2, 3, 5, 7, 14, 21], default=[1, 3, 7], help=HELP["lags"])
-        ov["windows_daily"] = st.multiselect("windows_daily", [3, 5, 7, 14, 21, 28], default=[3, 7], help=HELP["windows"])
+        ov["lags_daily"] = st.multiselect("lags_daily", [1, 2, 3, 5, 7, 14, 21], default=[1, 3, 7], help=_lab_help("lags"))
+        ov["windows_daily"] = st.multiselect("windows_daily", [3, 5, 7, 14, 21, 28], default=[3, 7], help=_lab_help("windows"))
     elif cadence == "Weekly":
-        ov["lags_weekly"] = st.multiselect("lags_weekly", [1, 2, 3, 4, 8, 12, 26], default=[1, 4, 12], help=HELP["lags"])
-        ov["windows_weekly"] = st.multiselect("windows_weekly", [2, 4, 8, 12, 26], default=[4, 12], help=HELP["windows"])
+        ov["lags_weekly"] = st.multiselect("lags_weekly", [1, 2, 3, 4, 8, 12, 26], default=[1, 4, 12], help=_lab_help("lags"))
+        ov["windows_weekly"] = st.multiselect("windows_weekly", [2, 4, 8, 12, 26], default=[4, 12], help=_lab_help("windows"))
     else:
-        ov["lags_monthly"] = st.multiselect("lags_monthly", [1, 2, 3, 6, 12], default=[1, 3], help=HELP["lags"])
-        ov["windows_monthly"] = st.multiselect("windows_monthly", [3, 6, 12], default=[3, 6], help=HELP["windows"])
+        ov["lags_monthly"] = st.multiselect("lags_monthly", [1, 2, 3, 6, 12], default=[1, 3], help=_lab_help("lags"))
+        ov["windows_monthly"] = st.multiselect("windows_monthly", [3, 6, 12], default=[3, 6], help=_lab_help("windows"))
 
     if variant == "Multivariate":
         st.markdown(
@@ -536,7 +556,7 @@ When multivariate is enabled, the runner can incorporate other numeric columns a
 To reduce overfitting and keep the run tractable, you can limit how many are used.
 """
         )
-        ov["exog_top_k"] = st.number_input("exog_top_k", 0, 64, 8, help=HELP["exog_top_k"])
+        ov["exog_top_k"] = st.number_input("exog_top_k", 0, 64, 8, help=_lab_help("exog_top_k"))
 
 elif family == "A_STAT":
     model = st.selectbox(
@@ -566,12 +586,12 @@ elif family == "C_DL":
 Deep learning models typically require more training time. The key parameters are: lookback (history length), batch size, and epochs.
 """
     )
-    ov["lookback"] = st.number_input("lookback", 4, 365, 48, help=HELP["lookback"])
-    ov["batch_size"] = st.number_input("batch_size", 8, 2048, 128, step=8, help=HELP["batch_size"])
-    ov["max_epochs"] = st.number_input("max_epochs", 1, 200, 3, help=HELP["max_epochs"])
-    ov["valid_frac"] = st.number_input("valid_frac", 0.05, 0.9, 0.2, 0.05, help=HELP["valid_frac"])
-    ov["conformal_calib_frac"] = st.number_input("conformal_calib_frac", 0.05, 0.9, 0.2, 0.05, help=HELP["conformal_calib"])
-    ov["device"] = st.selectbox("device", ["auto", "cpu", "cuda"], index=0, help=HELP["device"])
+    ov["lookback"] = st.number_input("lookback", 4, 365, 48, help=_lab_help("lookback"))
+    ov["batch_size"] = st.number_input("batch_size", 8, 2048, 128, step=8, help=_lab_help("batch_size"))
+    ov["max_epochs"] = st.number_input("max_epochs", 1, 200, 3, help=_lab_help("max_epochs"))
+    ov["valid_frac"] = st.number_input("valid_frac", 0.05, 0.9, 0.2, 0.05, help=_lab_help("valid_frac"))
+    ov["conformal_calib_frac"] = st.number_input("conformal_calib_frac", 0.05, 0.9, 0.2, 0.05, help=_lab_help("conformal_calib"))
+    ov["device"] = st.selectbox("device", ["auto", "cpu", "cuda"], index=0, help=_lab_help("device"))
 
 else:
     model = st.selectbox("Model (Quantile)", ["GBQuantile"], index=0)
@@ -583,7 +603,7 @@ Quantile models output multiple forecast levels (e.g., P10/P50/P90) which can be
 """
     )
 
-    q_text = st.text_input("quantiles (comma-separated)", "0.1,0.5,0.9", help=HELP["quantiles"])
+    q_text = st.text_input("quantiles (comma-separated)", "0.1,0.5,0.9", help=_lab_help("quantiles"))
     try:
         ov["quantiles"] = [float(x) for x in q_text.split(",") if x.strip() != ""]
     except Exception:
@@ -605,7 +625,7 @@ st.caption(
     f"The evaluation end date is set to {EXPLORATORY_EVAL_END} because this page runs "
     "exploratory experiments only."
 )
-ov_text = st.text_area("OVERRIDES_JSON", json.dumps(ov, indent=2), height=200, help=HELP["overrides"])
+ov_text = st.text_area("OVERRIDES_JSON", json.dumps(ov, indent=2), height=200, help=_lab_help("overrides"))
 try:
     ov_final: Dict[str, Any] = json.loads(ov_text)
 except Exception as e:
@@ -682,7 +702,7 @@ def _on_progress(tail: str, elapsed: float):
     status.info(f"Elapsed: {elapsed:.1f}s")
     _scroll_term(log_box, tail)
 
-if st.button("🚀 Run experiment", type="primary", use_container_width=True, help=HELP["run_button"]):
+if st.button("🚀 Run experiment", type="primary", use_container_width=True, help=_lab_help("run_button")):
     py = st.session_state.get("backend_py", "")
     back = st.session_state.get("backend_dir", "")
 

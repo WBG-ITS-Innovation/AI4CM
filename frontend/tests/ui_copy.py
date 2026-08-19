@@ -155,6 +155,37 @@ def _joined(node: ast.AST) -> List[Tuple[int, str]]:
     return out
 
 
+#: Module-level dictionaries whose VALUES are copy a reader sees.
+#:
+#: ``ui_styles.HELP`` and ``ui_styles.GLOSSARY`` are tooltips and definitions rendered
+#: verbatim, but they are assignments rather than call arguments, so the call-based
+#: collection above never saw them. Three em dashes were sitting in HELP the whole time the
+#: punctuation rule was passing.
+COPY_DICTS = {"HELP", "GLOSSARY", "TRANSLATIONS"}
+
+
+def _dict_copy(tree: ast.AST, path: Path, inside) -> List["Copy"]:
+    """Values of the module-level copy dictionaries, as visible strings."""
+    out: List[Copy] = []
+    for node in ast.walk(tree):
+        # `HELP = {...}` and `HELP: Dict[str, str] = {...}` are different node types, and
+        # the Lab page uses the annotated form.
+        if isinstance(node, ast.Assign):
+            names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names = {node.target.id}
+        else:
+            continue
+        if not (names & COPY_DICTS) or not isinstance(node.value, ast.Dict):
+            continue
+        for value in node.value.values:
+            for line, text in _joined(value):
+                if text.strip():
+                    out.append(Copy(path=path, line=line, text=text, call="tooltip",
+                                    in_expander=inside(line)))
+    return out
+
+
 def visible_copy(path: Path) -> List[Copy]:
     """Every user-visible string in one page or helper module."""
     source = path.read_text(encoding="utf-8")
@@ -195,6 +226,7 @@ def visible_copy(path: Path) -> List[Copy]:
                 if candidate.is_markup:
                     continue
                 out.append(candidate)
+    out.extend(_dict_copy(tree, path, inside))
     return sorted(out, key=lambda c: c.line)
 
 

@@ -28,18 +28,26 @@ from forward_forecast import BENCHMARK_LABEL as _BENCH_LABEL  # noqa: E402
 from forward_forecast import benchmark_mae_for_target as _benchmark_mae  # noqa: E402
 from forward_forecast import benchmark_series as _benchmark_series  # noqa: E402
 from model_shelf import shelf_for as _shelf_for  # noqa: E402
+from ui_styles import help_text  # tooltips, translated at render time
 from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
 from ui_styles import TOK as _TOK  # noqa: E402
 from ui_styles import HELP, reading_this_chart  # noqa: E402
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
+from i18n import install as install_language  # language toggle + pending-review note
+from i18n import t as _t  # verdict sentences are fixed copy and are translated
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Forecast · Treasury Forecast", page_icon="🔭", layout="wide")
 inject_global_css()
 
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 
 render_app_header("Forward forecast", "The next working days, which are dates beyond the end of the data")
 page_intro(
@@ -167,12 +175,27 @@ VALIDATED_HORIZON = 5
 EXPLORATORY_LABEL = "exploratory — not gated, not published"
 
 #: Verdict codes in the words a reader uses. The codes themselves are terms of art.
-_VERDICT_WORDS = {
+_VERDICT_WORDS_EN = {
     "publishable": "usable as a forecast",
     "withheld_as_forecast": "shown as a guide only",
     "withheld": "not usable",
     "unknown": "not decided",
 }
+
+
+def _verdict_words(code: str) -> str:
+    """A verdict in the reader's own words, in the reader's own language."""
+    return _t(_VERDICT_WORDS_EN.get(code, code))
+
+
+class _VerdictWords(dict):
+    """Kept as a mapping so the two call sites read unchanged, translated on lookup."""
+
+    def get(self, code, default=None):
+        return _verdict_words(code) if code in _VERDICT_WORDS_EN else default
+
+
+_VERDICT_WORDS = _VerdictWords()
 
 
 def _dispatch(args: list, timeout: int = 600) -> dict:
@@ -301,9 +324,9 @@ for target in fc["target"].unique():
     # and a reader meeting them for the first time cannot tell them apart.
     if publishable:
         st.success(
-            "**Usable as a forecast.** Every check this model was put through passed, so "
-            "the numbers below are the best estimate we have for these days. "
-            + pub["reason_plain"]
+            _t("**Usable as a forecast.** Every check this model was put through passed, so "
+               "the numbers below are the best estimate we have for these days.")
+            + " " + pub["reason_plain"]
         )
     elif pub["verdict"] == "withheld":
         # P2 made these two mean different things, and the page used to render both as
@@ -311,16 +334,18 @@ for target in fc["target"].unique():
         # documented trivial benchmark is MORE accurate, so the numbers are not a guide to
         # anything and presenting them as one would invite a worse decision.
         st.error(
-            "**Do not use these numbers.** A simple rule of thumb was more accurate than "
-            "this model on data it had never seen, so acting on its figures would be worse "
-            "than acting on the rule of thumb.\n\n" + pub["reason_plain"]
+            _t("**Do not use these numbers.** A simple rule of thumb was more accurate than "
+               "this model on data it had never seen, so acting on its figures would be "
+               "worse than acting on the rule of thumb.")
+            + "\n\n" + pub["reason_plain"]
         )
     else:
         st.error(
-            "**Shown as a guide to the typical level, not as a forecast.** The model is "
-            "about as accurate as we would want, but it could not show that it anticipates "
-            "individual days rather than tracking the usual level, so we will not call it a "
-            "forecast.\n\n" + pub["reason_plain"]
+            _t("**Shown as a guide to the typical level, not as a forecast.** The model is "
+               "about as accurate as we would want, but it could not show that it "
+               "anticipates individual days rather than tracking the usual level, so we "
+               "will not call it a forecast.")
+            + "\n\n" + pub["reason_plain"]
         )
         if pub.get("named_fix"):
             st.warning(f"**What would change this:** {pub['named_fix']}")
@@ -340,12 +365,12 @@ for target in fc["target"].unique():
                             "the audited run that earned the recipe its credentials."))
         with _h2:
             st.metric(f"Benchmark error ({UNIT_LABEL})", m(_bm["benchmark_mae"]),
-                      help=HELP["ruler"] + "  " + str(_bm.get("ruler_note", "")))
+                      help=help_text("ruler") + "  " + str(_bm.get("ruler_note", "")))
         with _h3:
             st.metric("Model is better by",
                       pct_points(_bm["skill_pct"]) if _bm.get("skill_pct") is not None
                       else NOT_REPORTED,
-                      help=HELP["skill"])
+                      help=help_text("skill"))
         st.caption(f"Both figures come from run `{_bm['run_id']}` on {_bm.get('window')} "
                    f"(n={_bm.get('n')}). They describe how this recipe performed on 2024. They do "
                    f"not describe the forecast below, which has no actual values to be scored "

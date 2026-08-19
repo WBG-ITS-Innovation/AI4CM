@@ -182,7 +182,10 @@ def test_every_prose_sentence_is_finished(path):
         lines = [ln for ln in text.splitlines() if ln.strip()]
         while lines:
             last = lines[-1].strip()
-            is_bullet = last[:2] in ("- ", "* ") or last[:3].rstrip(".").isdigit()
+            # The Lab's tooltips use "• " rather than markdown bullets, because they are
+            # rendered by the browser as a tooltip and not as markdown.
+            is_bullet = (last[:2] in ("- ", "* ", "• ") or last[:1] == "•"
+                         or last[:3].rstrip(".").isdigit())
             is_subheading = bool(re.fullmatch(r"\*\*[^*]{2,80}\*\*", last))
             if not (is_bullet or is_subheading):
                 break
