@@ -20,7 +20,7 @@ from b_ml_pipeline import (ConfigBML, to_business_index, calendar_exog, choose_r
                            lag_window_features, is_stock, build_yearly_folds)
 from forecast_integrity import compute_persistence_baseline, signal_sentinel
 from evaluation_windows import (DEV, TRAIN, assert_selection_free, mase,
-                                seasonal_naive_scale)
+                                seasonal_naive_scale, window_for)
 from provenance import describe_input, describe_code
 from experiment_log import log_run
 from preprocessing.fiscal_calendar import calendar_version
@@ -58,6 +58,18 @@ def design(target):
     lvl=trailing_level(s.diff(H) if stock else s) if tf=="ratio" else None
     return s,X,y_t,y_true,tf,lvl,stock
 
+#: Which windows a fold's TRUTH may come from, per search window.
+#:
+#: A TRAIN-window search may read TRAIN targets only -- not DEV. DEV is the confirmation set, and a
+#: search that has already seen part of it is not confirmed by it.
+ALLOWED_TARGET_WINDOWS = {"train": {"train"}, "dev": {"dev"}}
+
+
+def target_date_of(index, horizon):
+    """Origin -> target date, positionally, matching how ``design`` builds ``shift(-H)``."""
+    return {d: index[i + horizon] for i, d in enumerate(index) if i + horizon < len(index)}
+
+
 def make_folds(target, window):
     s,X,y_t,y_true,tf,lvl,stock=design(target)
     # P1 follow-up: these bounds used to be date literals here, so a change to the split in
@@ -66,14 +78,44 @@ def make_folds(target, window):
     # it inherited the literals rather than holding its own.
     lo,hi=(None,TRAIN.end) if window=="train" else (DEV.start,DEV.end)
     folds=build_yearly_folds(s.index,4,None,eval_start=lo,eval_end=hi)
+    tmap=target_date_of(s.index,H)
     out=[]
     for (tr_end,te_start,te_end) in folds:
         mtr=(X.index<=tr_end); mte=(X.index>=te_start)&(X.index<=te_end)
         ok=X.notna().all(axis=1)&y_t.notna()
-        itr=X.index[mtr&ok]; ite=X.index[mte&ok]
+        itr=X.index[mtr&ok]
+        # ── THE FIX: an evaluation row's TRUTH must also lie in an allowed window ──────────
+        #
+        # Folds are bounded by ORIGIN, but truth is read at origin + H. So an origin on
+        # 2024-12-24 was scored against 2025-01-02 -- inside the sealed holdout. Measured before
+        # this fix: the DEV fold read 4 holdout target dates (2025-01-01, 01-02, 01-03, 01-06),
+        # and TRAIN fold 5 read 5 DEV target dates, on every one of the three targets. So every
+        # champion credential in registry/recipes.json was computed partly on holdout truth, and
+        # the Optuna search partly on its own confirmation set.
+        #
+        # `assert_selection_free` did not catch it because it was checking the ORIGINS, which are
+        # all inside the window by construction. The violation lives in the target dates.
+        #
+        # Bounding purely by target date -- the first proposal -- was measured and rejected: it
+        # pulls late-December origins into the DEV fold, and those origins are <= tr_end, so the
+        # model trained on them. That trades a 4-row holdout read for a 5-row train/eval overlap.
+        #
+        # So the rule is an INTERSECTION: the origin must be in the fold's block, and the target
+        # must be in a window this search may read. Exact rather than a trim -- it drops the 4 rows
+        # that actually spill, where "drop the last H origins" would have dropped 5.
+        #
+        # Cost, measured and uniform across all three targets: DEV 250 -> 246 rows,
+        # TRAIN 1259 -> 1254. Credentials move by -0.75% to -1.27%; see the session record.
+        allowed=ALLOWED_TARGET_WINDOWS[window]
+        ite=pd.DatetimeIndex([d for d in X.index[mte&ok]
+                              if d in tmap and window_for(tmap[d]) in allowed])
         if len(itr)<200 or len(ite)==0: continue
-        # Tuning IS selection: every evaluation row must come from a selectable window.
-        assert_selection_free(ite, f"ws2_tune.make_folds({target!r}, {window!r}) evaluation rows")
+        # Tuning IS selection, so BOTH ends of every evaluation row must be selectable: the origin
+        # the features come from, and the target date the truth comes from. Checking only the
+        # origin is what let the holdout read through.
+        assert_selection_free(ite, f"ws2_tune.make_folds({target!r}, {window!r}) evaluation origins")
+        assert_selection_free(pd.DatetimeIndex([tmap[d] for d in ite]),
+                              f"ws2_tune.make_folds({target!r}, {window!r}) evaluation TARGET dates")
         ytr=y_t.loc[itr].to_numpy(float); yte_true=y_true.loc[ite].to_numpy(float)
         origin=s.loc[ite].to_numpy(float)
         inv=None

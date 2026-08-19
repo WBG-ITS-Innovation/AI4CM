@@ -138,64 +138,37 @@ def test_the_holdout_read_is_logged_as_a_report(monkeypatch):
 
 
 @needs_data
-def test_a_dev_scoped_call_logs_the_year_boundary_rows_it_really_reads(monkeypatch):
-    """A DEV-scoped evaluation is NOT holdout-free, and the ledger call is what revealed it.
+def test_a_dev_scoped_call_no_longer_reads_holdout_targets(monkeypatch):
+    """This test is the history of the finding, kept because the history is the point.
 
-    Folds are bounded by ORIGIN, but truth is read at ``origin + H``. So DEV origins in late
-    December 2024 are scored against target dates in early January 2025 -- inside the sealed
-    holdout. Measured: 250 DEV origins, of which 4 have holdout targets (2025-01-01, 01-02, 01-03,
-    01-06). The same year-boundary that the Ops vintage construction had to handle.
-
-    This test asserted "no holdout read" first, and failing was the finding. It now asserts the
-    truth: the read happens, it is a handful of boundary rows, and it is logged rather than silent.
+    It first asserted "a DEV-scoped call logs no holdout read", and FAILING was the finding: folds
+    are origin-bounded while truth is read at ``origin + H``, so 4 DEV origins in late December
+    2024 were scored against early-January 2025 — inside the sealed holdout. It was then rewritten
+    to assert the leak's existence. Now that both harnesses require the target date to be in an
+    allowed window, it asserts the fixed state: no holdout target, and nothing for the ledger to
+    record.
     """
     import evaluation_windows as ew
     import sealed_window_report as swr
 
     calls = []
     monkeypatch.setattr(swr, "require_test_access",
-                        lambda reason, caller=None, purpose=ew.PURPOSE_SELECTION:
-                        calls.append({"reason": reason, "purpose": purpose}))
+                        lambda *a, **k: calls.append(k.get("purpose")))
     folds, _ = swr.sealed_folds("Revenues", eval_start=DEV.start, eval_end=DEV.end, log=True)
 
     tds = pd.DatetimeIndex([d for f in folds for d in f.target_dates])
-    holdout = [d for d in tds if window_for(d) == "test"]
-    assert 0 < len(holdout) <= 2 * swr.HORIZON, (
-        f"expected a handful of year-boundary rows, got {len(holdout)}")
-    assert calls, "a DEV-scoped run that reads holdout targets must still tell the ledger"
-    assert all(c["purpose"] == ew.PURPOSE_REPORT for c in calls)
+    assert len(tds) > 200, "the DEV fold should still be substantial after the fix"
+    assert {window_for(d) for d in tds} == {"dev"}, (
+        f"a DEV-scoped call must read DEV truth only; got "
+        f"{sorted({window_for(d) for d in tds})}")
+    assert not calls, f"nothing holdout was read, so the ledger must stay quiet; got {calls}"
 
 
-@needs_data
-def test_the_tuners_dev_fold_is_scored_against_holdout_rows():
-    """LEAKAGE FINDING, pinned so it cannot be lost.
-
-    ``ws2_tune.make_folds`` calls ``assert_selection_free`` on the evaluation **origins**, which
-    are all DEV, and then scores against truth at ``origin + H`` -- 4 of which fall in the sealed
-    holdout. So the tuner's DEV MAE, which is what ``registry/recipes.json`` records as each
-    champion's credential, includes 4 holdout observations. The guard passes because it is looking
-    at the wrong dates.
-
-    Measured impact on the DEV MAE: Revenues 0.82%, Expenditure 1.16%, stock target 0.51%. Small,
-    but it is *selection* on holdout data, which is the one thing the four-window split exists to
-    prevent.
-
-    Not fixed here: correcting a selection path changes what the tuner optimises and what the
-    registry's credentials mean, which is a decision for a session that scopes it. When it is
-    fixed, this test should fail -- delete it then.
-    """
-    import sealed_window_report as swr
-    from ws2_tune import design, make_folds
-
-    s, *_ = design("Revenues")
-    tmap = swr._target_date_map(s.index, swr.HORIZON)
-    folds, _ = make_folds("Revenues", "dev")
-    targets = pd.DatetimeIndex([tmap[d] for d in folds[0].X_te.index if d in tmap])
-    leaked = [d for d in targets if window_for(d) == "test"]
-    assert leaked, (
-        "ws2_tune's DEV fold no longer reads holdout targets -- the leak is fixed. Delete this "
-        "test and the note in sealed_window_report's docstring.")
-    assert all(pd.Timestamp(TEST_START) <= d for d in leaked)
+# The pin `test_the_tuners_dev_fold_is_scored_against_holdout_rows` lived here and has been
+# DELETED, per its own assertion message, because the leak it recorded is fixed: ws2_tune's folds
+# now require an evaluation row's TARGET date to be in an allowed window, not just its origin. The
+# permanent replacement is `test_no_fold_reads_holdout_truth.py`, which asserts the property for
+# every fold builder rather than documenting one instance of its absence.
 
 
 # ── recipe fidelity: it must be the champion, not a lookalike ───────────────
