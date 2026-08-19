@@ -29,6 +29,8 @@ from ui_styles import inject_global_css, page_header, section_header, callout_bo
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
 from ui_styles import inject_design_system  # presentation only
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import plotly_chrome  # presentation only
 st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
@@ -37,6 +39,12 @@ inject_global_css()
 inject_design_system()
 
 render_app_header("Lab", "Configure and launch a backtest run")
+page_intro(
+    "This page is the workbench: run any model on any Treasury line, at any horizon, as an "
+    "experiment. Every run launched here is measured on train and dev data only and is "
+    "never published."
+)
+glossary_note("exploratory", "sealed window", "holdout", "baseline")
 
 # ── The exploratory contract, stated where nobody can miss it ────────────────
 # Everything launched from this page is exploratory. It is bounded to train and dev
@@ -310,7 +318,7 @@ with st.sidebar.expander("What the backend settings mean", expanded=False):
 The UI launches model runs by calling a **backend Python environment**.
 
 - **Python** points to the backend virtual environment interpreter (backend/.venv)
-- **Backend** is the directory containing the runner scripts (run_a_stat.py, run_b_ml_*.py, ...)
+- **Backend** is the directory containing the runner scripts, such as run_a_stat.py and run_b_ml_univariate.py
 
 If either path is missing, go to the **Overview** page and re-run setup scripts.
 """
@@ -441,7 +449,7 @@ with L:
     cadence = st.selectbox("Cadence", ["Daily", "Weekly", "Monthly"], index=0, help=HELP["cadence"])
     horizon = st.slider("Horizon", 1, 24, 6, help=HELP["horizon"])
 
-    with st.expander(f"Target preview — {target} @ {cadence}", expanded=True):
+    with st.expander(f"Target preview: {target} at {cadence} cadence", expanded=True):
         st.caption(HELP["preview"])
         tmp = df[[date_col, target]].dropna()
         tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
@@ -773,8 +781,8 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         )
 
     # Overlay preview
-    st.subheader("Overlay preview — Actual vs model predictions")
-    with st.expander("Overlay preview — Actual vs selected model(s) (and Ops baseline if available)", expanded=True):
+    st.subheader("Overlay preview: actual against model predictions")
+    with st.expander("Overlay preview: actual against the selected models, and the Treasury baseline where available", expanded=True):
         p = Path(out_real) / "predictions_long.csv"
         if not p.exists():
             for _cad in ("daily", "weekly", "monthly"):

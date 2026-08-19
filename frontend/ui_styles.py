@@ -320,6 +320,18 @@ button[data-testid="stBaseButton-secondary"] {
     margin-top: 6px;
 }
 
+/* ── Page intro ─────────────────────────────────────────── */
+/* One or two sentences at the top of every page saying what it is for. Set slightly
+   larger than body text and in the muted ink, so it reads as an introduction rather
+   than as the first paragraph of the content. */
+.page-intro {
+    font-size: 15.5px;
+    line-height: 1.55;
+    color: #475569;
+    max-width: 62rem;
+    margin: 0 0 18px 0;
+}
+
 /* ── Section headers ────────────────────────────────────── */
 .section-header {
     margin: 32px 0 18px 0;
@@ -881,6 +893,119 @@ HELP = {
         "pass."
     ),
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PLAIN LANGUAGE: one intro per page, one definition per term
+#
+# Two problems this closes.
+#
+# Pages opened on a control. A reader landing on Compare Runs met a run selector and had
+# to work out from the widgets what the page was for. `page_intro` is one or two sentences
+# saying so, rendered identically everywhere, and a test asserts every page calls it once.
+#
+# Technical terms appeared unexplained. MASE, skill, holdout, champion, P50, withheld and
+# sealed window all reached a reader with nothing beside them. The glossary below is the
+# one definition of each; `term_help` puts it in a tooltip and `glossary_note` puts the
+# terms a page actually uses behind an expander. A test asserts a page that uses a term
+# also carries its definition, so a term cannot arrive unexplained.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def page_intro(text: str) -> None:
+    """One or two sentences at the top of a page saying what it is for.
+
+    Rendered as ordinary body text rather than a callout: a box at the top of every page
+    stops being read after the second page, and this has to be read.
+    """
+    import streamlit as _st
+
+    _st.markdown(f'<p class="page-intro">{text}</p>', unsafe_allow_html=True)
+
+
+#: Every term a reader might meet, and what it means in words they already have.
+#:
+#: One definition each, used by the tooltips, the expanders and the guide page, so a term
+#: cannot mean one thing on the Forecast page and another on the Dashboard. Written for
+#: somebody who has never seen a forecast evaluated: each begins with what the thing IS,
+#: not with what it is computed from.
+GLOSSARY = {
+    "champion": (
+        "The one model an official forecast for a given Treasury line uses. It was chosen "
+        "once, on recorded evidence from data it had never been fitted on, and loading new "
+        "data refits it without ever re-choosing it."
+    ),
+    "exploratory": (
+        "A run somebody launched to see what would happen. It is never published, never "
+        "written to the official forecast, and never entered in the scorecard, and every "
+        "page that produces one says so while it is showing it."
+    ),
+    "baseline": (
+        "A deliberately simple rule that every model is measured against, such as assuming "
+        "the value from five working days ago simply repeats. Beating it is the floor, not "
+        "an achievement."
+    ),
+    "skill": (
+        "How much smaller a model's typical error is than the baseline's, as a percentage. "
+        "40% means its errors are 40% smaller than assuming the last known value repeats."
+    ),
+    "MASE": (
+        "A model's error divided by the error of repeating the same weekday from the "
+        "previous week. Below 1.00 means better than that simple rule and above 1.00 means "
+        "worse, so 1.00 is the break-even point rather than a threshold anybody chose."
+    ),
+    "holdout": (
+        "A block of history deliberately kept away from the models while they were being "
+        "chosen, so that measuring them on it says something about days they had never "
+        "seen."
+    ),
+    "sealed window": (
+        "The most recent stretch of history, held back and read once at the end. It is the "
+        "single clean final reading this project has, so no experiment is allowed to touch "
+        "it and any that tries is refused."
+    ),
+    "gate": (
+        "A check a forecast must pass before it may be published, such as being more "
+        "accurate than the simple rule of thumb. Every gate has a plain-language reason "
+        "attached to its verdict, and none can be switched off from this interface."
+    ),
+    "withheld": (
+        "A verdict meaning the numbers are not offered as a forecast. Either a simple rule "
+        "of thumb was more accurate, in which case they should not be used at all, or the "
+        "model could not show it anticipates individual days, in which case they are a "
+        "guide to the typical level and nothing more."
+    ),
+    "P10": "The low end of the published range. The actual figure should fall below it "
+           "about one day in ten.",
+    "P50": "The central estimate. The actual figure should fall above it about as often as "
+           "below it.",
+    "P90": "The high end of the published range. The actual figure should fall above it "
+           "about one day in ten.",
+    "pending": (
+        "A published forecast whose day has not been reported yet, so there is no actual "
+        "figure to score it against. It is listed rather than hidden."
+    ),
+}
+
+
+def term_help(*terms: str) -> str:
+    """The definitions of ``terms``, joined, for a ``help=`` tooltip.
+
+    Unknown terms are skipped rather than raising: a tooltip is not worth taking a page
+    down for, and a test already asserts the terms a page uses are all in the glossary.
+    """
+    return "  ".join(GLOSSARY[t] for t in terms if t in GLOSSARY)
+
+
+def glossary_note(*terms: str, title: str = "What do these words mean?") -> None:
+    """The definitions of ``terms`` behind an expander, so the page reads clean by default."""
+    import streamlit as _st
+
+    known = [t for t in terms if t in GLOSSARY]
+    if not known:
+        return
+    with _st.expander(title):
+        for term in known:
+            _st.markdown(f"**{term}.** {GLOSSARY[term]}")
 
 
 def plotly_layout(fig, *, height: int = 380, ytitle: str = "", xtitle: str = "",

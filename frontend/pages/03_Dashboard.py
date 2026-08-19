@@ -29,12 +29,19 @@ REPOROOT_BACKEND = APPROOT.parent / "backend"
 from paths import runs_dir
 RUNS_DIR = runs_dir()
 
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
 inject_global_css()
 inject_design_system()
 
 render_app_header("Dashboard", "Evaluate one run: accuracy, intervals and integrity checks")
+page_intro(
+    "This page shows the detail behind one experimental run: how accurate it was, where its "
+    "errors fell, and whether its checks passed. Nothing here is published."
+)
+glossary_note("MASE", "champion", "skill", "baseline", "gate")
 # ──────────────────────────────────────────────────────────────────────
 # Caching helpers
 # ──────────────────────────────────────────────────────────────────────
@@ -328,8 +335,8 @@ if _integ:
 else:
     st.markdown(
         callout_box(
-            "No integrity report found. Interpret outputs with caution — "
-            "trust checks could not be performed.",
+            "No integrity report was found for this run, so the trust checks could "
+            "not be performed. Interpret the outputs below with caution.",
             "caution", icon="⚠️",
         ),
         unsafe_allow_html=True,
@@ -464,7 +471,7 @@ with _gcol1:
 with _gcol2:
     _bm = _best or NOT_REPORTED
     st.markdown(f"**Best model:** `{_bm}`"
-                + ("  ·  selected after the overfitting gate" if _gate_state is not None else ""))
+                + ("  ·  selected after the overfitting gate." if _gate_state is not None else ""))
 if _gate_state is None:
     st.caption("No gate verdict is recorded in this run's artifact, so it reads as never "
                "verified. That is not the same as passing.")
@@ -723,7 +730,7 @@ with tab_overlay:
                 plotly_chrome(grid)
                 st.plotly_chart(grid, use_container_width=True, config={"displaylogo": False})
             else:
-                st.caption("Only one horizon available — nothing to compare.")
+                st.caption("Only one horizon is available, so there is nothing to compare.")
 
 # ── Tab: Leaderboard ─────────────────────────────────────────────────
 with tab_leader:
@@ -795,7 +802,7 @@ with tab_leader:
                     f"{', '.join(sorted(_excluded))}. They appear here for comparison only. A "
                     f"model is excluded when its validation error exceeds its training error "
                     f"by more than {_gate_r if _gate_r is not None else 'the gate'}x, which "
-                    f"means it memorised the history rather than learned from it — a low bar "
+                    f"means it memorised the history rather than learned from it. A low bar "
                     f"on this chart is not a good model."), unsafe_allow_html=True)
             else:
                 st.markdown(reading_this_chart(
@@ -813,7 +820,7 @@ with tab_leader:
                         f"<b>Best-model sources disagree.</b> This page's ranking (lowest "
                         f"{metric_choice}) picks <b>{_best}</b>; the run's own integrity "
                         f"report, which also applies the overfitting gate, records "
-                        f"<b>{_integ_best}</b>. The integrity report is authoritative — a "
+                        f"<b>{_integ_best}</b>. The integrity report is authoritative, because a "
                         f"model that wins on error but fails the capacity gate is not the "
                         f"best model.",
                         "caution", icon="⚠️"),
@@ -984,7 +991,7 @@ with tab_intervals:
             _basis_col, _basis_label = magnitude_basis(df_t, _ispec)
             st.markdown(section_header(
                 "Coverage on small, middle and large days",
-                f"Day size measured by {_basis_label} — known before the day happened"),
+                f"Day size measured by {_basis_label}, which was known before the day happened"),
                 unsafe_allow_html=True)
             terc = coverage_by_tercile(df_t, _ispec, model=_mdl)
             if terc.empty:
@@ -1023,7 +1030,7 @@ with tab_intervals:
                 st.markdown(reading_this_chart(
                     "Days are split into three equal groups by how large the actual value "
                     "was. A range can look well calibrated on average while missing most "
-                    "of the largest days — and the largest days are the ones a cash buffer "
+                    "of the largest days, and the largest days are the ones a cash buffer "
                     "exists for. If the right-hand bar is much lower than the others, the "
                     "range is least trustworthy exactly when it matters most."),
                     unsafe_allow_html=True)
@@ -1071,7 +1078,7 @@ with tab_intervals:
                                 config={"displaylogo": False})
                 st.markdown(reading_this_chart(
                     "For each day we ask where the actual value sat inside that day's own "
-                    "predicted range — 0.00 at the bottom edge, 1.00 at the top. A "
+                    "predicted range, where 0.00 is the bottom edge and 1.00 is the top. A "
                     "well-shaped range spreads actuals evenly across the middle bars. The "
                     "two red bars are days the actual fell outside the range entirely. Mass "
                     "piling up at one edge means the range is centred in the wrong place, "
@@ -1091,7 +1098,7 @@ with tab_intervals:
                             config={"displaylogo": False})
             st.markdown(reading_this_chart(
                 "How wide each model's range is on average. Narrower is only better if "
-                "coverage holds up — a narrow range that misses the actual is worse than a "
+                "coverage holds up, because a narrow range that misses the actual is worse than a "
                 "wide one that contains it."), unsafe_allow_html=True)
 
 # ── Tab: Forecast Integrity ──────────────────────────────────────────
@@ -1191,7 +1198,7 @@ with tab_integrity:
             if run_status == "FAILED_QUALITY":
                 st.markdown(
                     callout_box(
-                        f"<b>Run Status: {run_status}</b> — Model does not beat persistence "
+                        f"<b>Run status: {run_status}.</b> This model does not beat the persistence "
                         f"baseline at horizon {integrity.get('horizon', 'N/A')}.",
                         "fail", icon="⚠️",
                     ),
@@ -1229,7 +1236,7 @@ with tab_integrity:
                                "large misses more heavily, so it is sensitive to the few "
                                "very large days.")
                 st.metric("Baseline RMSE", _fmt_num(rmse_persist, 2),
-                          help="The same measure for the simple benchmark — assume the "
+                          help="The same measure for the simple benchmark, which assumes the "
                                "value from one horizon ago repeats. The model should be "
                                "lower than this.")
             with col3:
@@ -1431,7 +1438,7 @@ with tab_ensemble:
                 from ensemble_postprocess import run_ensemble_from_runs
                 _ens_dirs = [str(RUNS_DIR / rn) for rn in _ens_selected]
                 _ens_out = str(RUNS_DIR / f"_ensemble_{'_'.join(_ens_selected[:3])}")
-                with st.spinner("Building ensembles..."):
+                with st.spinner("Building ensembles…"):
                     result = run_ensemble_from_runs(_ens_dirs, _ens_out, cadence="daily", top_k=int(_ens_topk))
                 ens_preds = result.get("predictions", pd.DataFrame())
                 ens_lb = result.get("leaderboard", pd.DataFrame())
