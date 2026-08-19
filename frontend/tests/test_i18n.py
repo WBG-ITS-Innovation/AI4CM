@@ -96,15 +96,28 @@ def asked_phrases():
     # Copy passed to a literal t("...") call. Parsed rather than matched with a regular
     # expression, because these are written as adjacent literals across several lines and a
     # pattern anchored on the opening quote captures only the first of them.
+    #
+    # The name to look for is read from each page's OWN import rather than assumed. It used to
+    # be the fixed pair ("t", "_t"), and that silently stopped seeing the Forecast page the day
+    # its import was renamed to `_translate`: three verdict banners vanished from this set, and
+    # the one that renders only for a `withheld_as_forecast` target was reported as an orphaned
+    # translation when the copy was untouched and on screen. A hardcoded alias list is a second
+    # place to remember, so there is no list.
     import ast
 
     for page in PAGES:
         tree = ast.parse(page.read_text(encoding="utf-8"))
+        aliases = {alias.asname or alias.name
+                   for node in ast.walk(tree)
+                   if isinstance(node, ast.ImportFrom) and node.module == "i18n"
+                   for alias in node.names if alias.name == "t"}
+        if not aliases:
+            continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             name = getattr(node.func, "id", "") or getattr(node.func, "attr", "")
-            if name not in ("t", "_t"):
+            if name not in aliases:
                 continue
             for arg in node.args[:1]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
