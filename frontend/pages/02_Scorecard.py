@@ -32,17 +32,26 @@ from format_gel import gel_millions as m  # noqa: E402
 from paths import scorecard_is_overridden, scorecard_path  # noqa: E402
 from ui_styles import COLORS, inject_global_css, page_header, section_header  # noqa: E402
 from ui_styles import inject_design_system, plotly_chrome  # noqa: E402
+from i18n import install as install_language  # language toggle + pending-review note
+from i18n import t as _t  # this page's fixed headings
+from ui_styles import glossary_note  # plain-language definitions, on demand
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # noqa: E402
 
 st.set_page_config(page_title="Scorecard · Treasury Forecast", page_icon="🎯", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 render_app_header("Scorecard", "What was forecast, and what actually happened")
 page_intro(
     "This page compares published forecasts to what actually happened, once the day "
     "arrives. It is also where newly reported actuals are uploaded."
 )
+glossary_note("pending", "champion", "baseline", "skill", "P10", "P50", "P90")
 
 DATA = REPOROOT / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
 UPLOAD_DIR = APPROOT / "runs_uploads" / "actuals"
@@ -58,7 +67,7 @@ st.markdown(
     "score it against."
 )
 
-with st.expander("What does this mean?"):
+with st.expander(_t("What does this mean?")):
     st.markdown(
         "- A published forecast is **immutable**. It is written once, with the date it was "
         "issued, and never edited afterwards. That is what makes this a record rather than a "

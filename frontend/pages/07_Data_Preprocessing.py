@@ -17,12 +17,18 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system  # presentation only
+from i18n import install as install_language  # language toggle + pending-review note
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import plotly_chrome  # presentation only
 st.set_page_config(page_title="Data · Treasury Forecast", page_icon="🧹", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 render_app_header("Data pre-processing", "Build and inspect the canonical daily Treasury file")
 page_intro(
     "This page turns a raw Treasury export into the clean daily series the models read, and "

@@ -40,11 +40,17 @@ from ui_styles import (inject_design_system, ds_metric, empty_state, callout_box
                        reading_this_chart)
 from format_gel import NOT_REPORTED
 
+from i18n import install as install_language  # language toggle + pending-review note
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="History · Treasury Forecast", page_icon="🕒", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 render_app_header("Run history", "Browse past runs and download their outputs")
 page_intro(
     "This page lists every experimental run this Lab has produced, including the ones that "
