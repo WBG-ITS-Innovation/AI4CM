@@ -81,14 +81,15 @@ def test_the_written_file_carries_the_counts_behind_the_sentence(written_summary
     # the number that matters alongside these is `evaluated_total`, which did not move.
     assert comp["counts"] == {"machine-learning models": 21, "deep-learning models": 5,
                               "statistical models": 7, "quantile methods": 6,
+                              "pretrained zero-shot forecasters": 2,
                               "reference baselines": 3}
-    assert sum(comp["counts"].values()) == 42
+    assert sum(comp["counts"].values()) == 44
     # Every counted model must be named, so a consumer can requote or recompute.
-    assert sum(len(v) for v in comp["members"].values()) == 42
+    assert sum(len(v) for v in comp["members"].values()) == 44
     # And the count of the shelf must not be mistaken for the count of the evidence.
     # 39 = 42 on the shelf minus the 3 reference baselines. Of those 39, eight have a
     # recorded result and thirty-one do not.
-    assert comp["evaluated_total"] + comp["untested_total"] == 39, (
+    assert comp["evaluated_total"] + comp["untested_total"] == 41, (
         "the three reference baselines are not candidates and must not be counted as either")
 
 

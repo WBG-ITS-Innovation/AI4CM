@@ -250,6 +250,113 @@ first as though it were the second is the thing this whole file is arranged to p
 
 ---
 
+## Adding a foundation model instead
+
+A foundation forecaster is trained once, by somebody else, on a large collection of other
+people's time series, then asked to forecast this one without ever being fitted to it.
+There is no training step. Two are registered: `Chronos_Bolt_Small` and
+`TimesFM_2p5_200M`, both added 2026-08-19, both exploratory.
+
+They live in `backend/foundation_models.py` rather than the catalogue, because a
+`ModelSpec` describes something with a `fit` method and these have nothing to fit. One
+entry in `MODELS` there, plus a predictor function, plus a line in `_PREDICTORS`.
+
+### The install is optional, and must stay optional
+
+The packages go in `backend/requirements-foundation.txt`, never the core requirements:
+
+```bash
+./backend/.venv/bin/python -m pip install -r backend/requirements-foundation.txt
+```
+
+Everything in that module imports lazily. With the extras absent the app, the registry and
+the whole test suite work unchanged, and the models report themselves as not installed with
+the command that fixes it. A fresh clone following the core README is unaffected. This is
+tested by simulating the absence, not by eyeballing the imports.
+
+Before installing, run `pip install --dry-run` and diff it against
+`docs/sessions/pip-freeze-before-fm-2026-08-19.txt`. If it would move `numpy`, `pandas` or
+`torch`, do not install into `backend/.venv`: those three are what the whole modelling stack
+sits on. Chronos and TimesFM both left them alone. Lag-Llama does not, which is why it is
+not here.
+
+### Pin the weights by commit hash, not by tag
+
+```python
+revision="772f3d25d38aec6d914c8949dab4462e2d46f5d8"
+```
+
+A tag and `main` can both be repointed at different bytes. A forecast whose weights can
+change underneath it is not a record of anything, so `revision` is a full 40-character
+commit hash and a test enforces that.
+
+Get it with:
+
+```bash
+./backend/.venv/bin/python -c "from huggingface_hub import HfApi; print(HfApi().model_info('amazon/chronos-bolt-small').sha)"
+```
+
+### Nothing downloads at runtime, after the first fetch
+
+Weights are fetched once and cached under `~/.cache/huggingface/hub`. A pinned revision
+that is already cached loads from disk with no network call, so a rerun uses the same bytes
+as the original run and an offline machine with a warm cache still works. Measured on the
+Chronos small bolt checkpoint: 17.4s on the first load including download, 0.1s afterwards.
+TimesFM's checkpoint is 925 MB and took 31.1s the first time.
+
+That is what keeps the pipeline auditable. The model is not a service being called; it is a
+fixed file on disk with a known hash.
+
+### Load once per process, not once per forecast
+
+The first version of this wrapper loaded the checkpoint inside the predict call. Harmless
+for a single forecast, and ruinous for a backtest: `run_foundation.py` walks a few hundred
+origins, and TimesFM's 925 MB checkpoint was being read and recompiled at every one. The
+run did not finish inside ten minutes. With the load cached behind `lru_cache` it takes
+11.3 seconds. Use `_loaded(kind, repo, revision)`.
+
+### Exploratory only, and why that needs no new code
+
+None of these can become the model behind an official forecast, for three reasons that
+already existed:
+
+1. `CHAMPION_POOL_CATEGORY` is `"machine-learning models"`, which is B_ML alone. A recipe
+   may only promote a `point_model` from that category, and `composition()` fails if a
+   promoted model falls outside it.
+2. Status is derived from `experiments/log.csv`. No ledger row, no measurement the
+   publication gates can read.
+3. A recipe cites a ledger `run_id` and `registry.verify_against_log` checks the quoted
+   figures against it. A model with no ledger row has nothing to cite.
+
+So the lock is the one every unmeasured model is already behind. Nothing was added.
+
+They are also kept out of `COMPETING_CATEGORIES`, which is a separate decision. They do
+produce a point forecast, so they *could* be ranked against the measured models. They are
+not, because they never went through this project's evaluation protocol, and a competing
+count containing unmeasured entries is the overstatement `client_framing` exists to prevent.
+
+### One thing that bit, worth knowing
+
+Feed the model business days. The Treasury table carries a row for every calendar day and
+the 1,104 weekend rows are zeros. Handing those over spends the context window teaching a
+weekly zero pattern, and the model then forecasts into it: on Revenues at h=5, two of five
+median steps came back **negative**. On the business-day series the same call returns 74.9M
+to 78.9M. `foundation_models.business_days_only` does this for every caller so nobody has to
+remember why.
+
+### A new family means two more edits
+
+`model_reference.py`, additively: a `_CATEGORY_BY_PIPELINE` entry and a place in
+`CATEGORY_ORDER`. `client_category` raises on an unknown pipeline **by design**, so a new
+family cannot reach the pool while missing from every number the app quotes.
+
+And check `daily_best_model_families`. It was "every pipeline in the pool", which assumed
+every enumerable family also runs daily. F_FOUNDATION runs from the Lab only, so that
+derivation would have promised the Agent a per-family `best_model` the daily summary never
+writes. `EXPLORATORY_ONLY_FAMILIES` now excludes it.
+
+---
+
 ## Getting your model measured
 
 Being on the shelf and having a recorded result are different things. To move from
