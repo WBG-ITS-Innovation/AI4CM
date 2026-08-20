@@ -366,89 +366,46 @@ def multivariate_exog(train_df: pd.DataFrame, target: str, top_k: int) -> List[s
 # =========================
 
 def available_models() -> Dict[str, object]:
-    models = {
-        "Ridge": Pipeline([("imp", SimpleImputer(strategy="median")),
-                           ("sc", StandardScaler(with_mean=True, with_std=True)),
-                           ("est", Ridge(random_state=0))]),
-        "Lasso": Pipeline([("imp", SimpleImputer(strategy="median")),
-                           ("sc", StandardScaler(with_mean=True, with_std=True)),
-                           ("est", Lasso(random_state=0, max_iter=20000, tol=1e-4))]),
-        "ElasticNet": Pipeline([("imp", SimpleImputer(strategy="median")),
-                                ("sc", StandardScaler(with_mean=True, with_std=True)),
-                                ("est", ElasticNet(random_state=0))]),
-        # ✅ M-4: capacity floors so a model cannot memorise its training rows.
-        # These are principled defaults, not tuned values: with ~2,000 daily
-        # training rows and ~14 features, a tree leaf holding a single
-        # observation is memorisation by construction (ExtraTrees reached
-        # train_MAE=0.00 exactly this way).  Requiring >= 5 samples per leaf
-        # forces every prediction to be an average over several days.
-        # Tuning proper belongs in Phase 4, on the DEV window, with rolling
-        # origins — never searched against the locked 2025 holdout.
-        "RandomForest": RandomForestRegressor(
-            n_estimators=400, random_state=0, n_jobs=-1,
-            min_samples_leaf=MIN_SAMPLES_PER_LEAF,
-        ),
-        "ExtraTrees": ExtraTreesRegressor(
-            n_estimators=400, random_state=0, n_jobs=-1,
-            min_samples_leaf=MIN_SAMPLES_PER_LEAF,
-        ),
-        "HistGBDT": HistGradientBoostingRegressor(
-            random_state=0, min_samples_leaf=20, l2_regularization=1.0,
-        ),
-        # ── Workstream 1: absolute-error objectives ────────────────────────────
-        # We are judged on MAE, so train on MAE. Squared error fits the
-        # conditional MEAN, and on a spiky flow series the mean is dragged by
-        # month-end and tax-deadline outliers; absolute error fits the
-        # conditional MEDIAN, which those days barely move. On this data the
-        # mismatch is not academic -- Revenues has single days 10x the local
-        # level, and every one of them is pulling an L2 fit away from the 250-odd
-        # ordinary days it will be scored on.
-        #
-        # Every hyperparameter below is IDENTICAL to the squared-error twin above,
-        # so any difference in DEV MAE is attributable to the objective and
-        # nothing else. That is the whole point of the comparison; tuning comes
-        # later (workstream 2) and on top of whichever objective wins.
-        "HistGBDT_L1": HistGradientBoostingRegressor(
-            loss="absolute_error",
-            random_state=0, min_samples_leaf=20, l2_regularization=1.0,
-        ),
-    }
-    if HAVE_XGB:
-        _xgb = dict(
-            n_estimators=600, learning_rate=0.05, max_depth=4, subsample=0.8,
-            colsample_bytree=0.8, min_child_weight=5.0, reg_lambda=1.0,
-            random_state=0, tree_method="hist", n_jobs=-1,
-        )
-        models["XGBoost"] = XGBRegressor(**_xgb)
-        # reg:absoluteerror needs XGBoost >= 1.7. Absent it, the variant is
-        # omitted rather than silently falling back to squared error, which would
-        # put an L2 fit in the table under an L1 name.
+    """Every model this build can fit, by name.
+
+    The estimators themselves live in ``backend/model_catalog.py``, one entry each, with a
+    plain-language summary and the packages they need. This function is now the place that
+    *builds* them, not the place that defines them, for two reasons.
+
+    The first is that adding a model meant editing a dictionary buried between the feature
+    builder and the training loop, with the conditional import blocks for LightGBM,
+    XGBoost and CatBoost interleaved into it. That is a great deal of ceremony for what
+    ought to be one line.
+
+    The second is what nobody could see from here. Nothing recorded whether a model had
+    ever been run, and measured on the ledger the day the catalogue was written, **seven
+    of the thirteen models this function returned had never been evaluated on any
+    target**. They appeared in the Lab's model list beside LightGBM_L1, which has five
+    folds of evidence behind it, with nothing distinguishing them. ``model_catalog``
+    derives that status from the run ledger instead of asking anyone to declare it.
+
+    Every hyperparameter is unchanged by the move: ``test_model_catalog.py`` compares the
+    estimators this returns against a snapshot taken before the catalogue existed, and
+    re-fits one on identical data to prove the predictions are bit-for-bit the same.
+
+    A model whose package is not installed is omitted rather than falling back to
+    something else, which would put one fit in the table under another model's name.
+    """
+    from model_catalog import FAMILY_ML, specs
+
+    models: Dict[str, object] = {}
+    for spec in specs(FAMILY_ML):
+        if not spec.installed:
+            missing = ", ".join(spec.requires)
+            print(f"[b_ml] {spec.name} unavailable ({missing} not installed); omitted")
+            continue
         try:
-            models["XGBoost_L1"] = XGBRegressor(objective="reg:absoluteerror", **_xgb)
-        except Exception as exc:  # pragma: no cover - depends on installed xgboost
-            print(f"[b_ml] XGBoost_L1 unavailable ({exc}); omitted")
-    if HAVE_LGBM:
-        _lgbm = dict(
-            n_estimators=800, learning_rate=0.05, num_leaves=31, subsample=0.8,
-            colsample_bytree=0.8, min_child_samples=20, reg_lambda=1.0,
-            random_state=0, n_jobs=-1, verbose=-1,
-        )
-        models["LightGBM"] = LGBMRegressor(**_lgbm)
-        models["LightGBM_L1"] = LGBMRegressor(objective="l1", **_lgbm)
-    if HAVE_CATBOOST:
-        # Same discipline as the other L1 variants: hyperparameters are principled
-        # defaults, and the L1 entry differs from nothing else because there is no
-        # squared-error CatBoost twin to compare against yet. UNABLATED -- these have
-        # not been run on any fold, so they must not be promoted or quoted until they
-        # have been through the same TRAIN-folds-then-one-DEV-confirmation protocol as
-        # workstream 1.
-        _cb = dict(iterations=800, learning_rate=0.05, depth=6, l2_leaf_reg=3.0,
-                   random_seed=0, verbose=False, allow_writing_files=False)
-        models["CatBoost_L1"] = CatBoostRegressor(loss_function="MAE", **_cb)
-        # Quantile loss at alpha=0.5 is absolute error, so this is the interval-capable
-        # sibling rather than a different model class.
-        models["CatBoost_Quantile"] = CatBoostRegressor(
-            loss_function="Quantile:alpha=0.5", **_cb)
+            models[spec.name] = spec.build()
+        except Exception as exc:  # pragma: no cover - depends on installed versions
+            # An installed package can still refuse a specific option: XGBoost below 1.7
+            # has no reg:absoluteerror. Omitted rather than substituted, for the reason in
+            # the docstring.
+            print(f"[b_ml] {spec.name} unavailable ({exc}); omitted")
     return models
 
 

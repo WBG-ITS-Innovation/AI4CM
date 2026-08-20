@@ -223,6 +223,15 @@ def _composition_fields() -> dict:
                 "champion_pool": comp.get("champion_pool"),
                 "champion_pool_category": comp.get("champion_pool_category"),
                 "daily_best_model_families": comp.get("daily_best_model_families"),
+                # How much of that pool anybody has actually measured. Carried because the
+                # pool count on its own reads as a body of evidence and is not one: at the
+                # time of writing, 8 of the 28 non-baseline entries had a row in
+                # experiments/log.csv and 20 had none. A consumer quoting `counts` without
+                # these two would overstate the work by a factor of three.
+                "evaluated": comp.get("evaluated"),
+                "untested": comp.get("untested"),
+                "evaluated_total": comp.get("evaluated_total"),
+                "untested_total": comp.get("untested_total"),
                 # Integrity cross-check, carried so a consumer does not have to trust the
                 # sentence: any model a recipe actually promotes that is NOT in champion_pool.
                 # Non-empty means the eligible pool a client was told about is wrong.

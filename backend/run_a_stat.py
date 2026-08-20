@@ -88,8 +88,25 @@ def _ops_daily_from_monthly(daily_hist: pd.Series, monthly_forecast: pd.Series) 
     return out.dropna()
 
 
-def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[int]) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
+def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[int],
+                  eval_start: Optional[str] = None,
+                  eval_end: Optional[str] = None) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
+    """Annual rolling-origin folds, optionally bounded to an evaluation window.
+
+    ``eval_start`` / ``eval_end`` are INCLUSIVE bounds on the TARGET dates a fold scores.
+    Both default to ``None``, which is the behaviour this function has always had: fold
+    over every full year in the file. That default is correct for the reporting run this
+    module was written for, and wrong for anything that compares models by eye, because
+    the last year in the file is the sealed holdout.
+
+    B_ML's ``build_yearly_folds`` already took these bounds and this is the same rule, so
+    a run bounded to train and dev covers the same years in both families. A fold that
+    falls entirely outside the bounds is dropped; one that straddles an edge is trimmed
+    to it, because a partial block is a smaller sample rather than a wrong one.
+    """
     years = sorted(set(idx.year))
+    lo = pd.Timestamp(eval_start) if eval_start else None
+    hi = pd.Timestamp(eval_end) if eval_end else None
     folds=[]
     for Y in years:
         if Y - years[0] < min_years: 
@@ -99,20 +116,45 @@ def _yearly_folds(idx: pd.DatetimeIndex, min_years: int, want_folds: Optional[in
         tr_end = tr_end_cand[-1]
         ts_span = idx[(idx >= pd.Timestamp(f"{Y}-01-01")) & (idx <= pd.Timestamp(f"{Y}-12-31"))]
         if ts_span.empty: continue
+        if lo is not None:
+            ts_span = ts_span[ts_span >= lo]
+        if hi is not None:
+            ts_span = ts_span[ts_span <= hi]
+        if ts_span.empty: continue
         folds.append((tr_end, ts_span[0], ts_span[-1]))
     # If want_folds is None, use ALL folds (thorough mode). Otherwise limit to last N folds.
     if want_folds is not None and want_folds > 0 and len(folds) > want_folds:
         folds = folds[-want_folds:]
     return folds
 
-def _fallback_fold(idx: pd.DatetimeIndex, horizon: int) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
-    """Used when yearly folds cannot be built; always return at least one fold if there is enough history to test `horizon`."""
+def _fallback_fold(idx: pd.DatetimeIndex, horizon: int,
+                   eval_start: Optional[str] = None,
+                   eval_end: Optional[str] = None) -> List[Tuple[pd.Timestamp,pd.Timestamp,pd.Timestamp]]:
+    """Used when yearly folds cannot be built; always return at least one fold if there is enough history to test `horizon`.
+
+    The bounds are applied to the index BEFORE the block is carved, not to the block
+    afterwards. Trimming afterwards would be worse than useless: this fallback takes the
+    last ``te_len`` rows of the file, and on a bounded run those rows are exactly the ones
+    the bound exists to exclude, so the caller would silently get an empty fold list from
+    a function whose contract is "always return at least one fold". Restricting the index
+    first means the fallback returns a real fold inside the window, or an honest nothing.
+    """
+    if eval_end:
+        idx = idx[idx <= pd.Timestamp(eval_end)]
     n = len(idx)
     if n <= horizon + 5: 
         return []
     te_len = max(horizon, min(12, n//4))
     te_end = idx[-1]; te_start = idx[-te_len]
     tr_end = idx[-(te_len + horizon)]
+    if eval_start:
+        # Only the scored block moves. ``tr_end`` is history, and history before the
+        # evaluation start is exactly what the model is supposed to learn from.
+        lo = pd.Timestamp(eval_start)
+        if te_end < lo:
+            return []
+        if te_start < lo:
+            te_start = idx[idx >= lo][0]
     return [(tr_end, te_start, te_end)]
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -144,9 +186,14 @@ A_STAT_MODELS: Dict[str, Dict[str, str]] = {
                "summary": "Predict the mean of the last N observations (default 7). A smoothing "
                           "reference with no trend or seasonal term."},
     "ETS": {"role": "forecast",
-            "summary": "Exponential smoothing — a weighted average of the past where recent "
-                       "observations count for more, with optional trend and seasonal terms. "
-                       "Uses only the target's own history."},
+            "summary": "Exponential smoothing, which is a weighted average of the past where "
+                       "recent observations count for more, with optional trend and seasonal "
+                       "terms. Uses only the target's own history."},
+    "ETS_DAMPED": {"role": "forecast",
+                   "summary": "The same method with a damped trend, so a trend it has "
+                              "picked up flattens out as the forecast reaches further "
+                              "ahead instead of continuing indefinitely. Usually the safer "
+                              "of the two at longer horizons."},
     "SARIMAX": {"role": "forecast",
                 "summary": "Seasonal ARIMA with optional external regressors. Models the series "
                            "through its own autocorrelation and differencing, and is the only "
@@ -159,6 +206,18 @@ A_STAT_MODELS: Dict[str, Dict[str, str]] = {
               "summary": "A classical decomposition method: de-trend the series, forecast the "
                          "pieces, recombine. Strong on smooth seasonal series and a well-known "
                          "competition benchmark."},
+    # Added 2026-08-19. Both are exponential smoothing with one part switched off, and both are
+    # here because ETS as configured carries a trend AND a seasonal term: when it wins, nothing
+    # says which part earned it. These two separate the question.
+    "SES": {"role": "forecast",
+            "summary": "Exponential smoothing with no trend and no seasonal term, so it tracks "
+                       "the level only. It is the plainest member of this family, and it says "
+                       "how much of the fuller method's accuracy comes from the level alone."},
+    "HOLT": {"role": "forecast",
+             "summary": "Exponential smoothing with a trend but no seasonal term, and the trend "
+                        "continues at the same slope rather than flattening out. Sits between "
+                        "the level-only method and the damped one, so the three together show "
+                        "what the trend and the damping are each worth."},
 }
 
 
@@ -218,12 +277,19 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
         y_pred = np.repeat(float(y_tr.tail(w).mean()), n).astype(float)
         return y_pred, *_nan_pi(n)
 
-    if m == "ETS":
-        ets_ov = ov.get("ETS", {})
+    if m in ("ETS", "ETS_DAMPED"):
+        # One branch, two entries. ETS_DAMPED differs from ETS in exactly one setting, so a
+        # second copy of this block would be a second place for the seasonal fallback and the
+        # interval extraction to drift.
+        ets_ov = ov.get(m, ov.get("ETS", {}))
         trend = None if ets_ov.get("trend") in (None, "None") else ets_ov.get("trend", "add")
         seasonal = None if ets_ov.get("seasonal") in (None, "None") else ets_ov.get("seasonal", "add")
         periods = int(ets_ov.get("seasonal_periods", 12))
-        damped = bool(ets_ov.get("damped_trend", False))
+        damped = True if m == "ETS_DAMPED" else bool(ets_ov.get("damped_trend", False))
+        if damped and trend is None:
+            # statsmodels refuses a damped trend with no trend to damp, and the refusal
+            # arrives as an exception the caller would swallow into a naive fallback.
+            trend = "add"
         if seasonal and len(y_tr) < 2 * periods:
             seasonal = None
         try:
@@ -237,6 +303,36 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
                 sf = pi.summary_frame(alpha=pi_alpha)
                 return y_pred, sf["pi_lower"].values.astype(float), sf["pi_upper"].values.astype(float)
             except Exception:
+                return y_pred, *_nan_pi(n)
+        except Exception:
+            y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
+            return y_pred, *_nan_pi(n)
+
+    if m in ("SES", "HOLT"):
+        # A separate branch rather than two more names on the ETS tuple above. ETS and
+        # ETS_DAMPED are measured models, and widening a condition they share to admit two new
+        # ones would put a new code path inside the branch that produces their numbers. The
+        # duplication here is the seven lines of construction, not the seasonal fallback or the
+        # interval handling, because neither applies: both of these are seasonal-free by
+        # definition, which is the whole point of them.
+        #
+        # SES holds the level. HOLT adds an undamped trend. Neither takes an override: the
+        # smoothing weights are estimated, and the only structural choices are the two that
+        # distinguish the names, so there is nothing left to configure.
+        trend = "add" if m == "HOLT" else None
+        try:
+            fit = ExponentialSmoothing(y_tr, trend=trend, seasonal=None,
+                                       damped_trend=False,
+                                       initialization_method="estimated").fit(optimized=True)
+            y_pred = fit.forecast(n).values.astype(float)
+            try:
+                pi = fit.get_prediction(start=len(y_tr), end=len(y_tr) + n - 1)
+                sf = pi.summary_frame(alpha=pi_alpha)
+                return y_pred, sf["pi_lower"].values.astype(float), sf["pi_upper"].values.astype(float)
+            except Exception:
+                # Measured on statsmodels 0.14.6: neither of these two exposes
+                # `get_prediction`, so both report no interval rather than a made-up one. The
+                # attempt is kept so a later statsmodels is picked up without an edit here.
                 return y_pred, *_nan_pi(n)
         except Exception:
             y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
@@ -307,6 +403,10 @@ def main():
     folds = None if folds_raw is None else int(folds_raw)  # None = use ALL folds (thorough mode)
     minyrs  = int(ov.get("min_train_years", 4))
     demo    = ov.get("demo_clip_months")
+    # Both default to None, so an unbounded reporting run is byte-identical to before.
+    # The Lab sets eval_end so an exploratory run never folds into the sealed window.
+    eval_start = ov.get("eval_start") or None
+    eval_end   = ov.get("eval_end") or None
 
     for k,v in [("TG_FAMILY","A_STAT"),("TG_MODEL_FILTER",model),("TG_TARGET",target),
                 ("TG_CADENCE",cadence),("TG_HORIZON",horizon),("TG_DATA_PATH",data),
@@ -332,15 +432,30 @@ def main():
         ops_month.rename("forecast").to_csv(cad_dir/f"{target}_ops_baseline_monthly.csv")
 
     idx = y_all.index
-    folds_list = _yearly_folds(idx, minyrs, folds)
+    folds_list = _yearly_folds(idx, minyrs, folds, eval_start=eval_start, eval_end=eval_end)
+    if eval_start or eval_end:
+        _log(f"Evaluation window bounded: [{eval_start or 'start'} .. {eval_end or 'end'}] "
+             f"-> {len(folds_list)} fold(s)")
     if not folds_list:
         _log("WARNING: Not enough full-year coverage; using recent sliding-window fold.")
-        folds_list = _fallback_fold(idx, horizon)
+        folds_list = _fallback_fold(idx, horizon, eval_start=eval_start, eval_end=eval_end)
         if not folds_list:
-            # last-ditch: naive test on last horizon
+            # Last-ditch block, still inside the bound. Reaching past the bound here was
+            # the quiet way a bounded run could end up scoring the sealed window: the
+            # last-horizon block of an unrestricted index is precisely the newest data.
+            bounded = idx
+            if eval_start:
+                bounded = bounded[bounded >= pd.Timestamp(eval_start)]
+            if eval_end:
+                bounded = bounded[bounded <= pd.Timestamp(eval_end)]
+            if len(bounded) < max(horizon, 2) + 2:
+                raise ValueError(
+                    f"No dates fall in window [{eval_start or 'start'} .. {eval_end or 'end'}] "
+                    f"with enough history to test horizon {horizon}: "
+                    f"{len(bounded)} row(s) available.")
             _log("WARNING: Minimal fallback — using last-horizon test block.")
-            te_end = idx[-1]; te_start = idx[-max(horizon, 2)]
-            tr_end = idx[-(max(horizon, 2) + 1)]
+            te_end = bounded[-1]; te_start = bounded[-max(horizon, 2)]
+            tr_end = bounded[-(max(horizon, 2) + 1)]
             folds_list = [(tr_end, te_start, te_end)]
 
     # ── The holdout read, recorded ────────────────────────────────────────────
@@ -486,4 +601,12 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         _log(f"ERROR: {e}")
+        # See the C_DL runners: one report shape across all four families. TG_OUT_ROOT is
+        # read from the environment rather than from `main`'s locals, because the failure
+        # may have happened before `main` bound anything.
+        try:
+            from runner_errors import write_error_report
+            write_error_report(os.environ.get("TG_OUT_ROOT", "outputs"), e, context="A_STAT")
+        except Exception:
+            pass
         raise

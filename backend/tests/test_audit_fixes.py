@@ -121,17 +121,29 @@ class TestModelNameMapping:
     """Verify UI model names match backend expectations."""
 
     def test_stat_model_names_uppercase_match(self):
-        """All stat model UI labels must match _fc() dispatch after upper()."""
+        """All stat model UI labels must be names ``_fc()`` will actually dispatch.
+
+        The set of dispatchable names is read from ``run_a_stat.A_STAT_MODELS`` rather than typed
+        here. It used to be a literal, and that made this test a third copy of the model list:
+        when the Lab's options started being derived from the registry on 2026-08-19, ETS_DAMPED
+        appeared in them and this test failed, not because anything was undispatchable but
+        because the literal had never been updated when ETS_DAMPED was added.
+
+        ``A_STAT_MODELS`` is the right authority rather than a convenient one. ``_fc`` opens by
+        refusing any name outside it, so membership is exactly the question "will this run".
+        """
         sys.path.insert(0, str(BACKEND_DIR.parent / "frontend"))
         from backend_consts import STAT_MODEL_OPTIONS
 
-        # These are the exact strings _fc() dispatches on (upper-cased)
-        known_backends = {"NAIVE", "WEEKDAY_MEAN", "MOVAVG", "ETS", "SARIMAX",
-                          "STL_ARIMA", "THETA"}
+        import run_a_stat
+
+        known_backends = {name.upper() for name in run_a_stat.A_STAT_MODELS}
+        assert known_backends, "the A_STAT registry is empty, which cannot be right"
+
         for ui_label, backend_filter in STAT_MODEL_OPTIONS:
             assert backend_filter.upper() in known_backends, (
                 f"STAT_MODEL_OPTIONS entry ({ui_label!r}, {backend_filter!r}) "
-                f"does not match any case in _fc().  Known: {known_backends}"
+                f"does not match any case in _fc().  Known: {sorted(known_backends)}"
             )
 
     def test_quality_gate_constant_exists(self):
@@ -521,7 +533,7 @@ class TestDashboardSkillThreshold:
 
     def test_dashboard_imports_constant(self):
         """Dashboard file must contain the import of QUALITY_GATE_SKILL_PCT."""
-        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "01_Dashboard.py"
+        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "03_Dashboard.py"
         text = dashboard_path.read_text(encoding="utf-8")
         assert "QUALITY_GATE_SKILL_PCT" in text, (
             "Dashboard does not import QUALITY_GATE_SKILL_PCT — "
@@ -733,7 +745,7 @@ class TestDashboardTrustBadge:
     """Verify Dashboard shows pipeline trust status."""
 
     def test_dashboard_shows_trust_badge(self):
-        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "01_Dashboard.py"
+        dashboard_path = BACKEND_DIR.parent / "frontend" / "pages" / "03_Dashboard.py"
         text = dashboard_path.read_text(encoding="utf-8")
         assert "Quality gate PASSED" in text, "Dashboard must show quality gate passed message"
         assert "Quality gate FAILED" in text, "Dashboard must show quality gate failed message"

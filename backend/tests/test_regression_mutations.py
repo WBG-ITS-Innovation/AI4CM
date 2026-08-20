@@ -478,15 +478,29 @@ def test_a_family_writing_no_shift_fields_raises_no_persistence_flag():
 # ── 8. the model-count composition (the open question) ───────────────────────
 
 def test_the_model_counts_are_pinned_so_a_headline_number_cannot_drift():
-    """28 enumerated: 13 B_ML + 3 E_QUANTILE + 7 A_STAT (4 stat, 3 baselines) + 5 C_DL.
+    """31 enumerated: 15 B_ML + 3 E_QUANTILE + 8 A_STAT (5 stat, 3 baselines) + 5 C_DL.
 
     Pinned because the page presents a count to a client. If a model is added the number must
-    change deliberately, with the composition still stated -- not silently.
+    change deliberately, with the composition still stated, rather than silently.
 
     Item 6 raised this from 16 to 28. A_STAT was added because ETS and Theta were described but
     listed nowhere; C_DL was added because the new artifact validator errored on a real published
     champion ("MLP") that no enumerable pool contained. The deliberate change is the point of this
     test existing.
+
+    The MVP consolidation raised it to 31: Huber and GBDT_L1 in B_ML and ETS_DAMPED in A_STAT,
+    all three registered as candidates with no recorded result. Which is why the count alone is
+    no longer the whole story, and why the assertion below now also pins how many of these
+    anybody has actually measured. Growing the shelf and growing the evidence are different
+    events, and only one of them makes the project stronger.
+
+    2026-08-19 raised it to 42, and that sentence is the reason this test is worth having.
+    Eleven models were registered across three families -- six B_ML (BayesianRidge, TheilSen,
+    KNN, KernelRidge, DecisionTree_L1, AdaBoost), three E_QUANTILE (LinearQuantile,
+    HistGBQuantile, XGBQuantile) and two A_STAT (SES, HOLT) -- and ``evaluated_total`` did not
+    move. It is still 8. The shelf grew by eleven and the evidence grew by nothing, so the
+    untested count went from 20 to 31. Anyone quoting "42 models" without that second number is
+    quoting a shelf and calling it a result.
     """
     from collections import Counter
 
@@ -496,12 +510,21 @@ def test_the_model_counts_are_pinned_so_a_headline_number_cannot_drift():
     pool = mr.model_pool()
     by_pipeline = Counter(v["pipeline"] for v in pool.values())
 
-    assert len(set(available_models())) == 13, "B_ML point pool changed"
-    assert by_pipeline == {"B_ML": 13, "E_QUANTILE": 3, "A_STAT": 7, "C_DL": 5}, dict(by_pipeline)
-    assert len(pool) == 28, f"model_pool() changed: {len(pool)}"
+    assert len(set(available_models())) == 21, "B_ML point pool changed"
+    assert by_pipeline == {"B_ML": 21, "E_QUANTILE": 6, "A_STAT": 10, "C_DL": 5,
+                           "F_FOUNDATION": 2}, dict(by_pipeline)
+    assert len(pool) == 44, f"model_pool() changed: {len(pool)}"
+
+    comp = mr.composition(pool)
+    assert comp["evaluated_total"] == 8, (
+        f"the number of models with a recorded result changed to {comp['evaluated_total']}; "
+        f"say so deliberately rather than letting the shelf count speak for the evidence")
+    assert comp["untested_total"] == 33, comp["untested_total"]
 
     quantile_only = {k for k, v in pool.items() if v["pipeline"] == "E_QUANTILE"}
-    assert quantile_only == {"GBQuantile", "ResidualRF", "LGBMQuantile"}, sorted(quantile_only)
+    assert quantile_only == {"GBQuantile", "ResidualRF", "LGBMQuantile",
+                             "LinearQuantile", "HistGBQuantile", "XGBQuantile"}, \
+        sorted(quantile_only)
 
     # The three A_STAT references are baselines, not competitors: a headline count that sums them
     # in would present the ruler as a rival to the models measured against it.
@@ -529,15 +552,29 @@ def test_every_description_is_reachable_and_every_pool_entry_described():
 
 
 def test_a_stat_registry_matches_what_the_dispatch_implements():
-    """A name in the registry with no branch in ``_fc`` would be an advertised model that cannot run."""
-    import inspect
+    """A name in the registry with no branch in ``_fc`` would be an advertised model that cannot run.
+
+    Checked by dispatching rather than by searching the source for ``== "NAME"``. The source
+    check broke the moment two names legitimately shared one branch: ETS_DAMPED differs from ETS
+    in a single setting, so giving it a second copy of that block would have duplicated the
+    seasonal fallback and the interval extraction purely to satisfy a test. Running each name is
+    also the stronger claim, since it catches a branch that exists and raises.
+    """
+    import numpy as _np
+    import pandas as _pd
 
     import run_a_stat as astat
 
-    src = inspect.getsource(astat._fc)
+    idx = _pd.bdate_range("2021-01-04", periods=520)
+    y = _pd.Series(_np.sin(_np.arange(520) / 5.0) * 8.0 + _np.arange(520) * 0.05 + 100.0,
+                   index=idx)
+    y.index.freq = "B"
+    future = _pd.bdate_range(idx[-1] + _pd.tseries.offsets.BDay(1), periods=5)
+
     for name in astat.registry_models():
-        assert f'== "{name}"' in src, (
-            f"{name} is advertised by registry_models() but has no branch in _fc()")
+        pred, _lo, _hi = astat._fc(name, y, future, {}, "Daily")
+        assert len(pred) == len(future), f"{name} returned {len(pred)} values for 5 dates"
+        assert _np.isfinite(pred).all(), f"{name} produced a non-finite forecast"
 
 
 def test_a_stat_refuses_an_unknown_model_instead_of_forecasting_naively():

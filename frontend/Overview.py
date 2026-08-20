@@ -15,13 +15,24 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system  # presentation only
+from i18n import install as install_language  # language toggle + pending-review note
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Overview · Treasury Forecast", page_icon="📊", layout="wide")
 inject_global_css()
 
 inject_design_system()
 
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
+
 render_app_header("Overview", "What this lab does, and what it does not claim")
+page_intro(
+    "This is the landing page. It confirms the Lab can find its backend, shows what has "
+    "been run so far, and states plainly what this project does and does not claim."
+)
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
 RUNS_DIR = runs_dir()
@@ -31,23 +42,38 @@ RUNS_DIR = runs_dir()
 # ─────────────────────────────────────────────────────────────
 st.markdown(
     page_header("Georgia Treasury Forecast Lab",
-                "A production-grade multi-model forecasting sandbox — Statistical, ML, Deep Learning, Quantile"),
+                "A forecasting lab for daily Treasury cash lines, covering statistical, machine "
+                "learning, deep learning and quantile models"),
     unsafe_allow_html=True,
 )
 
-c1, c2, c3, c4, c5, c6 = st.columns([1,1,1,1,1,1])
+# The guide comes first and is called out on its own, because the row of six links below it
+# was the whole of the app's navigation and none of the labels tells a new reader which page
+# answers their question.
+st.info(
+    "**New here?** The Start here page says what each page is for, what you can do there, and "
+    "one thing to try, and it explains the difference between an official forecast and an "
+    "experiment. It is the shortest way in."
+)
+st.page_link("pages/00_Start_here.py", label="🧭 Start here: the guide to this Lab")
+st.write("")
+
+c1, c2, c3, c4, c5, c6, c7 = st.columns([1,1,1,1,1,1,1])
 with c1:
-    st.page_link("pages/00_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
+    st.page_link("pages/01_Forecast.py", label="🔭 Forecast", help="The forecast for the next working days, and the evidence behind it.")
 with c2:
-    st.page_link("pages/01_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
+    st.page_link("pages/02_Scorecard.py", label="🎯 Scorecard", help="How past published forecasts actually did, and where new actuals are uploaded.")
 with c3:
-    st.page_link("pages/04_Compare.py", label="🔀 Compare Runs", help="Side-by-side comparison of 2-6 runs.")
+    st.page_link("pages/08_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
 with c4:
-    st.page_link("pages/02_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
+    st.page_link("pages/03_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
 with c5:
-    st.page_link("pages/03_Models.py", label="📚 Read about Models", help="Deep guide to model families and parameters.")
+    st.page_link("pages/04_Compare.py", label="🔀 Compare Runs", help="Side-by-side comparison of 2 to 6 runs.")
 with c6:
-    st.page_link("pages/00_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardize and clean source data files.")
+    st.page_link("pages/05_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
+with c7:
+    st.page_link("pages/06_Models.py", label="🧩 Models", help="Every model on the shelf, and whether anyone has measured it.")
+st.page_link("pages/07_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardise and clean source data files.")
 
 st.markdown("---")
 
@@ -62,10 +88,10 @@ bd_default = paths.get("backend_dir","")
 colp, cold, cols = st.columns([1.1, 1.1, 0.6])
 with colp:
     backend_py = st.text_input("Python executable", value=bp_default,
-        help=r"Example (Windows): C:\...\TreasuryGeorgiaBackEnd\.venv\Scripts\python.exe")
+        help=r"Example on Windows: C:\Projects\AI4CM\backend\.venv\Scripts\python.exe")
 with cold:
     backend_dir = st.text_input("Backend directory", value=bd_default,
-        help=r"Folder that contains run_a_stat.py, run_b_ml_*.py, run_c_dl_*.py, run_e_quantile_*.py")
+        help=r"Folder that contains the runner scripts, such as run_a_stat.py and run_b_ml_univariate.py")
 with cols:
     if st.button("Save as default", key="ov_save_paths_btn"):
         save_paths(backend_py, backend_dir)
@@ -163,7 +189,7 @@ st.markdown("---")
 st.subheader("Recent runs")
 runs = list_runs()
 if not runs:
-    st.caption("No runs yet — use **Open Lab** above to start your first experiment.")
+    st.caption("No runs yet. Use **Open Lab** above to start your first experiment.")
 else:
     # show up to 5 latest runs as compact cards
     for idx, run in enumerate(runs[:5], start=1):
@@ -181,11 +207,11 @@ else:
                     st.caption("_No log found for this run._")
             with top[1]:
                 p = out_dir / "predictions_long.csv"
-                st.markdown("**predictions_long.csv**" + (" ✅" if p.exists() else " —"))
-                st.page_link("pages/01_Dashboard.py", label="➡️ View in Dashboard")
+                st.markdown("**predictions_long.csv**" + (" ✅" if p.exists() else " (not written)"))
+                st.page_link("pages/03_Dashboard.py", label="➡️ View in Dashboard")
             with top[2]:
                 m = out_dir / "metrics_long.csv"
-                st.markdown("**metrics_long.csv**" + (" ✅" if m.exists() else " —"))
+                st.markdown("**metrics_long.csv**" + (" ✅" if m.exists() else " (not written)"))
                 if m.exists():
                     st.download_button("Download", data=m.read_bytes(), file_name="metrics_long.csv",
                                        use_container_width=True, key=f"ov_dl_metrics_{idx}")
@@ -240,7 +266,7 @@ if _progress.exists():
     _body = re.sub(r"^#\s+.*?$", "", _txt, count=1, flags=re.M).lstrip()
     _head, _sep, _rest = _body.partition("## 2 ·")
     st.markdown(_head)
-    with st.expander("The rest of the record — levers, model pool, correctness work, "
+    with st.expander("The rest of the record: levers, model pool, correctness work, "
                      "and what we still cannot claim", expanded=False):
         st.markdown(_sep + _rest if _sep else _rest)
     st.caption(f"Rendered from `reports/PROGRESS_SINCE_LAST_REVIEW.md` "

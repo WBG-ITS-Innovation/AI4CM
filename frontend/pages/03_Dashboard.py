@@ -1,4 +1,4 @@
-# pages/01_Dashboard.py — Dashboard (interactive overlays, diagnostics, downloads)
+# pages/03_Dashboard.py — Dashboard (interactive overlays, diagnostics, downloads)
 # Redesigned UI: modern analytics aesthetic with strong information hierarchy
 from __future__ import annotations
 from pathlib import Path
@@ -12,6 +12,7 @@ import streamlit as st
 
 from backend_consts import QUALITY_GATE_SKILL_PCT
 from recommender import recommend_model, format_scorecard_markdown
+from ui_styles import help_text  # tooltips, translated at render time
 from ui_styles import (
     inject_global_css, metric_card, status_badge, section_header,
     callout_box, page_header, info_tip, glossary_table,
@@ -29,12 +30,26 @@ REPOROOT_BACKEND = APPROOT.parent / "backend"
 from paths import runs_dir
 RUNS_DIR = runs_dir()
 
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from i18n import install as install_language  # language toggle + pending-review note
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
+import ops_baseline_view as obv  # the Treasury's planning method, from the one construction
 st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
 inject_global_css()
 inject_design_system()
 
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
+
 render_app_header("Dashboard", "Evaluate one run: accuracy, intervals and integrity checks")
+page_intro(
+    "This page shows the detail behind one experimental run: how accurate it was, where its "
+    "errors fell, and whether its checks passed. Nothing here is published."
+)
+glossary_note("MASE", "champion", "skill", "baseline", "gate")
 # ──────────────────────────────────────────────────────────────────────
 # Caching helpers
 # ──────────────────────────────────────────────────────────────────────
@@ -75,40 +90,27 @@ def _load_outputs(base_dir: Path) -> Tuple[Optional[pd.DataFrame], Optional[pd.D
 
 # ──────────────────────────────────────────────────────────────────────
 # Baseline helpers
+#
+# `_weekday_mean_baseline` and `_read_ops_baseline` used to live here, and both are gone. The
+# first invented a day-of-week mean of the actuals whenever the real baseline was missing and
+# the chart labelled it "Ops baseline"; the second read a run-folder CSV that every B_ML run
+# writes empty. `frontend/ops_baseline_view.py` documents both defects and the evidence.
 # ──────────────────────────────────────────────────────────────────────
-def _weekday_mean_baseline(df: pd.DataFrame) -> Optional[pd.Series]:
-    """Fallback baseline derived from Actuals for display only."""
-    if "date" not in df.columns or "y_true" not in df.columns:
-        return None
-    dfx = df[["date","y_true"]].dropna().copy()
-    dfx["date"] = pd.to_datetime(dfx["date"])
-    dfx = dfx.set_index("date")
-    dfx["dow"] = dfx.index.dayofweek
-    prof = dfx.groupby("dow")["y_true"].mean()
-    out = dfx.index.to_series().apply(lambda d: prof.get(d.dayofweek, np.nan))
-    out.index = dfx.index
-    return out
+@st.cache_data(show_spinner=False, ttl=300)
+def _ops_baseline_cached(base_dir_str: str, target: str):
+    """The Treasury's current planning method for this run, or a reason there is none.
 
-def _read_ops_baseline(base_dir: Path, target: str) -> Optional[pd.Series]:
-    daily_file = base_dir / f"{target}_ops_baseline_daily.csv"
-    monthly_file = base_dir / f"{target}_ops_baseline_monthly.csv"
-    if daily_file.exists():
-        df = _read_csv(daily_file)
-        if {"date","forecast"}.issubset(df.columns):
-            return pd.Series(df["forecast"].values, index=pd.to_datetime(df["date"]))
-    if monthly_file.exists():
-        dfm = _read_csv(monthly_file)
-        if "date" in dfm.columns and "forecast" in dfm.columns:
-            dfm["date"] = pd.to_datetime(dfm["date"])
-            dfm = dfm.dropna(subset=["date"]).set_index("date").sort_index()
-            parts = []
-            for ts, v in dfm["forecast"].items():
-                days = pd.date_range(ts.replace(day=1), ts, freq="B")
-                if len(days):
-                    parts.append(pd.Series(float(v)/len(days), index=days))
-            if parts:
-                return pd.concat(parts).sort_index()
-    return None
+    Cached because it starts the backend interpreter, and Streamlit reruns this whole file on
+    every interaction. Both arguments are plain strings so they hash as cache keys: a leading
+    underscore would tell Streamlit NOT to hash them, which would return the first run's
+    baseline for every other run.
+    """
+    return obv.compute(Path(base_dir_str), target)
+
+
+def _ops_baseline(base_dir: Path, target: str):
+    """`(series, reason)` for the Ops baseline. One of the two is always None."""
+    return _ops_baseline_cached(str(base_dir), target)
 
 # ──────────────────────────────────────────────────────────────────────
 # Formatting helpers
@@ -216,10 +218,20 @@ _integrity_path = base_dir / "artifacts" / "integrity_report.json"
 if not _integrity_path.exists():
     _integrity_path = out_root / "artifacts" / "integrity_report.json"
 
-_integ = None
+# An empty dict rather than None when the report is absent or unreadable.
+#
+# Both are falsy, so every `if _integ:` below behaves exactly as it did. The difference is
+# the reads that are NOT inside one of those blocks: `_integ.get(...)` on None raises an
+# AttributeError that takes the entire page down, and a run with no
+# artifacts/integrity_report.json is the ordinary state of an older run and of any run
+# that failed before it could write one. Two such reads existed, at the leaderboard's
+# overfit annotations and at the best-model cross-check, and either would replace the
+# Dashboard with a raw traceback.
+_integ: dict = {}
 if _integrity_path.exists():
     try:
-        _integ = json.loads(_integrity_path.read_text(encoding="utf-8"))
+        _loaded = json.loads(_integrity_path.read_text(encoding="utf-8"))
+        _integ = _loaded if isinstance(_loaded, dict) else {}
     except Exception:
         pass
 
@@ -318,8 +330,8 @@ if _integ:
 else:
     st.markdown(
         callout_box(
-            "No integrity report found. Interpret outputs with caution — "
-            "trust checks could not be performed.",
+            "No integrity report was found for this run, so the trust checks could "
+            "not be performed. Interpret the outputs below with caution.",
             "caution", icon="⚠️",
         ),
         unsafe_allow_html=True,
@@ -388,7 +400,19 @@ if metr is not None and not metr.empty:
 _mae_persist = _integ.get("mae_persistence", np.nan) if _integ else np.nan
 _skill_pct = _integ.get("skill_pct", np.nan) if _integ else np.nan
 _sent = _integ.get("shuffled_to_normal_ratio", np.nan) if _integ else np.nan
-_SENTINEL_THRESHOLD = 1.50
+# The threshold the signal check actually applies, read from the code that applies it.
+#
+# This was the constant 1.50, which P2 superseded: the sentinel threshold was calibrated
+# against a measured null distribution and moved to 1.15, and 1.50 survives in
+# publication_gates only as SENTINEL_MIN_UNCALIBRATED. So the KPI beside every run was
+# telling a reader that a stricter bar was in force than the one any verdict was decided
+# by. Imported rather than retyped, because retyping it is how it went stale the first time.
+try:
+    import sys as _sys_pg
+    _sys_pg.path.insert(0, str(REPOROOT_BACKEND))
+    from publication_gates import SENTINEL_MIN as _SENTINEL_THRESHOLD
+except Exception:                                 # noqa: BLE001 - a KPI, not the run
+    _SENTINEL_THRESHOLD = 1.15
 
 # Gate: the single canonical reader, so a run that wrote only the legacy inverted key is read
 # correctly instead of appearing to pass by absence.
@@ -411,29 +435,29 @@ with k1:
                     "recomputed here."))
 with k2:
     st.metric(f"Benchmark MAE ({UNIT_LABEL})", gel_millions(_mae_persist),
-              help=HELP["ruler"])
+              help=help_text("ruler"))
 with k3:
     st.metric("Skill vs benchmark",
               pct_points(_skill_pct) if not is_missing(_skill_pct) else NOT_REPORTED,
-              help=HELP["skill"])
+              help=help_text("skill"))
 with k4:
     st.metric("Scaled error (MASE)", number(_mase_v),
-              help=(HELP["mase"] + "  This run's artifacts do not record MASE, so it shows as "
+              help=(help_text("mase") + "  This run's artifacts do not record MASE, so it shows as "
                     "not reported; it is logged for the registry champions in "
                     "experiments/log.csv."
-                    if is_missing(_mase_v) else HELP["mase"]))
+                    if is_missing(_mase_v) else help_text("mase")))
 with k5:
     _sent_txt = (f"{float(_sent):.2f} / {_SENTINEL_THRESHOLD:.2f} needed"
                  if not is_missing(_sent) else NOT_REPORTED)
-    st.metric("Signal check", _sent_txt, help=HELP["sentinel"])
+    st.metric("Signal check", _sent_txt, help=help_text("sentinel"))
 with k6:
     _cov_txt = (f"{_pi_cov:.0%} of {_pi_nominal:.0%}"
                 if not is_missing(_pi_cov) and _pi_nominal is not None
                 else (pct(_pi_cov) if not is_missing(_pi_cov) else NOT_REPORTED))
     st.metric("Range coverage", _cov_txt,
-              help=(HELP["coverage"] + f"  Advertised level {_pi_source}."
+              help=(help_text("coverage") + f"  Advertised level {_pi_source}."
                     if _pi_nominal is not None
-                    else HELP["coverage"] + "  " + HELP["nominal"]))
+                    else help_text("coverage") + "  " + help_text("nominal")))
 
 # ── gate status and the best model, on their own row so neither is a number ──────────
 _gcol1, _gcol2 = st.columns([1, 2])
@@ -442,7 +466,7 @@ with _gcol1:
 with _gcol2:
     _bm = _best or NOT_REPORTED
     st.markdown(f"**Best model:** `{_bm}`"
-                + ("  ·  selected after the overfitting gate" if _gate_state is not None else ""))
+                + ("  ·  selected after the overfitting gate." if _gate_state is not None else ""))
 if _gate_state is None:
     st.caption("No gate verdict is recorded in this run's artifact, so it reads as never "
                "verified. That is not the same as passing.")
@@ -468,7 +492,7 @@ with st.expander("Detailed Scorecard & Recommendations", expanded=False):
             "sMAPE": "Symmetric MAPE — handles near-zero actuals better",
             "R2": "R-Squared — fraction of variance explained (1.0 = perfect)",
             "Monthly Accuracy (10% tol)": ("Share of MONTHS whose forecast total is within 10% of the actual total. Formula (b_ml_pipeline.py:517): mean(|monthly_actual - monthly_pred| / max(|monthly_actual|, 1e-9) <= 0.10). A composite, kept for continuity and not gated on."),
-            "PI Coverage": HELP["coverage"],
+            "PI Coverage": help_text("coverage"),
             "PI Avg Width": "Average width of prediction intervals (narrower = more precise)",
             "N predictions": "Number of out-of-sample prediction points used",
         }
@@ -622,14 +646,27 @@ with tab_overlay:
         line=dict(color="#1e293b", width=2.5),
     )
 
-    # Baseline
-    ops = _read_ops_baseline(base_dir, tgt)
-    if ops is None:
-        ops = _weekday_mean_baseline(df_t)
-    if ops is not None and not ops.empty:
+    # ── The Ops baseline: the Treasury's current planning method ──────────────────────────
+    #
+    # Read from `ops_baseline_view`, which asks the backend for the same comparator the
+    # leaderboard's `skill_vs_ops_pct` was computed against. Verified on one real run: the
+    # ops_MAE recomputed from this series matches the stored leaderboard figure exactly.
+    #
+    # It used to read `<target>_ops_baseline_daily.csv` from the run folder, which was wrong
+    # twice over. For the stock target no such file exists, because the method does not apply
+    # to a balance, and the code fell through to a day-of-week mean of the ACTUALS and drew
+    # that under the name "Ops baseline" -- five values spanning 1.38% of their own mean, so a
+    # flat line a reader would take for the Treasury's method. For the flows the file exists
+    # but every B_ML run writes it empty, and an all-NaN series is not an empty one, so it
+    # passed the `not ops.empty` guard and `.resample().sum()` turned it into a line of zeros.
+    #
+    # So: no invented baseline, and "has real numbers in it" is the question asked.
+    ops, ops_why = _ops_baseline(base_dir, tgt)
+    if obv.usable(ops):
         ops = ops.loc[(ops.index >= s_true.index.min()) & (ops.index <= s_true.index.max())]
         if _freq:
             ops = ops.resample(_freq).sum() if treat_as_flow else ops.resample(_freq).last()
+        ops = ops.dropna()
         if not ops.empty:
             fig.add_scatter(
                 x=ops.index, y=ops.values,
@@ -685,6 +722,13 @@ with tab_overlay:
     plotly_chrome(fig)
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
+    # Say what the comparison line is, or say why there is not one. A chart that quietly loses
+    # its comparator invites the reader to assume the model had nothing to beat.
+    if obv.usable(ops):
+        st.caption(obv.CAPTION_WHY_FLAT)
+    elif ops_why:
+        st.caption(ops_why)
+
     # Small multiples
     with st.expander("Per-horizon breakdown (first selected model)", expanded=False):
         if models_sel:
@@ -701,7 +745,7 @@ with tab_overlay:
                 plotly_chrome(grid)
                 st.plotly_chart(grid, use_container_width=True, config={"displaylogo": False})
             else:
-                st.caption("Only one horizon available — nothing to compare.")
+                st.caption("Only one horizon is available, so there is nothing to compare.")
 
 # ── Tab: Leaderboard ─────────────────────────────────────────────────
 with tab_leader:
@@ -743,6 +787,8 @@ with tab_leader:
             # best-model selection (overfit_excluded_models). This page previously ignored
             # that field entirely, so an excluded model could sit at the top of the
             # leaderboard looking like the winner.
+            # An absent integrity report means nothing was excluded, which is what the
+            # empty defaults below say. See where `_integ` is loaded for why it is a dict.
             _excluded = set(_integ.get("overfit_excluded_models", []) or [])
             _ratios = _integ.get("overfit_ratios", {}) or {}
             _gate_r = _integ.get("overfit_gate_ratio", None)
@@ -771,7 +817,7 @@ with tab_leader:
                     f"{', '.join(sorted(_excluded))}. They appear here for comparison only. A "
                     f"model is excluded when its validation error exceeds its training error "
                     f"by more than {_gate_r if _gate_r is not None else 'the gate'}x, which "
-                    f"means it memorised the history rather than learned from it — a low bar "
+                    f"means it memorised the history rather than learned from it. A low bar "
                     f"on this chart is not a good model."), unsafe_allow_html=True)
             else:
                 st.markdown(reading_this_chart(
@@ -789,7 +835,7 @@ with tab_leader:
                         f"<b>Best-model sources disagree.</b> This page's ranking (lowest "
                         f"{metric_choice}) picks <b>{_best}</b>; the run's own integrity "
                         f"report, which also applies the overfitting gate, records "
-                        f"<b>{_integ_best}</b>. The integrity report is authoritative — a "
+                        f"<b>{_integ_best}</b>. The integrity report is authoritative, because a "
                         f"model that wins on error but fails the capacity gate is not the "
                         f"best model.",
                         "caution", icon="⚠️"),
@@ -918,11 +964,11 @@ with tab_intervals:
 
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric("Measured coverage", pct(_cov), help=HELP["coverage"])
+                st.metric("Measured coverage", pct(_cov), help=help_text("coverage"))
             with c2:
                 st.metric("Advertised level",
                           pct(_ispec.nominal) if _ispec.nominal_known else NOT_REPORTED,
-                          help=HELP["nominal"])
+                          help=help_text("nominal"))
             with c3:
                 st.metric("Predictions scored", f"{_n:,}")
             st.markdown(gate_badge_tri(_state, label="Calibration"),
@@ -960,7 +1006,7 @@ with tab_intervals:
             _basis_col, _basis_label = magnitude_basis(df_t, _ispec)
             st.markdown(section_header(
                 "Coverage on small, middle and large days",
-                f"Day size measured by {_basis_label} — known before the day happened"),
+                f"Day size measured by {_basis_label}, which was known before the day happened"),
                 unsafe_allow_html=True)
             terc = coverage_by_tercile(df_t, _ispec, model=_mdl)
             if terc.empty:
@@ -999,7 +1045,7 @@ with tab_intervals:
                 st.markdown(reading_this_chart(
                     "Days are split into three equal groups by how large the actual value "
                     "was. A range can look well calibrated on average while missing most "
-                    "of the largest days — and the largest days are the ones a cash buffer "
+                    "of the largest days, and the largest days are the ones a cash buffer "
                     "exists for. If the right-hand bar is much lower than the others, the "
                     "range is least trustworthy exactly when it matters most."),
                     unsafe_allow_html=True)
@@ -1047,7 +1093,7 @@ with tab_intervals:
                                 config={"displaylogo": False})
                 st.markdown(reading_this_chart(
                     "For each day we ask where the actual value sat inside that day's own "
-                    "predicted range — 0.00 at the bottom edge, 1.00 at the top. A "
+                    "predicted range, where 0.00 is the bottom edge and 1.00 is the top. A "
                     "well-shaped range spreads actuals evenly across the middle bars. The "
                     "two red bars are days the actual fell outside the range entirely. Mass "
                     "piling up at one edge means the range is centred in the wrong place, "
@@ -1067,7 +1113,7 @@ with tab_intervals:
                             config={"displaylogo": False})
             st.markdown(reading_this_chart(
                 "How wide each model's range is on average. Narrower is only better if "
-                "coverage holds up — a narrow range that misses the actual is worse than a "
+                "coverage holds up, because a narrow range that misses the actual is worse than a "
                 "wide one that contains it."), unsafe_allow_html=True)
 
 # ── Tab: Forecast Integrity ──────────────────────────────────────────
@@ -1167,7 +1213,7 @@ with tab_integrity:
             if run_status == "FAILED_QUALITY":
                 st.markdown(
                     callout_box(
-                        f"<b>Run Status: {run_status}</b> — Model does not beat persistence "
+                        f"<b>Run status: {run_status}.</b> This model does not beat the persistence "
                         f"baseline at horizon {integrity.get('horizon', 'N/A')}.",
                         "fail", icon="⚠️",
                     ),
@@ -1205,7 +1251,7 @@ with tab_integrity:
                                "large misses more heavily, so it is sensitive to the few "
                                "very large days.")
                 st.metric("Baseline RMSE", _fmt_num(rmse_persist, 2),
-                          help="The same measure for the simple benchmark — assume the "
+                          help="The same measure for the simple benchmark, which assumes the "
                                "value from one horizon ago repeats. The model should be "
                                "lower than this.")
             with col3:
@@ -1407,7 +1453,7 @@ with tab_ensemble:
                 from ensemble_postprocess import run_ensemble_from_runs
                 _ens_dirs = [str(RUNS_DIR / rn) for rn in _ens_selected]
                 _ens_out = str(RUNS_DIR / f"_ensemble_{'_'.join(_ens_selected[:3])}")
-                with st.spinner("Building ensembles..."):
+                with st.spinner("Building ensembles…"):
                     result = run_ensemble_from_runs(_ens_dirs, _ens_out, cadence="daily", top_k=int(_ens_topk))
                 ens_preds = result.get("predictions", pd.DataFrame())
                 ens_lb = result.get("leaderboard", pd.DataFrame())

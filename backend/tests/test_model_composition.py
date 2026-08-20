@@ -88,7 +88,14 @@ def test_every_champion_crowning_family_is_enumerable(pool):
 
 def test_no_pool_entry_comes_from_a_family_the_runner_cannot_run(pool):
     """The converse: the pool must not advertise a family that never runs."""
-    runnable = set(runnable_families())
+    from model_reference import EXPLORATORY_ONLY_FAMILIES
+
+    # Lab-only families are a deliberate exception, not an oversight. F_FOUNDATION is launched
+    # from the Lab and is absent from the daily runner ON PURPOSE: these are pretrained models
+    # with no measured result, and the production pipeline must not quietly start running them.
+    # The exception is a named constant rather than a string here, so removing it from one place
+    # cannot leave the other silently permissive.
+    runnable = set(runnable_families()) | set(EXPLORATORY_ONLY_FAMILIES)
     stray = sorted({e["pipeline"] for e in pool.values()} - runnable)
     assert not stray, f"model_pool() offers {stray}, which run_daily_forecast.sh cannot run"
 
@@ -134,11 +141,18 @@ def test_the_derived_counts_are_what_we_tell_a_client(comp):
     Adding a model changes one of these and fails here, which is the whole point: the
     previous pinned string went stale silently when C_DL was added.
     """
+    # 2026-08-19: eleven models registered across three families, none of them measured. The
+    # machine-learning count went 15 -> 21, statistical 5 -> 7, quantile 3 -> 6. What did NOT
+    # change is `evaluated_total`, still 8, which is the number that says whether any of this
+    # made the project stronger.
     assert comp["counts"] == {
-        "machine-learning models": 13,
+        "machine-learning models": 21,
         "deep-learning models": 5,
-        "statistical models": 4,
-        "quantile methods": 3,
+        "statistical models": 7,
+        "quantile methods": 6,
+        # Added 2026-08-19: two pretrained zero-shot forecasters, exploratory only. Counted on
+        # the shelf and deliberately NOT counted as competing -- see the test below.
+        "pretrained zero-shot forecasters": 2,
         "reference baselines": 3,
     }, comp["counts"]
 
@@ -147,8 +161,14 @@ def test_baselines_and_interval_methods_do_not_compete(comp):
     """The ruler is not a rival, and an interval method is not a point forecaster."""
     assert "reference baselines" not in COMPETING_CATEGORIES
     assert "quantile methods" not in COMPETING_CATEGORIES
+    # And nor do the pretrained forecasters, which DO produce a point forecast and so could have
+    # been counted. They are excluded because they were never put through this project's
+    # evaluation protocol, and a competing count containing unmeasured entries is the exact
+    # overstatement `client_framing` exists to prevent.
+    assert "pretrained zero-shot forecasters" not in COMPETING_CATEGORIES
     assert comp["competing_total"] == comp["total"] - comp["counts"]["quantile methods"] \
-        - comp["counts"]["reference baselines"]
+        - comp["counts"]["reference baselines"] \
+        - comp["counts"]["pretrained zero-shot forecasters"]
 
 
 def test_the_client_sentence_is_written_from_the_counts(comp):
@@ -183,13 +203,16 @@ def test_the_sentence_never_offers_a_single_headline_total(comp):
 
 def test_the_registry_champion_pool_is_the_machine_learning_models(comp):
     assert comp["champion_pool_category"] == CHAMPION_POOL_CATEGORY
-    assert comp["champion_pool_size"] == 13
+    # 21 since 2026-08-19. Widening the shelf widens the pool a recipe MAY draw from, and that
+    # is not the same as widening what it may draw: an untested model is not gate-eligible, so
+    # nothing here can reach a champion slot without a recorded measurement first.
+    assert comp["champion_pool_size"] == 21
     assert comp["champion_pool"] == sorted(comp["members"]["machine-learning models"])
 
 
 def test_every_model_the_registry_promotes_is_in_that_pool(comp):
     """If a recipe ever promotes a model from another family, the sentence "the
-    champion-eligible pool is the 13 machine-learning models" stops being true, and this
+    champion-eligible pool is the machine-learning models" stops being true, and this
     fails before a client is told it."""
     assert comp["promoted_by_registry"], "the registry promotes no model at all"
     assert comp["promoted_outside_champion_pool"] == [], (
@@ -206,6 +229,52 @@ def test_the_daily_best_model_families_are_broader_than_the_champion_pool(comp):
     Agent does — is choosing across four families, not across the registry pool, and the
     contract has to say so.
     """
+    # Still these four after F_FOUNDATION joined the shelf, and that is the point: a Lab-only
+    # family must not appear in a list the Agent reads as "families with a daily best_model".
     assert comp["daily_best_model_families"] == ["A_STAT", "B_ML", "C_DL", "E_QUANTILE"]
     assert len(comp["daily_best_model_families"]) > 1
     assert comp["champion_pool_category"] == "machine-learning models"
+
+
+# ── the shelf is not the same thing as the evidence ─────────────────────────────────────
+
+def test_the_sentence_says_how_many_have_a_recorded_result(comp):
+    """Counting the shelf and counting the evidence are different claims.
+
+    Before this clause the sentence said "13 machine-learning models compete on each
+    target", which reads as thirteen measured contenders. Measured at the time, 8 of the 28
+    non-baseline entries had a row in experiments/log.csv and 20 had none. A shelf is worth
+    having and worth describing; it is not a body of evidence and must not read as one.
+    """
+    sentence = client_framing()
+    assert f"{comp['evaluated_total']} have a recorded result" in sentence
+    assert f"{comp['untested_total']} are registered candidates" in sentence
+
+
+def test_evaluated_and_untested_partition_everything_except_the_baselines(comp):
+    """A baseline is the ruler, so asking whether it was measured is the wrong question."""
+    counted = comp["evaluated_total"] + comp["untested_total"]
+    assert counted == comp["total"] - comp["counts"]["reference baselines"]
+    assert not set(comp["evaluated"]) & set(comp["untested"])
+
+
+def test_every_model_the_registry_promotes_has_a_recorded_result(comp):
+    """A champion with nothing in the ledger would have credentials nobody can check.
+
+    registry.verify_against_log already checks that each recipe's quoted metrics match its
+    logged run. This asserts the same thing from the other direction, at the level of the
+    model rather than the recipe.
+    """
+    for model in comp["promoted_by_registry"]:
+        assert model in comp["evaluated"], (
+            f"{model} is promoted by registry/recipes.json with no recorded result")
+
+
+def test_a_newly_registered_candidate_is_untested_until_it_is_run(comp):
+    """The three candidates added in the MVP consolidation, and both CatBoost entries.
+
+    If any of these ever shows as evaluated without a run being logged, the status is being
+    declared somewhere rather than derived.
+    """
+    for candidate in ("Huber", "GBDT_L1", "ETS_DAMPED", "CatBoost_L1", "CatBoost_Quantile"):
+        assert candidate in comp["untested"], f"{candidate} claims a result it does not have"

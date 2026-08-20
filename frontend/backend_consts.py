@@ -12,30 +12,60 @@ QUICK_DL_DEFAULTS = {
 # ---------------------------------------------------------------------------
 # Canonical model-name mappings  (UI label -> backend filter value)
 # ---------------------------------------------------------------------------
-# The backend ``run_a_stat.py`` upper-cases TG_MODEL_FILTER and passes it to
-# ``_fc()``.  The names below are the canonical UI labels *and* the values
-# that the backend recognises after upper-casing.  Keep this mapping in sync
-# whenever models are added/removed.
+# The backend ``run_a_stat.py`` upper-cases TG_MODEL_FILTER and passes it to ``_fc()``. The
+# names below are the canonical UI labels *and* the values the backend recognises.
+#
+# READ FROM THE REGISTRY, NOT TYPED HERE. This used to be three hand-written lists with a
+# comment asking whoever adds a model to remember to update them. Measured on 2026-08-19,
+# nobody had: the registry offered 15 machine-learning models and this file named 8, the
+# quantile family offered 3 and this file named 2, and ETS_DAMPED was missing entirely. So
+# **10 registered models could not be run from the Lab at all**, while the Models page told
+# readers they could run any untested model there. A list that must be kept in sync by hand
+# is a list that is silently wrong, and the stale copy is the one the reader sees.
+#
+# ``backend/model_catalog.py`` is deliberately free of sklearn, pandas and the boosters at
+# module level precisely so this interpreter can read it. See its docstring.
+#
+# ONE TRAP, WORTH STATING. ``ModelSpec.installed`` calls ``find_spec`` in *whichever*
+# interpreter asks, and this is the Streamlit one. XGBoost, LightGBM and CatBoost live in
+# ``backend/.venv``, so from here they all report installed=False. Filtering on that flag would
+# delete XGBoost and LightGBM from the Lab, which is exactly backwards: the run executes in the
+# backend interpreter, where they are present. So these lists are UNFILTERED, and a genuinely
+# missing package is reported by the run rather than guessed at here.
+try:
+    import sys as _sys
+    from pathlib import Path as _Path
 
-STAT_MODEL_OPTIONS = [
-    # (UI label, backend filter sent via TG_MODEL_FILTER)
-    ("ETS",          "ETS"),
-    ("SARIMAX",      "SARIMAX"),
-    ("STL_ARIMA",    "STL_ARIMA"),
-    ("THETA",        "THETA"),
-    ("NAIVE",        "NAIVE"),
-    ("WEEKDAY_MEAN", "WEEKDAY_MEAN"),
-    ("MOVAVG",       "MOVAVG"),
-]
+    _BACKEND = _Path(__file__).resolve().parent.parent / "backend"
+    if str(_BACKEND) not in _sys.path:
+        _sys.path.insert(0, str(_BACKEND))
 
-ML_MODEL_OPTIONS = [
-    "Ridge", "Lasso", "ElasticNet", "RandomForest",
-    "ExtraTrees", "HistGBDT", "XGBoost", "LightGBM",
-]
+    from model_catalog import (  # noqa: E402
+        FAMILY_ML as _FAMILY_ML,
+        QUANTILE_MODEL_NAMES as _QUANTILE_NAMES,
+        STAT_MODEL_NAMES as _STAT_NAMES,
+        specs as _specs,
+    )
 
+    STAT_MODEL_OPTIONS = [(name, name) for name in _STAT_NAMES]
+    ML_MODEL_OPTIONS = [spec.name for spec in _specs(_FAMILY_ML)]
+    QUANTILE_MODEL_OPTIONS = list(_QUANTILE_NAMES)
+    MODEL_OPTIONS_SOURCE = "registry"
+except Exception:                                  # noqa: BLE001 - the Lab must still open
+    # A checkout without the backend tree, or a syntax error in the catalogue, must not take the
+    # Lab down with it. The fallback is the smallest set known to exist in every build, and it
+    # says so, so a short list is legible as a degraded read rather than as the whole shelf.
+    STAT_MODEL_OPTIONS = [(n, n) for n in ("ETS", "SARIMAX", "STL_ARIMA", "THETA",
+                                           "NAIVE", "WEEKDAY_MEAN", "MOVAVG")]
+    ML_MODEL_OPTIONS = ["Ridge", "Lasso", "ElasticNet", "RandomForest",
+                        "ExtraTrees", "HistGBDT", "XGBoost", "LightGBM"]
+    QUANTILE_MODEL_OPTIONS = ["GBQuantile", "ResidualRF"]
+    MODEL_OPTIONS_SOURCE = "fallback"
+
+#: C_DL is not in the catalogue: its models are named in ``backend/c_dl_registry.py`` and the
+#: Lab's own labels differ from those names (TCN/Transformer here, DCNN/TRANSFORMER there). Left
+#: as it was rather than half-migrated, and noted so the inconsistency is visible.
 DL_MODEL_OPTIONS = ["GRU", "LSTM", "TCN", "Transformer", "MLP"]
-
-QUANTILE_MODEL_OPTIONS = ["GBQuantile", "ResidualRF"]
 
 # Quality gate — minimum skill (%) over persistence baseline.
 # Must be > 0.  Values below this threshold cause a FAILED_QUALITY status.
@@ -118,3 +148,54 @@ PROFILE_DEFAULTS = {
         "windows_daily": [3, 5, 7, 14, 20],
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Foundation models: asked of the interpreter that will actually run them
+# ---------------------------------------------------------------------------
+def foundation_options(timeout: int = 30):
+    """``(choices, missing)`` for the Lab's foundation-model picker.
+
+    ``choices`` are names installed and runnable; ``missing`` is ``[(name, reason)]`` for the
+    rest, so a model that needs an optional extra is named with its reason rather than vanishing.
+
+    WHY THIS ASKS THE BACKEND INSTEAD OF CHECKING HERE. Availability is `find_spec`, and
+    `find_spec` answers for whichever interpreter runs it. This one is Streamlit's, and the
+    foundation packages live in `backend/.venv` where the run happens. Checking locally would
+    report both models missing while they work perfectly, which is the same trap documented above
+    for xgboost and lightgbm -- except that there the honest fix was to stop filtering, and here
+    it is not: these extras are genuinely optional and often absent, so "install the extras" is a
+    real answer a reader needs BEFORE running, not after.
+
+    A subprocess is the price of asking the right interpreter. It runs only when the Foundation
+    family is selected, and it loads no model and touches no network.
+    """
+    import json as _json
+    import subprocess as _sp
+
+    repo = _Path(__file__).resolve().parent.parent
+    for candidate in (repo / "backend" / ".venv" / "bin" / "python",
+                      repo / "backend" / ".venv" / "Scripts" / "python.exe"):
+        if candidate.exists():
+            break
+    else:
+        return [], [("Foundation models",
+                     "The modelling environment (backend/.venv) was not found, so whether these "
+                     "are installed cannot be checked.")]
+
+    program = ("import json,sys;sys.path.insert(0,'backend');"
+               "import foundation_models as fm;print(json.dumps(fm.availability()))")
+    try:
+        out = _sp.run([str(candidate), "-c", program], cwd=str(repo),
+                      capture_output=True, text=True, timeout=timeout)
+        line = next(l for l in reversed(out.stdout.splitlines()) if l.strip().startswith("{"))
+        table = _json.loads(line)
+    except Exception as exc:                       # noqa: BLE001 - a picker, not logic
+        return [], [("Foundation models",
+                     f"The list could not be read from the modelling environment: "
+                     f"{type(exc).__name__}: {exc}")]
+
+    choices = [n for n, info in table.items() if info.get("installed")]
+    missing = [(n, info.get("reason", "not installed"))
+               for n, info in table.items() if not info.get("installed")]
+    return choices, missing

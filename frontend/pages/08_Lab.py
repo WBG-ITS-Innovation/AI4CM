@@ -1,11 +1,11 @@
-# pages/00_Lab.py — Lab (run models + live log + overlay + REAL hover help + batch runs)
+# pages/08_Lab.py — Lab (run models + live log + overlay + REAL hover help + batch runs)
 from __future__ import annotations
 
 import html
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 import pandas as pd
 import plotly.express as px
@@ -15,22 +15,54 @@ import streamlit as st
 from backend_bridge import launch_backend
 from backend_consts import (
     STAT_MODEL_OPTIONS, ML_MODEL_OPTIONS, DL_MODEL_OPTIONS,
-    QUANTILE_MODEL_OPTIONS, QUALITY_GATE_SKILL_PCT,
+    QUANTILE_MODEL_OPTIONS, QUALITY_GATE_SKILL_PCT, foundation_options,
     PROFILE_DEFAULTS, HORIZON_PRESETS,
 )
 from data_preflight import run_preflight
+from exploratory import (
+    DEMO_CLIP_NOTE, EXPLORATORY_EVAL_END, EXPLORATORY_NOTE,
+    check_can_run, contains_report_only_dates, describe_bound,
+    exploratory_overrides, is_exploratory_safe,
+)
+from run_errors import explain_failure, is_guard_refusal
 from ui_styles import inject_global_css, page_header, section_header, callout_box, info_tip, COLORS
 from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
 
 from ui_styles import inject_design_system  # presentation only
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from i18n import install as install_language  # language toggle + pending-review note
+from i18n import t as _t  # this page's tooltips are its own, and are translated here
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import plotly_chrome  # presentation only
+import ops_baseline_view as obv  # the Treasury's planning method, one construction
 st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
 inject_global_css()
 
 inject_design_system()
 
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
+
 render_app_header("Lab", "Configure and launch a backtest run")
+page_intro(
+    "This page is the workbench: run any model on any Treasury line, at any horizon, as an "
+    "experiment. Every run launched here is measured on train and dev data only and is "
+    "never published."
+)
+glossary_note("exploratory", "sealed window", "holdout", "baseline")
+
+# ── The exploratory contract, stated where nobody can miss it ────────────────
+# Everything launched from this page is exploratory. It is bounded to train and dev
+# data by construction, never published, and never written to the official forecast
+# folders. See ``frontend/exploratory.py`` for why the bound is applied here rather
+# than left to whatever each backend family defaults to.
+st.info(
+    "**Exploratory runs.** " + EXPLORATORY_NOTE + " Nothing launched from this page is "
+    "published, and nothing here changes the official forecast."
+)
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
 RUNS_DIR = runs_dir()
@@ -59,7 +91,7 @@ HELP: Dict[str, str] = {
     "rows_keep": (
         "Number of rows kept in the quick sample.\n\n"
         "Practical guidance:\n"
-        "• 2,000–10,000 rows is typically enough for a demo\n"
+        "• 2,000 to 10,000 rows is typically enough for a demo\n"
         "• Larger samples improve training signal but increase runtime"
     ),
     "data_source": (
@@ -158,7 +190,7 @@ HELP: Dict[str, str] = {
         "• Controls feature explosion\n"
         "• Helps reduce overfitting\n\n"
         "Guidance:\n"
-        "• Start small (5–15)\n"
+        "• Start small (5 to 15)\n"
         "• Increase only if models are stable and data is sufficiently large"
     ),
     # DL knobs
@@ -167,7 +199,7 @@ HELP: Dict[str, str] = {
         "Example:\n"
         "• lookback 48 (daily) = use last 48 days to predict future.\n\n"
         "Guidance:\n"
-        "• Cover at least 1–2 major seasonal cycles when possible\n"
+        "• Cover at least one or two major seasonal cycles when possible\n"
         "• Larger lookback increases runtime and memory"
     ),
     "batch_size": (
@@ -231,6 +263,19 @@ HELP: Dict[str, str] = {
     ),
 }
 
+
+def _lab_help(key: str) -> str:
+    """One of this page's own tooltips, translated at render time.
+
+    The Lab keeps its own HELP dictionary because its tooltips describe this page's
+    controls and belong nowhere else. A first pass at the translation work rewrote these
+    call sites to the SHARED ui_styles tooltips, which share none of these keys, so every
+    tooltip on this page silently became empty. Hence a local accessor with the same shape
+    as the shared one, and a test that every key it is called with exists.
+    """
+    return _t(HELP.get(key, ""))
+
+
 # -------------------------------------------------------------------
 # UI helpers
 # -------------------------------------------------------------------
@@ -243,38 +288,43 @@ def _scroll_term(container, text: str, height: int = 360):
     )
 
 
-def _baseline_series(out_root: Path, target: str, cadence: str) -> Optional[pd.Series]:
+def _baseline_series(base_dir: Path, target: str, cadence: str) -> Tuple[Optional[pd.Series], Optional[str]]:
+    """The Treasury's current planning method over this run's dates, or a reason there is none.
+
+    This used to read ``<target>_ops_baseline_daily.csv`` out of the run folder. Every B_ML run
+    writes that file with no numbers in it (measured: 0 non-NaN of 2763 rows, in all 14 run
+    folders present), so the helper returned None and the chart quietly dropped its comparison
+    line with nothing said. A reader then sees a model with nothing to beat.
+
+    It now asks the backend for the same comparator the leaderboard's ``skill_vs_ops_pct`` was
+    computed against, and returns a reader-facing reason when there genuinely is not one -- a
+    balance has no Ops baseline at all, because the method totals a flow over a year and a
+    balance is a level. See ``frontend/ops_baseline_view.py``.
     """
-    Tries to load Ops baseline forecast series if present.
-    Supports both daily baseline and monthly baseline that can be spread over business days.
-    """
+    series, why = _ops_baseline(base_dir, target)
+    if not obv.usable(series):
+        return None, why
+
     cad = cadence.lower()
+    if cad == "weekly":
+        series = series.resample("W-FRI").sum()
+    elif cad == "monthly":
+        series = series.resample("ME").sum()
+    return series.dropna(), None
 
-    def _read(p: Path):
-        if not p.exists():
-            return None
-        df = pd.read_csv(p)
-        if not {"date", "forecast"}.issubset(df.columns):
-            return None
-        s = pd.Series(df["forecast"].values, index=pd.to_datetime(df["date"], errors="coerce")).dropna()
-        return s if not s.empty else None
 
-    daily = _read(out_root / f"{target}_ops_baseline_daily.csv") or _read(out_root / cad / f"{target}_ops_baseline_daily.csv")
-    if daily is not None:
-        return daily if cad == "daily" else (daily.resample("W-FRI").sum() if cad == "weekly" else daily.resample("ME").sum())
+@st.cache_data(show_spinner=False, ttl=300)
+def _ops_baseline_cached(base_dir_str: str, target: str):
+    """Cached because it starts the backend interpreter, and Streamlit reruns this file often.
 
-    monthly = _read(out_root / f"{target}_ops_baseline_monthly.csv") or _read(out_root / cad / f"{target}_ops_baseline_monthly.csv")
-    if monthly is not None:
-        parts = []
-        for ts, val in monthly.items():
-            days = pd.date_range(ts.replace(day=1), ts, freq="B")
-            if len(days):
-                parts.append(pd.Series(float(val) / len(days), index=days))
-        if parts:
-            dd = pd.concat(parts).sort_index()
-            return dd if cad == "daily" else (dd.resample("W-FRI").sum() if cad == "weekly" else monthly)
+    Both arguments are plain strings so they hash as cache keys. A leading underscore would tell
+    Streamlit NOT to hash them, which would hand every run the first run's baseline.
+    """
+    return obv.compute(Path(base_dir_str), target)
 
-    return None
+
+def _ops_baseline(base_dir: Path, target: str):
+    return _ops_baseline_cached(str(base_dir), target)
 
 
 # -------------------------------------------------------------------
@@ -294,7 +344,7 @@ with st.sidebar.expander("What the backend settings mean", expanded=False):
 The UI launches model runs by calling a **backend Python environment**.
 
 - **Python** points to the backend virtual environment interpreter (backend/.venv)
-- **Backend** is the directory containing the runner scripts (run_a_stat.py, run_b_ml_*.py, ...)
+- **Backend** is the directory containing the runner scripts, such as run_a_stat.py and run_b_ml_univariate.py
 
 If either path is missing, go to the **Overview** page and re-run setup scripts.
 """
@@ -343,7 +393,7 @@ If you are iterating or running a live demo, consider creating a quick sample fo
 """
 )
 
-up = st.file_uploader("Upload CSV", type=["csv"], help=HELP["upload_csv"])
+up = st.file_uploader("Upload CSV", type=["csv"], help=_lab_help("upload_csv"))
 if up:
     dest = UPLOADS_ROOT / "uploaded.csv"
     dest.write_bytes(up.read())
@@ -356,8 +406,8 @@ This creates a smaller dataset from the end of your upload (the most recent rows
 It is intended for faster experimentation and demonstrations.
 """
     )
-    n = st.slider("Rows to keep (from end)", 200, 200_000, 2_000, step=200, help=HELP["rows_keep"])
-    if st.button("Create / Refresh sample from uploaded.csv", help=HELP["quick_sample"]):
+    n = st.slider("Rows to keep (from end)", 200, 200_000, 2_000, step=200, help=_lab_help("rows_keep"))
+    if st.button("Create / Refresh sample from uploaded.csv", help=_lab_help("quick_sample")):
         src = UPLOADS_ROOT / "uploaded.csv"
         if not src.exists():
             st.warning("Please upload a CSV first.")
@@ -380,7 +430,7 @@ use_label = st.radio(
     [lbl for lbl, _ in sources],
     index=0,
     horizontal=True,
-    help=HELP["data_source"],
+    help=_lab_help("data_source"),
 )
 
 data_path = Path(dict(sources)[use_label])
@@ -417,16 +467,16 @@ with L:
         "Date column",
         list(df.columns),
         index=(list(df.columns).index("date") if "date" in df.columns else 0),
-        help=HELP["date_col"],
+        help=_lab_help("date_col"),
     )
 
     num_cols = [c for c in df.columns if c != date_col]
-    target = st.selectbox("Target", num_cols, help=HELP["target"])
-    cadence = st.selectbox("Cadence", ["Daily", "Weekly", "Monthly"], index=0, help=HELP["cadence"])
-    horizon = st.slider("Horizon", 1, 24, 6, help=HELP["horizon"])
+    target = st.selectbox("Target", num_cols, help=_lab_help("target"))
+    cadence = st.selectbox("Cadence", ["Daily", "Weekly", "Monthly"], index=0, help=_lab_help("cadence"))
+    horizon = st.slider("Horizon", 1, 24, 6, help=_lab_help("horizon"))
 
-    with st.expander(f"Target preview — {target} @ {cadence}", expanded=True):
-        st.caption(HELP["preview"])
+    with st.expander(f"Target preview: {target} at {cadence} cadence", expanded=True):
+        st.caption(_lab_help("preview"))
         tmp = df[[date_col, target]].dropna()
         tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
         tmp = tmp.dropna(subset=[date_col]).set_index(date_col)
@@ -443,23 +493,24 @@ with L:
         )
 
 with R:
-    fam_label = st.selectbox(
-        "Family",
-        ["A · Statistical", "B · Machine Learning", "C · Deep Learning", "E · Quantile"],
-        help=HELP["family"],
-    )
-    family = {
+    # F · Foundation is listed last and labelled exploratory in the option itself, because a
+    # reader picking from this list should learn what they are choosing before they run it, not
+    # after. These models are never fitted on this data and can never become the champion.
+    _FAMILY_LABELS = {
         "A · Statistical": "A_STAT",
         "B · Machine Learning": "B_ML",
         "C · Deep Learning": "C_DL",
         "E · Quantile": "E_QUANTILE",
-    }[fam_label]
+        "F · Foundation (pretrained, exploratory)": "F_FOUNDATION",
+    }
+    fam_label = st.selectbox("Family", list(_FAMILY_LABELS), help=_lab_help("family"))
+    family = _FAMILY_LABELS[fam_label]
 
-    variant = "Univariate" if family == "A_STAT" else st.radio(
+    variant = "Univariate" if family in ("A_STAT", "F_FOUNDATION") else st.radio(
         "Variant",
         ["Univariate", "Multivariate"],
         horizontal=True,
-        help=HELP["variant"],
+        help=_lab_help("variant"),
     )
 
 st.subheader("Run profile")
@@ -468,8 +519,9 @@ profile = st.radio(
     ["Demo (fast)", "Balanced", "Thorough"],
     horizontal=True,
     index=0,
-    help=HELP["profile"],
+    help=_lab_help("profile"),
 )
+st.caption(DEMO_CLIP_NOTE)
 
 # Profile → default override payload
 ov: Dict[str, Any] = {
@@ -480,11 +532,11 @@ ov: Dict[str, Any] = {
 
 # Model selection + family-specific knobs
 if family == "B_ML":
-    model = st.selectbox(
-        "Model (ML)",
-        ["Ridge", "Lasso", "ElasticNet", "RandomForest", "ExtraTrees", "HistGBDT", "XGBoost", "LightGBM"],
-        index=0,
-    )
+    # From the registry, not typed here. This list was eight names while the registry held
+    # fifteen, so Huber, GBDT_L1, HistGBDT_L1, XGBoost_L1, LightGBM_L1 and both CatBoost entries
+    # could not be run from the Lab at all -- while the Models page told readers they could run
+    # any untested model here. See frontend/backend_consts.py.
+    model = st.selectbox("Model (ML)", ML_MODEL_OPTIONS, index=0)
 
     st.markdown(
         """
@@ -494,14 +546,14 @@ ML models require explicit features. This prototype uses lags (past values) and 
     )
 
     if cadence == "Daily":
-        ov["lags_daily"] = st.multiselect("lags_daily", [1, 2, 3, 5, 7, 14, 21], default=[1, 3, 7], help=HELP["lags"])
-        ov["windows_daily"] = st.multiselect("windows_daily", [3, 5, 7, 14, 21, 28], default=[3, 7], help=HELP["windows"])
+        ov["lags_daily"] = st.multiselect("lags_daily", [1, 2, 3, 5, 7, 14, 21], default=[1, 3, 7], help=_lab_help("lags"))
+        ov["windows_daily"] = st.multiselect("windows_daily", [3, 5, 7, 14, 21, 28], default=[3, 7], help=_lab_help("windows"))
     elif cadence == "Weekly":
-        ov["lags_weekly"] = st.multiselect("lags_weekly", [1, 2, 3, 4, 8, 12, 26], default=[1, 4, 12], help=HELP["lags"])
-        ov["windows_weekly"] = st.multiselect("windows_weekly", [2, 4, 8, 12, 26], default=[4, 12], help=HELP["windows"])
+        ov["lags_weekly"] = st.multiselect("lags_weekly", [1, 2, 3, 4, 8, 12, 26], default=[1, 4, 12], help=_lab_help("lags"))
+        ov["windows_weekly"] = st.multiselect("windows_weekly", [2, 4, 8, 12, 26], default=[4, 12], help=_lab_help("windows"))
     else:
-        ov["lags_monthly"] = st.multiselect("lags_monthly", [1, 2, 3, 6, 12], default=[1, 3], help=HELP["lags"])
-        ov["windows_monthly"] = st.multiselect("windows_monthly", [3, 6, 12], default=[3, 6], help=HELP["windows"])
+        ov["lags_monthly"] = st.multiselect("lags_monthly", [1, 2, 3, 6, 12], default=[1, 3], help=_lab_help("lags"))
+        ov["windows_monthly"] = st.multiselect("windows_monthly", [3, 6, 12], default=[3, 6], help=_lab_help("windows"))
 
     if variant == "Multivariate":
         st.markdown(
@@ -511,14 +563,12 @@ When multivariate is enabled, the runner can incorporate other numeric columns a
 To reduce overfitting and keep the run tractable, you can limit how many are used.
 """
         )
-        ov["exog_top_k"] = st.number_input("exog_top_k", 0, 64, 8, help=HELP["exog_top_k"])
+        ov["exog_top_k"] = st.number_input("exog_top_k", 0, 64, 8, help=_lab_help("exog_top_k"))
 
 elif family == "A_STAT":
-    model = st.selectbox(
-        "Model (Stat)",
-        ["ETS", "SARIMAX", "STL_ARIMA", "THETA", "NAIVE", "WEEKDAY_MEAN", "MOVAVG"],
-        index=0,
-    )
+    # From the registry. This list was missing ETS_DAMPED, which has been registered since the
+    # MVP consolidation.
+    model = st.selectbox("Model (Stat)", [label for label, _ in STAT_MODEL_OPTIONS], index=0)
     with st.expander("Notes on statistical models", expanded=False):
         st.markdown(
             """
@@ -533,7 +583,7 @@ Statistical models are typically strong baselines and are easier to explain and 
         )
 
 elif family == "C_DL":
-    model = st.selectbox("Model (DL)", ["GRU", "LSTM", "TCN", "Transformer", "MLP"], index=0)
+    model = st.selectbox("Model (DL)", DL_MODEL_OPTIONS, index=0)
 
     st.markdown(
         """
@@ -541,15 +591,45 @@ elif family == "C_DL":
 Deep learning models typically require more training time. The key parameters are: lookback (history length), batch size, and epochs.
 """
     )
-    ov["lookback"] = st.number_input("lookback", 4, 365, 48, help=HELP["lookback"])
-    ov["batch_size"] = st.number_input("batch_size", 8, 2048, 128, step=8, help=HELP["batch_size"])
-    ov["max_epochs"] = st.number_input("max_epochs", 1, 200, 3, help=HELP["max_epochs"])
-    ov["valid_frac"] = st.number_input("valid_frac", 0.05, 0.9, 0.2, 0.05, help=HELP["valid_frac"])
-    ov["conformal_calib_frac"] = st.number_input("conformal_calib_frac", 0.05, 0.9, 0.2, 0.05, help=HELP["conformal_calib"])
-    ov["device"] = st.selectbox("device", ["auto", "cpu", "cuda"], index=0, help=HELP["device"])
+    ov["lookback"] = st.number_input("lookback", 4, 365, 48, help=_lab_help("lookback"))
+    ov["batch_size"] = st.number_input("batch_size", 8, 2048, 128, step=8, help=_lab_help("batch_size"))
+    ov["max_epochs"] = st.number_input("max_epochs", 1, 200, 3, help=_lab_help("max_epochs"))
+    ov["valid_frac"] = st.number_input("valid_frac", 0.05, 0.9, 0.2, 0.05, help=_lab_help("valid_frac"))
+    ov["conformal_calib_frac"] = st.number_input("conformal_calib_frac", 0.05, 0.9, 0.2, 0.05, help=_lab_help("conformal_calib"))
+    ov["device"] = st.selectbox("device", ["auto", "cpu", "cuda"], index=0, help=_lab_help("device"))
+
+elif family == "F_FOUNDATION":
+    _fm_choices, _fm_missing = foundation_options()
+    if not _fm_choices:
+        model = None
+        st.warning(
+            "**No foundation model is installed.** These are optional extras, kept out of the "
+            "core install so a fresh clone is never held up by a large download. Install them "
+            "with `./backend/.venv/bin/python -m pip install -r "
+            "backend/requirements-foundation.txt`, then reopen this page."
+        )
+    else:
+        model = st.selectbox("Model (Foundation)", _fm_choices, index=0)
+    for _name, _why in _fm_missing:
+        st.caption(f"**{_name}** is not available here. {_why}")
+    st.info(
+        "**These models were never trained on Treasury data.** Each one was trained once, by "
+        "somebody else, on a large collection of other people's series, and is asked to forecast "
+        "this one from its recent history alone. There is no fitting step. That makes a run here "
+        "a reading on how much of this series is predictable from its shape, and nothing more: "
+        "no foundation model can become the model behind an official forecast, because a "
+        "published recipe may only draw from the machine-learning family."
+    )
+    st.caption(
+        "Weights are downloaded once and then cached on this machine, so the first run of a model "
+        "is slower than the rest and nothing downloads afterwards. Each checkpoint is pinned to "
+        "an exact version, so a rerun uses the same weights as the first run."
+    )
 
 else:
-    model = st.selectbox("Model (Quantile)", ["GBQuantile"], index=0)
+    # From the registry. This offered a single name while the family had three implemented and
+    # dispatchable, so ResidualRF and LGBMQuantile were unreachable from the Lab.
+    model = st.selectbox("Model (Quantile)", QUANTILE_MODEL_OPTIONS, index=0)
 
     st.markdown(
         """
@@ -558,24 +638,52 @@ Quantile models output multiple forecast levels (e.g., P10/P50/P90) which can be
 """
     )
 
-    q_text = st.text_input("quantiles (comma-separated)", "0.1,0.5,0.9", help=HELP["quantiles"])
+    q_text = st.text_input("quantiles (comma-separated)", "0.1,0.5,0.9", help=_lab_help("quantiles"))
     try:
         ov["quantiles"] = [float(x) for x in q_text.split(",") if x.strip() != ""]
     except Exception:
         ov["quantiles"] = [0.1, 0.5, 0.9]
 
+# ── Bind the evaluation to data a choice may be made on ─────────────────────
+# This is the whole of the Task 1 fix at the caller level. Every family folds forward
+# to the last year in the file when it is given no bound, and on this dataset that year
+# is the sealed holdout, so a UI run would build a leaderboard from holdout rows and be
+# refused by ``assert_selection_free`` -- correctly. The guard is untouched; it is simply
+# no longer handed report-only data.
+ov = exploratory_overrides(family, ov)
+
 # Advanced overrides
 st.subheader("Advanced overrides (JSON)")
 st.caption(
     "This JSON is passed directly to the backend. It is exposed for transparency and advanced tuning. "
-    "Most users can keep defaults unless they are experimenting with model behavior."
+    "Most users can keep defaults unless they are experimenting with model behaviour. "
+    f"The evaluation end date is set to {EXPLORATORY_EVAL_END} because this page runs "
+    "exploratory experiments only."
 )
-ov_text = st.text_area("OVERRIDES_JSON", json.dumps(ov, indent=2), height=200, help=HELP["overrides"])
+ov_text = st.text_area("OVERRIDES_JSON", json.dumps(ov, indent=2), height=200, help=_lab_help("overrides"))
 try:
     ov_final: Dict[str, Any] = json.loads(ov_text)
 except Exception as e:
-    st.error(f"Invalid JSON: {e}")
+    st.error(
+        "The advanced settings are not valid JSON, so the defaults shown above will be "
+        f"used instead. The parser reported: {e}."
+    )
     ov_final = ov
+
+# The text area is an escape hatch by design, so someone can type a later end date into
+# it. Catching that here turns a several-minute run ending in a guard refusal into an
+# immediate sentence, and re-applying the bound means the page cannot launch an
+# exploratory run that reads report-only data.
+if not is_exploratory_safe(ov_final) or contains_report_only_dates(ov_final):
+    st.warning(
+        "The advanced settings asked for an evaluation window that reaches past "
+        f"{EXPLORATORY_EVAL_END}. Exploratory runs are measured on train and dev data "
+        "only, so the window has been reset to end on that date. To read the sealed "
+        "window, publish an official forecast instead."
+    )
+    ov_final = exploratory_overrides(family, ov_final)
+
+st.caption(describe_bound())
 
 # -------------------------------------------------------------------
 # 3) Launch
@@ -602,7 +710,8 @@ If a run fails, the log will usually contain the exception and the failing step.
 
 # Build readable run name for History/Dashboard lists
 ts = datetime.now().strftime("%Y%m%d_%H%M")
-short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E"}[family]
+short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E",
+             "F_FOUNDATION": "F"}[family]
 short_var = "uni" if variant == "Univariate" else "multi"
 run_label = f"run_{short_fam}_{short_var}_{model}_{target}_{cadence}_h{int(horizon)}_{ts}"
 
@@ -619,6 +728,8 @@ elif family == "B_ML":
     runner = _backend_path / ("run_b_ml_univariate.py" if short_var == "uni" else "run_b_ml_multivariate.py")
 elif family == "C_DL":
     runner = _backend_path / ("run_c_dl_univariate.py" if short_var == "uni" else "run_c_dl_multivariate.py")
+elif family == "F_FOUNDATION":
+    runner = _backend_path / "run_foundation.py"
 else:
     runner = _backend_path / ("run_e_quantile_daily_univariate.py" if short_var == "uni" else "run_e_quantile_daily_multivariate.py")
 
@@ -629,7 +740,7 @@ def _on_progress(tail: str, elapsed: float):
     status.info(f"Elapsed: {elapsed:.1f}s")
     _scroll_term(log_box, tail)
 
-if st.button("🚀 Run experiment", type="primary", use_container_width=True, help=HELP["run_button"]):
+if st.button("🚀 Run experiment", type="primary", use_container_width=True, help=_lab_help("run_button")):
     py = st.session_state.get("backend_py", "")
     back = st.session_state.get("backend_dir", "")
 
@@ -640,7 +751,21 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         st.error("Backend directory missing/invalid. Go to Overview and confirm backend path.")
         st.stop()
     if not runner.exists():
-        st.error(f"Runner script missing: `{runner}`")
+        st.error(
+            "The backend script for this family was not found, so the run cannot start. "
+            f"Expected it at {runner}. Confirm the backend folder on the Overview page."
+        )
+        st.stop()
+
+    # ── Pre-flight: can this configuration honestly run at all? ──────────────
+    # An exploratory run is bounded to train and dev data, so a file whose usable span is
+    # too short cannot produce a single fold. Saying so here costs a second; discovering
+    # it from the backend costs a run and produces a traceback.
+    _dates = pd.to_datetime(df[date_col], errors="coerce").dropna()
+    _blocked = check_can_run(_dates, horizon, int(ov_final.get("min_train_years") or 0))
+    if _blocked:
+        st.error(_blocked)
+        st.caption(EXPLORATORY_NOTE)
         st.stop()
 
     # ── Create run folder structure ─────────────────────────────────
@@ -684,18 +809,38 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
             pass
 
     if rc != 0:
-        st.error(f"Run failed (exit code {rc}). Check the log below for details.")
+        # A refusal by one of the discipline guards is the system working, and a fault is
+        # the system failing. They read completely differently to a Treasury reader, so
+        # they are shown differently. Neither shows a traceback above the fold.
+        try:
+            _log_text = Path(log_path).read_text(encoding="utf-8")
+        except OSError:
+            _log_text = ""
+        _failure = explain_failure(out_real, _log_text, exit_code=rc)
+        if is_guard_refusal(_failure):
+            st.warning("**This run was stopped on purpose.** " + _failure.headline)
+            st.caption(EXPLORATORY_NOTE)
+        else:
+            st.error("**This run did not finish.** " + _failure.headline)
+        with st.expander("Technical detail", expanded=False):
+            if _failure.error_type:
+                st.caption(f"Reported by the backend as {_failure.error_type}.")
+            st.code(_failure.detail[-5000:] or "(no output)", language="text")
     elif _failed_quality:
         st.warning(
-            f"⚠️ **Model underperforms baseline** ({model}). "
-            "Plots shown below, but model does not beat the persistence baseline."
+            f"**This model did not beat the simple baseline** ({model}). The charts below "
+            "still show what it produced, which is worth looking at, but a model that "
+            "cannot beat carrying the last value forward is not a candidate to publish."
         )
     else:
-        st.success(f"Finished in {elapsed:.1f}s • outputs in `{out_real}`")
+        st.success(
+            f"Finished in {elapsed:.1f}s. Results were written to {out_real}. "
+            + EXPLORATORY_NOTE
+        )
 
     # Overlay preview
-    st.subheader("Overlay preview — Actual vs model predictions")
-    with st.expander("Overlay preview — Actual vs selected model(s) (and Ops baseline if available)", expanded=True):
+    st.subheader("Overlay preview: actual against model predictions")
+    with st.expander("Overlay preview: actual against the selected models, and the Treasury baseline where available", expanded=True):
         p = Path(out_real) / "predictions_long.csv"
         if not p.exists():
             for _cad in ("daily", "weekly", "monthly"):
@@ -750,7 +895,11 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
                 g = pred[pred["model"] == m]
                 fig.add_scatter(x=g["date"], y=g["y_pred"], name=m, mode="lines")
 
-            base = _baseline_series(Path(out_real), target, cadence)
+            # The comparison line, read from the run's own predictions so the origins are the
+            # ones this run actually forecast from. `p.parent` rather than `out_real`, because
+            # a weekly or monthly run keeps its predictions in a cadence subfolder.
+            base, base_why = _baseline_series(p.parent, target, cadence)
+            _base_drawn = False
             if base is not None and len(base):
                 rng = (pred["date"].min(), pred["date"].max())
                 b = base[(base.index >= rng[0]) & (base.index <= rng[1])]
@@ -760,11 +909,20 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
                         name="Ops baseline", mode="lines",
                         line=dict(dash="dot"),
                     )
+                    _base_drawn = True
 
             plotly_chrome(fig)
             st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+
+            # Say what the comparison line is, or say why there is not one. Silence here reads
+            # as "this model had nothing to beat", which is the one wrong conclusion available.
+            if _base_drawn:
+                st.caption(obv.CAPTION_WHY_FLAT)
+            elif base_why:
+                st.caption(base_why)
         else:
             st.caption("No predictions_long.csv found in the outputs folder.")
 
-    st.markdown("**Log tail**")
-    st.code(Path(log_path).read_text(encoding="utf-8")[-5000:], language="text")
+    if rc == 0:
+        with st.expander("Backend log", expanded=False):
+            st.code(Path(log_path).read_text(encoding="utf-8")[-5000:], language="text")

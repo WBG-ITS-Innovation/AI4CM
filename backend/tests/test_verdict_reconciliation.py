@@ -65,20 +65,51 @@ def test_every_published_target_reports_both_verdicts(target, at_issue, today):
 
 
 def test_the_reason_names_the_gate_that_actually_changed_it():
-    """Not every gate that differs — only the ones that drove the verdict.
+    """Not every gate that differs, only the ones that drove the verdict.
 
     An earlier draft listed all four added gates including the three that pass, which buried the
     one that mattered.
+
+    The wording moved to plain language in the MVP consolidation: this sentence is rendered
+    verbatim on the Forecast page, and it was putting raw registry codes and bare booleans in
+    front of a Treasury reader. The substance asserted here is unchanged, which is the point of
+    asserting substance rather than phrasing.
     """
     rev = _by_target()["Revenues"]["why"]
-    assert "signal was re-thresholded from 1.5 to 1.15" in rev
+    assert "signal self-test" in rev
+    assert "from 1.5 to 1.15" in rev
     assert "1.2255" in rev, "the measurement is unchanged and should be quoted as such"
     assert "coverage" not in rev and "leakage" not in rev, (
         "gates that pass did not change the verdict and must not be listed")
 
     stock = _by_target()["State budget balance"]["why"]
-    assert "accuracy_vs_naive" in stock and "1.57832" in stock
+    assert "accuracy against the naive rule of thumb" in stock and "1.57832" in stock
     assert "signal" not in stock, "the stock target's signal gate passed both before and after"
+
+
+def test_the_reason_speaks_words_rather_than_registry_codes():
+    """This sentence is rendered verbatim on the Forecast page.
+
+    `withheld_as_forecast` and `withheld` differ by one word and mean two different things, so
+    a reader meeting them unexplained in a verdict history cannot tell what changed.
+    """
+    for row in _by_target().values():
+        why = row["why"]
+        assert "withheld_as_forecast" not in why
+        assert "accuracy_vs_naive" not in why
+        assert "True" not in why and "False" not in why, (
+            "a bare boolean is not a statement about a gate")
+
+
+def test_verdict_words_cover_every_verdict_the_registry_can_carry():
+    from registry import PUBLICATION_VERDICTS
+    from published_forecasts import VERDICT_WORDS, verdict_in_words
+
+    for verdict in PUBLICATION_VERDICTS:
+        assert verdict in VERDICT_WORDS, f"{verdict} would be shown to a reader as a code"
+        assert verdict_in_words(verdict) != verdict
+    assert verdict_in_words("something_new") == "something_new", (
+        "an unknown verdict falls back to its code rather than being hidden")
 
 
 def test_the_reconciliation_says_the_numbers_did_not_change():

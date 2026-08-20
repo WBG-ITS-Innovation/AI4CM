@@ -1,4 +1,4 @@
-# pages/00_Data_Preprocessing.py — Data Pre-processing (upload + auto backend paths)
+# pages/07_Data_Preprocessing.py — Data Pre-processing (upload + auto backend paths)
 from __future__ import annotations
 
 import json
@@ -17,12 +17,23 @@ except ImportError:
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
 from ui_styles import inject_design_system  # presentation only
+from i18n import install as install_language  # language toggle + pending-review note
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import plotly_chrome  # presentation only
 st.set_page_config(page_title="Data · Treasury Forecast", page_icon="🧹", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 render_app_header("Data pre-processing", "Build and inspect the canonical daily Treasury file")
+page_intro(
+    "This page turns a raw Treasury export into the clean daily series the models read, and "
+    "reports what the cleaning changed so a surprising number can be traced back to it."
+)
 st.markdown(
     page_header("🧺 Data Pre-processing",
                 "Convert raw Treasury files into standardized forecasting datasets"),
@@ -55,7 +66,7 @@ inconsistent parsing, basic missingness handling) without applying strong assump
 
 ### clean_treasury
 A “Treasury-friendly” version. It applies additional assumptions and rules intended to make the dataset
-behave consistently for forecasting and demos—especially around **business days**, **weekend/holiday behavior**,
+behave consistently for forecasting and demos, especially around **business days**, **weekend and holiday behaviour**,
 and patterns that matter operationally.
 
 > The exact transformations are implemented in the backend preprocessing runner. This UI is designed to make the intent
@@ -228,7 +239,8 @@ if st.button("▶️ Run preprocessing", type="primary", use_container_width=Tru
 
     runner_script = Path(backend_dir) / "run_preprocess.py"
     if not backend_dir or not Path(backend_dir).exists() or not runner_script.exists():
-        st.error("Backend directory invalid or `run_preprocess.py` missing in backend/")
+        st.error("The backend directory is not valid, or `run_preprocess.py` is missing from "
+                 "it. Set the backend path on the Overview page and try again.")
         st.stop()
 
     if not input_path:
