@@ -263,6 +263,20 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "cannot cross. Needs XGBoost 2.0 or newer; where the package is older the model is "
         "omitted rather than quietly falling back to a mean fit under a quantile name. Registered "
         "as a candidate and not yet measured."},
+    # ── F_FOUNDATION (backend/foundation_models.py) ─────────────────────────────────────────
+    "Chronos_Bolt_Small": {"family": "Pretrained zero-shot", "summary":
+        "A forecaster trained once by somebody else on a large collection of other people's time "
+        "series, then asked to forecast this one from its recent history alone. There is no "
+        "fitting step and it has never seen Georgian Treasury data, which is what makes it a "
+        "different kind of reading from everything else here: it says how much of this series is "
+        "predictable from shape alone. Exploratory only. It cannot become the model behind an "
+        "official forecast, and it has not been measured."},
+    "TimesFM_2p5_200M": {"family": "Pretrained zero-shot", "summary":
+        "A second forecaster trained by somebody else on other people's time series, larger than "
+        "the one above and from a different research group, asked the same question in the same "
+        "way. Two independent zero-shot readings are worth more than one: where they agree, the "
+        "agreement says something neither could say alone. Exploratory only. It cannot become the "
+        "model behind an official forecast, and it has not been measured."},
     # ── A_STAT (backend/run_a_stat.py) ──────────────────────────────────────────────────────
     # These keys use the family's own UPPERCASE dispatch names. They were previously "ETS" and
     # "Theta", which matched nothing the pipeline dispatches on and nothing model_pool()
@@ -457,6 +471,34 @@ def model_pool() -> Dict[str, Dict]:
             entry["missing_library"] = _cdl_why
         out.setdefault(name, entry)
 
+    # F_FOUNDATION. Pretrained zero-shot forecasters, added 2026-08-19. Optional extras, so the
+    # usual rule applies: a model whose package is absent is marked unavailable and says which
+    # package it needs, rather than disappearing and leaving "why can I not pick this" unanswered.
+    #
+    # `foundation_models` imports nothing heavy at module level, so this block is safe from the
+    # Streamlit interpreter and `availability()` never loads a checkpoint or touches the network.
+    try:
+        import foundation_models as _fm
+
+        for name, info in _fm.availability().items():
+            entry = {"name": name, "pipeline": _fm.FAMILY_FOUNDATION,
+                     "available": info["installed"],
+                     "class": "(pretrained checkpoint, not fitted here)",
+                     "registry_description": info["summary"],
+                     "repo": info["repo"],
+                     "revision": info["revision"],
+                     "hyperparameters": {
+                         "set_by_pipeline": [], "library_default": [], "n_total": 0,
+                         "note": ("Nothing is fitted here, so there are no training parameters to "
+                                  "show. What determines the answer is the checkpoint, pinned by "
+                                  "commit hash, and how much history it was given.")}}
+            if not info["installed"]:
+                entry["missing_library"] = info["reason"]
+            out.setdefault(name, entry)
+    except Exception as exc:                       # noqa: BLE001 - optional extras
+        # The family failing to enumerate must not remove every other model from the page.
+        print(f"[foundation] registry unavailable: {type(exc).__name__}: {exc}")
+
     # Models that exist in the code but are unavailable because a library is missing must SAY so
     # rather than vanishing from the page.
     for name, flag, lib in (("XGBoost", bml.HAVE_XGB, "xgboost"),
@@ -502,20 +544,42 @@ _CATEGORY_BY_PIPELINE = {
     "B_ML": "machine-learning models",
     "C_DL": "deep-learning models",
     "E_QUANTILE": "quantile methods",
+    # Added 2026-08-19. A separate category rather than folded into C_DL, because the two mean
+    # different things: every C_DL model was trained on Treasury data by this pipeline, and a
+    # foundation model has never seen it. Counting them together would make "deep-learning
+    # models: 5" describe two kinds of claim in a sentence a client reads.
+    "F_FOUNDATION": "pretrained zero-shot forecasters",
 }
 
 #: Order the categories appear in the sentence.
 CATEGORY_ORDER = ("machine-learning models", "deep-learning models", "statistical models",
-                  "quantile methods", "reference baselines")
+                  "quantile methods", "pretrained zero-shot forecasters", "reference baselines")
 
 #: Categories whose models produce point forecasts and are ranked against each other on a
 #: target. Quantile methods produce intervals; baselines are the ruler. Neither competes.
+#:
+#: "pretrained zero-shot forecasters" is deliberately NOT here, and the omission is the point.
+#: They produce a point forecast, so they COULD be ranked; they are excluded because they are
+#: exploratory and were never put through this project's evaluation protocol. Adding them would
+#: raise the competing count with entries carrying no measurement, which is exactly the sentence
+#: `client_framing` exists to keep honest.
 COMPETING_CATEGORIES = ("machine-learning models", "deep-learning models", "statistical models")
 
 #: The category a registry recipe draws its `point_model` from. Cross-checked against
 #: `registry/recipes.json` by `composition()`, so promoting a model from another family
 #: fails rather than quietly widening the pool we describe to a client.
 CHAMPION_POOL_CATEGORY = "machine-learning models"
+
+#: Families that are enumerable here but do NOT run in the daily production pipeline.
+#:
+#: F_FOUNDATION is launched from the Lab and is deliberately absent from the default FAMILIES in
+#: ``run_daily_forecast.sh``. That distinction is load-bearing rather than tidy:
+#: ``daily_best_model_families`` used to be "every pipeline in the pool", which quietly assumed
+#: every enumerable family also runs daily. Adding a Lab-only family broke the assumption in a
+#: way that reaches outside this repo -- the Agent contract ranks families from that list, so it
+#: would have expected a per-family ``best_model`` for a family the daily summary never writes
+#: one for, and gone looking for an artifact that does not exist.
+EXPLORATORY_ONLY_FAMILIES = frozenset({"F_FOUNDATION"})
 
 
 def client_category(entry: Dict) -> str:
@@ -547,9 +611,10 @@ def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
     * `champion_pool` — the models a **registry recipe** may promote as its `point_model`,
       i.e. the set an official published forecast is selected from.
     * `daily_best_model_families` — the families `daily_summary.py` writes a per-family
-      `best_model` for. Every family that produces a leaderboard is in here, so a consumer
-      ranking families (as the Agent does) is choosing across all of them, not across
-      `champion_pool`.
+      `best_model` for. Every family that produces a leaderboard IN THE DAILY RUN is in here, so
+      a consumer ranking families (as the Agent does) is choosing across all of them, not across
+      `champion_pool`. Lab-only families are excluded, or the list would promise an artifact the
+      daily run never writes; see `EXPLORATORY_ONLY_FAMILIES`.
     """
     pool = model_pool() if pool is None else pool
 
@@ -612,7 +677,10 @@ def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
         "untested_total": len(untested),
         "promoted_by_registry": promoted,
         "promoted_outside_champion_pool": off_pool,
-        "daily_best_model_families": sorted({e["pipeline"] for e in pool.values()}),
+        # Families the DAILY pipeline writes a best_model for. Lab-only families are excluded:
+        # see EXPLORATORY_ONLY_FAMILIES for why this is not merely cosmetic.
+        "daily_best_model_families": sorted({e["pipeline"] for e in pool.values()}
+                                            - EXPLORATORY_ONLY_FAMILIES),
     }
 
 

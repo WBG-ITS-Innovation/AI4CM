@@ -511,14 +511,15 @@ def test_the_model_counts_are_pinned_so_a_headline_number_cannot_drift():
     by_pipeline = Counter(v["pipeline"] for v in pool.values())
 
     assert len(set(available_models())) == 21, "B_ML point pool changed"
-    assert by_pipeline == {"B_ML": 21, "E_QUANTILE": 6, "A_STAT": 10, "C_DL": 5}, dict(by_pipeline)
-    assert len(pool) == 42, f"model_pool() changed: {len(pool)}"
+    assert by_pipeline == {"B_ML": 21, "E_QUANTILE": 6, "A_STAT": 10, "C_DL": 5,
+                           "F_FOUNDATION": 2}, dict(by_pipeline)
+    assert len(pool) == 44, f"model_pool() changed: {len(pool)}"
 
     comp = mr.composition(pool)
     assert comp["evaluated_total"] == 8, (
         f"the number of models with a recorded result changed to {comp['evaluated_total']}; "
         f"say so deliberately rather than letting the shelf count speak for the evidence")
-    assert comp["untested_total"] == 31, comp["untested_total"]
+    assert comp["untested_total"] == 33, comp["untested_total"]
 
     quantile_only = {k for k, v in pool.items() if v["pipeline"] == "E_QUANTILE"}
     assert quantile_only == {"GBQuantile", "ResidualRF", "LGBMQuantile",

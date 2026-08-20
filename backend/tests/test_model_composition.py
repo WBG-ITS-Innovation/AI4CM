@@ -88,7 +88,14 @@ def test_every_champion_crowning_family_is_enumerable(pool):
 
 def test_no_pool_entry_comes_from_a_family_the_runner_cannot_run(pool):
     """The converse: the pool must not advertise a family that never runs."""
-    runnable = set(runnable_families())
+    from model_reference import EXPLORATORY_ONLY_FAMILIES
+
+    # Lab-only families are a deliberate exception, not an oversight. F_FOUNDATION is launched
+    # from the Lab and is absent from the daily runner ON PURPOSE: these are pretrained models
+    # with no measured result, and the production pipeline must not quietly start running them.
+    # The exception is a named constant rather than a string here, so removing it from one place
+    # cannot leave the other silently permissive.
+    runnable = set(runnable_families()) | set(EXPLORATORY_ONLY_FAMILIES)
     stray = sorted({e["pipeline"] for e in pool.values()} - runnable)
     assert not stray, f"model_pool() offers {stray}, which run_daily_forecast.sh cannot run"
 
@@ -143,6 +150,9 @@ def test_the_derived_counts_are_what_we_tell_a_client(comp):
         "deep-learning models": 5,
         "statistical models": 7,
         "quantile methods": 6,
+        # Added 2026-08-19: two pretrained zero-shot forecasters, exploratory only. Counted on
+        # the shelf and deliberately NOT counted as competing -- see the test below.
+        "pretrained zero-shot forecasters": 2,
         "reference baselines": 3,
     }, comp["counts"]
 
@@ -151,8 +161,14 @@ def test_baselines_and_interval_methods_do_not_compete(comp):
     """The ruler is not a rival, and an interval method is not a point forecaster."""
     assert "reference baselines" not in COMPETING_CATEGORIES
     assert "quantile methods" not in COMPETING_CATEGORIES
+    # And nor do the pretrained forecasters, which DO produce a point forecast and so could have
+    # been counted. They are excluded because they were never put through this project's
+    # evaluation protocol, and a competing count containing unmeasured entries is the exact
+    # overstatement `client_framing` exists to prevent.
+    assert "pretrained zero-shot forecasters" not in COMPETING_CATEGORIES
     assert comp["competing_total"] == comp["total"] - comp["counts"]["quantile methods"] \
-        - comp["counts"]["reference baselines"]
+        - comp["counts"]["reference baselines"] \
+        - comp["counts"]["pretrained zero-shot forecasters"]
 
 
 def test_the_client_sentence_is_written_from_the_counts(comp):
@@ -213,6 +229,8 @@ def test_the_daily_best_model_families_are_broader_than_the_champion_pool(comp):
     Agent does — is choosing across four families, not across the registry pool, and the
     contract has to say so.
     """
+    # Still these four after F_FOUNDATION joined the shelf, and that is the point: a Lab-only
+    # family must not appear in a list the Agent reads as "families with a daily best_model".
     assert comp["daily_best_model_families"] == ["A_STAT", "B_ML", "C_DL", "E_QUANTILE"]
     assert len(comp["daily_best_model_families"]) > 1
     assert comp["champion_pool_category"] == "machine-learning models"

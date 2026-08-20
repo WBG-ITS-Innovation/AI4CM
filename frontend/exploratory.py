@@ -58,7 +58,13 @@ DEMO_CLIP_NOTE: str = (
 
 #: Families the Lab can launch. C_DL is listed separately below because its runners
 #: default the evaluation start to the holdout, so an exploratory run has to say "no".
-FAMILIES = ("A_STAT", "B_ML", "C_DL", "E_QUANTILE")
+#:
+#: F_FOUNDATION added 2026-08-19. The pretrained forecasters are not fitted on this data, which
+#: might suggest the bound does not matter for them. It matters just as much: the bound is about
+#: which dates a RESULT may be measured on, not about which dates a model trained on. A zero-shot
+#: model scored over the sealed window has still spent the holdout. `run_foundation.py` refuses
+#: outright if it is handed no eval_end, rather than defaulting the window open.
+FAMILIES = ("A_STAT", "B_ML", "C_DL", "E_QUANTILE", "F_FOUNDATION")
 
 
 def exploratory_overrides(family: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

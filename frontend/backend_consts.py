@@ -148,3 +148,54 @@ PROFILE_DEFAULTS = {
         "windows_daily": [3, 5, 7, 14, 20],
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Foundation models: asked of the interpreter that will actually run them
+# ---------------------------------------------------------------------------
+def foundation_options(timeout: int = 30):
+    """``(choices, missing)`` for the Lab's foundation-model picker.
+
+    ``choices`` are names installed and runnable; ``missing`` is ``[(name, reason)]`` for the
+    rest, so a model that needs an optional extra is named with its reason rather than vanishing.
+
+    WHY THIS ASKS THE BACKEND INSTEAD OF CHECKING HERE. Availability is `find_spec`, and
+    `find_spec` answers for whichever interpreter runs it. This one is Streamlit's, and the
+    foundation packages live in `backend/.venv` where the run happens. Checking locally would
+    report both models missing while they work perfectly, which is the same trap documented above
+    for xgboost and lightgbm -- except that there the honest fix was to stop filtering, and here
+    it is not: these extras are genuinely optional and often absent, so "install the extras" is a
+    real answer a reader needs BEFORE running, not after.
+
+    A subprocess is the price of asking the right interpreter. It runs only when the Foundation
+    family is selected, and it loads no model and touches no network.
+    """
+    import json as _json
+    import subprocess as _sp
+
+    repo = _Path(__file__).resolve().parent.parent
+    for candidate in (repo / "backend" / ".venv" / "bin" / "python",
+                      repo / "backend" / ".venv" / "Scripts" / "python.exe"):
+        if candidate.exists():
+            break
+    else:
+        return [], [("Foundation models",
+                     "The modelling environment (backend/.venv) was not found, so whether these "
+                     "are installed cannot be checked.")]
+
+    program = ("import json,sys;sys.path.insert(0,'backend');"
+               "import foundation_models as fm;print(json.dumps(fm.availability()))")
+    try:
+        out = _sp.run([str(candidate), "-c", program], cwd=str(repo),
+                      capture_output=True, text=True, timeout=timeout)
+        line = next(l for l in reversed(out.stdout.splitlines()) if l.strip().startswith("{"))
+        table = _json.loads(line)
+    except Exception as exc:                       # noqa: BLE001 - a picker, not logic
+        return [], [("Foundation models",
+                     f"The list could not be read from the modelling environment: "
+                     f"{type(exc).__name__}: {exc}")]
+
+    choices = [n for n, info in table.items() if info.get("installed")]
+    missing = [(n, info.get("reason", "not installed"))
+               for n, info in table.items() if not info.get("installed")]
+    return choices, missing

@@ -15,7 +15,7 @@ import streamlit as st
 from backend_bridge import launch_backend
 from backend_consts import (
     STAT_MODEL_OPTIONS, ML_MODEL_OPTIONS, DL_MODEL_OPTIONS,
-    QUANTILE_MODEL_OPTIONS, QUALITY_GATE_SKILL_PCT,
+    QUANTILE_MODEL_OPTIONS, QUALITY_GATE_SKILL_PCT, foundation_options,
     PROFILE_DEFAULTS, HORIZON_PRESETS,
 )
 from data_preflight import run_preflight
@@ -493,19 +493,20 @@ with L:
         )
 
 with R:
-    fam_label = st.selectbox(
-        "Family",
-        ["A · Statistical", "B · Machine Learning", "C · Deep Learning", "E · Quantile"],
-        help=_lab_help("family"),
-    )
-    family = {
+    # F · Foundation is listed last and labelled exploratory in the option itself, because a
+    # reader picking from this list should learn what they are choosing before they run it, not
+    # after. These models are never fitted on this data and can never become the champion.
+    _FAMILY_LABELS = {
         "A · Statistical": "A_STAT",
         "B · Machine Learning": "B_ML",
         "C · Deep Learning": "C_DL",
         "E · Quantile": "E_QUANTILE",
-    }[fam_label]
+        "F · Foundation (pretrained, exploratory)": "F_FOUNDATION",
+    }
+    fam_label = st.selectbox("Family", list(_FAMILY_LABELS), help=_lab_help("family"))
+    family = _FAMILY_LABELS[fam_label]
 
-    variant = "Univariate" if family == "A_STAT" else st.radio(
+    variant = "Univariate" if family in ("A_STAT", "F_FOUNDATION") else st.radio(
         "Variant",
         ["Univariate", "Multivariate"],
         horizontal=True,
@@ -597,6 +598,34 @@ Deep learning models typically require more training time. The key parameters ar
     ov["conformal_calib_frac"] = st.number_input("conformal_calib_frac", 0.05, 0.9, 0.2, 0.05, help=_lab_help("conformal_calib"))
     ov["device"] = st.selectbox("device", ["auto", "cpu", "cuda"], index=0, help=_lab_help("device"))
 
+elif family == "F_FOUNDATION":
+    _fm_choices, _fm_missing = foundation_options()
+    if not _fm_choices:
+        model = None
+        st.warning(
+            "**No foundation model is installed.** These are optional extras, kept out of the "
+            "core install so a fresh clone is never held up by a large download. Install them "
+            "with `./backend/.venv/bin/python -m pip install -r "
+            "backend/requirements-foundation.txt`, then reopen this page."
+        )
+    else:
+        model = st.selectbox("Model (Foundation)", _fm_choices, index=0)
+    for _name, _why in _fm_missing:
+        st.caption(f"**{_name}** is not available here. {_why}")
+    st.info(
+        "**These models were never trained on Treasury data.** Each one was trained once, by "
+        "somebody else, on a large collection of other people's series, and is asked to forecast "
+        "this one from its recent history alone. There is no fitting step. That makes a run here "
+        "a reading on how much of this series is predictable from its shape, and nothing more: "
+        "no foundation model can become the model behind an official forecast, because a "
+        "published recipe may only draw from the machine-learning family."
+    )
+    st.caption(
+        "Weights are downloaded once and then cached on this machine, so the first run of a model "
+        "is slower than the rest and nothing downloads afterwards. Each checkpoint is pinned to "
+        "an exact version, so a rerun uses the same weights as the first run."
+    )
+
 else:
     # From the registry. This offered a single name while the family had three implemented and
     # dispatchable, so ResidualRF and LGBMQuantile were unreachable from the Lab.
@@ -681,7 +710,8 @@ If a run fails, the log will usually contain the exception and the failing step.
 
 # Build readable run name for History/Dashboard lists
 ts = datetime.now().strftime("%Y%m%d_%H%M")
-short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E"}[family]
+short_fam = {"A_STAT": "A", "B_ML": "B", "C_DL": "C", "E_QUANTILE": "E",
+             "F_FOUNDATION": "F"}[family]
 short_var = "uni" if variant == "Univariate" else "multi"
 run_label = f"run_{short_fam}_{short_var}_{model}_{target}_{cadence}_h{int(horizon)}_{ts}"
 
@@ -698,6 +728,8 @@ elif family == "B_ML":
     runner = _backend_path / ("run_b_ml_univariate.py" if short_var == "uni" else "run_b_ml_multivariate.py")
 elif family == "C_DL":
     runner = _backend_path / ("run_c_dl_univariate.py" if short_var == "uni" else "run_c_dl_multivariate.py")
+elif family == "F_FOUNDATION":
+    runner = _backend_path / "run_foundation.py"
 else:
     runner = _backend_path / ("run_e_quantile_daily_univariate.py" if short_var == "uni" else "run_e_quantile_daily_multivariate.py")
 
