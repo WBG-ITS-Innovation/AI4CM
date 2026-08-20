@@ -188,6 +188,68 @@ def _huber():
     return _linear_pipeline(HuberRegressor(epsilon=1.35, max_iter=500))
 
 
+def _bayesian_ridge():
+    from sklearn.linear_model import BayesianRidge
+
+    # Ridge that estimates its own shrinkage from the data instead of being handed one. There
+    # is no alpha to pick, so it cannot be tuned into looking good, which is what makes it a
+    # useful reading next to Ridge on the same features.
+    return _linear_pipeline(BayesianRidge())
+
+
+def _theil_sen():
+    from sklearn.linear_model import TheilSenRegressor
+
+    # A second robust linear fit alongside Huber, and robust in a different way: Huber
+    # de-weights extreme days, this one fits many small subsets and takes the median of their
+    # answers, so a run of consecutive extreme days cannot drag it. Worth a reading on a
+    # series whose month-ends are all extreme together.
+    #
+    # max_subpopulation caps the number of subsets; without it the count grows combinatorially
+    # with the feature set and the fit stops finishing. 2000 is scikit-learn's own guidance for
+    # keeping the cost bounded, and measured here it fits in about 2 seconds.
+    return _linear_pipeline(TheilSenRegressor(random_state=0, max_subpopulation=2000, n_jobs=-1))
+
+
+def _knn():
+    from sklearn.neighbors import KNeighborsRegressor
+
+    # "What happened on the most similar days in the past." No fitted form at all, so it says
+    # something the parametric models cannot: whether near-duplicate days recur in this series.
+    # Scaled through _linear_pipeline, because a distance over unscaled features is dominated by
+    # whichever column happens to be largest.
+    return _linear_pipeline(KNeighborsRegressor(n_neighbors=10, weights="distance", n_jobs=-1))
+
+
+def _kernel_ridge():
+    from sklearn.kernel_ridge import KernelRidge
+
+    # Ridge on a curved feature space rather than a straight one, so it can bend where the
+    # linear models cannot without splitting the way the trees do. Also scaled: an RBF kernel
+    # is a distance, with the same sensitivity as KNN above.
+    return _linear_pipeline(KernelRidge(kernel="rbf", alpha=1.0))
+
+
+def _decision_tree_l1():
+    from sklearn.tree import DecisionTreeRegressor
+
+    # One tree, on absolute error. The boosted entries are ensembles whose reasoning cannot be
+    # read; this one can be printed and shown to somebody who has to defend the number, which
+    # is the only reason to keep a single tree on the shelf.
+    return DecisionTreeRegressor(criterion="absolute_error", random_state=0,
+                                 min_samples_leaf=MIN_SAMPLES_PER_LEAF)
+
+
+def _adaboost():
+    from sklearn.ensemble import AdaBoostRegressor
+
+    # Boosting that reweights hard ROWS, where the gradient-boosted entries fit the residual.
+    # On a series whose informative days are rare and extreme those are different behaviours,
+    # and only measurement will say which suits it.
+    return AdaBoostRegressor(n_estimators=300, learning_rate=0.05, loss="linear",
+                             random_state=0)
+
+
 def _random_forest():
     from sklearn.ensemble import RandomForestRegressor
 
@@ -311,8 +373,31 @@ MODELS: Tuple[ModelSpec, ...] = (
                       "has single days ten times the local level, and an ordinary linear "
                       "fit is dragged toward them at the cost of the ordinary days it will "
                       "mostly be judged on."),
+    ModelSpec("BayesianRidge", FAMILY_ML, factory=_bayesian_ridge, added="2026-08-19",
+              summary="A straight-line fit that works out for itself how much to shrink each "
+                      "weight, rather than being told. There is no setting to choose, so it "
+                      "cannot be tuned into looking better than it is."),
+    ModelSpec("TheilSen", FAMILY_ML, factory=_theil_sen, added="2026-08-19",
+              summary="A straight-line fit that takes the middle answer from many small "
+                      "subsets of the history. Where the model above it de-weights extreme "
+                      "days one at a time, this one is unmoved by a whole run of them, which "
+                      "is what a month-end looks like here."),
+
+    # ── distance and kernels ────────────────────────────────────────────────
+    ModelSpec("KNN", FAMILY_ML, factory=_knn, added="2026-08-19",
+              summary="Looks up the most similar days in the past and averages what happened "
+                      "on them. It fits no formula at all, so it answers a different question: "
+                      "whether days like today have happened before."),
+    ModelSpec("KernelRidge", FAMILY_ML, factory=_kernel_ridge, added="2026-08-19",
+              summary="A fit that is allowed to curve rather than being held straight, while "
+                      "still shrinking its weights. Sits between the straight-line models and "
+                      "the trees."),
 
     # ── trees and forests ───────────────────────────────────────────────────
+    ModelSpec("DecisionTree_L1", FAMILY_ML, factory=_decision_tree_l1, added="2026-08-19",
+              summary="A single decision tree, trained to minimise absolute error. The only "
+                      "model here whose reasoning can be printed and read, which matters when "
+                      "somebody has to defend a number rather than just quote it."),
     ModelSpec("RandomForest", FAMILY_ML, factory=_random_forest, added="2026-03",
               summary="Many decision trees grown on different samples of the history, "
                       "averaged. Captures interactions between inputs without being told "
@@ -323,6 +408,11 @@ MODELS: Tuple[ModelSpec, ...] = (
                       "training history too closely."),
 
     # ── boosting ────────────────────────────────────────────────────────────
+    ModelSpec("AdaBoost", FAMILY_ML, factory=_adaboost, added="2026-08-19",
+              summary="Trees built one after another, where each one pays more attention to "
+                      "the days the previous ones got most wrong. The other boosted entries "
+                      "instead fit what is left over, which is a different behaviour on a "
+                      "series whose informative days are rare."),
     ModelSpec("HistGBDT", FAMILY_ML, factory=_hist_gbdt, added="2026-03",
               summary="Trees built one after another, each correcting what the previous "
                       "ones got wrong, on a binned view of the inputs for speed. Fits the "
@@ -367,6 +457,21 @@ MODELS: Tuple[ModelSpec, ...] = (
 #: runner, which is why these carry no factory.
 STAT_MODEL_NAMES: Tuple[str, ...] = (
     "NAIVE", "WEEKDAY_MEAN", "MOVAVG", "ETS", "ETS_DAMPED", "SARIMAX", "STL_ARIMA", "THETA",
+    # Added 2026-08-19. `test_every_stat_name_in_the_catalogue_is_dispatchable` asserts this
+    # tuple equals `run_a_stat.A_STAT_MODELS`, so a name added here without a dispatch branch
+    # fails rather than falling through to a naive forecast.
+    "SES", "HOLT",
+)
+
+#: Names the E_QUANTILE runner dispatches on. Same purpose and same contract as the tuple above.
+#:
+#: Added because the frontend had no way to ask. ``e_quantile_daily_pipeline`` imports sklearn, so
+#: the Streamlit interpreter cannot import it to enumerate the family, and the Lab's quantile
+#: picker was therefore a hardcoded list that had drifted to a single entry while the family
+#: offered three. ``test_model_catalog.py`` asserts this matches ``registry_models()``.
+QUANTILE_MODEL_NAMES: Tuple[str, ...] = (
+    "GBQuantile", "ResidualRF", "LGBMQuantile",
+    "LinearQuantile", "HistGBQuantile", "XGBQuantile",
 )
 
 #: Entries that are references rather than candidates.

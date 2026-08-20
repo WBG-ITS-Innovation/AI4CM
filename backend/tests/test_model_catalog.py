@@ -362,3 +362,206 @@ def test_every_stat_name_in_the_catalogue_is_dispatchable():
     import run_a_stat
 
     assert set(model_catalog.STAT_MODEL_NAMES) == set(run_a_stat.A_STAT_MODELS)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THE 2026-08-19 WIDENING
+#
+# Eleven models across three families, every one a candidate with no recorded result. The point
+# of these tests is not that the names exist; it is that adding a name cannot quietly mean less
+# than it appears to. Three things had to be true and are asserted here: the model is honestly
+# badged, it needs no package a person did not agree to, and there is a branch behind the name.
+#
+# That last one is a failure this project has already had. A name in a list with no dispatch
+# behind it fell through to a naive forecast and reported it under the model's own name.
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Registered 2026-08-19, by family. Smoke-tested end to end through the Lab's own dispatch path
+#: (same runner, same TG_* contract, same exploratory overrides) on Revenues at h=5: 11 of 11
+#: produced a populated predictions_long.csv.
+WIDENING_2026_08_19 = {
+    "B_ML": ("BayesianRidge", "TheilSen", "KNN", "KernelRidge", "DecisionTree_L1", "AdaBoost"),
+    "E_QUANTILE": ("LinearQuantile", "HistGBQuantile", "XGBQuantile"),
+    "A_STAT": ("SES", "HOLT"),
+}
+
+
+@pytest.mark.parametrize("name", WIDENING_2026_08_19["B_ML"])
+def test_a_widening_ml_model_is_registered_and_honestly_badged(name):
+    rows = {row["name"]: row for row in shelf()}
+    assert name in rows, f"{name} is not on the shelf"
+    assert rows[name]["status"] == UNTESTED
+    assert rows[name]["added"] == "2026-08-19"
+    assert rows[name]["measured_on"] == [], "an unmeasured model may not claim a target"
+    assert rows[name]["gate_eligible"] is False, (
+        "an untested model must not be gate-eligible, or it could reach a champion slot "
+        "without a measurement behind it")
+
+
+@pytest.mark.parametrize("name", WIDENING_2026_08_19["B_ML"])
+def test_a_widening_ml_model_needs_no_new_package(name):
+    """A new dependency is a decision for a person, not a side effect of adding a model."""
+    assert spec_for(name).requires == ()
+
+
+@pytest.mark.parametrize("name", WIDENING_2026_08_19["B_ML"])
+def test_a_widening_ml_model_actually_builds(name):
+    est = spec_for(name).build()
+    assert hasattr(est, "fit") and hasattr(est, "predict")
+
+
+@pytest.mark.parametrize("name", WIDENING_2026_08_19["B_ML"])
+def test_a_widening_ml_model_is_reachable_from_the_point_pool(name):
+    """`available_models()` is what the Lab and the Forecast page's comparison offer."""
+    from b_ml_pipeline import available_models
+
+    assert name in available_models()
+
+
+@pytest.mark.parametrize("name", WIDENING_2026_08_19["A_STAT"])
+def test_a_widening_stat_model_is_registered_and_dispatchable(name):
+    """Registered, described, and with a branch behind the name rather than a fall-through."""
+    import run_a_stat
+
+    assert name in run_a_stat.registry_models()
+    assert run_a_stat.model_roles()[name] == "forecast", (
+        "these are forecasters, not references; counting one as a baseline would put it in the "
+        "ruler group it is supposed to be measured against")
+    assert name in model_catalog.STAT_MODEL_NAMES
+
+
+@pytest.mark.parametrize("name", WIDENING_2026_08_19["E_QUANTILE"])
+def test_a_widening_quantile_model_is_registered_and_dispatchable(name):
+    import e_quantile_daily_pipeline as eq
+
+    assert name in eq.registry_models()
+    assert name in model_catalog.QUANTILE_MODEL_NAMES
+
+
+def test_every_quantile_name_in_the_catalogue_is_dispatchable():
+    """The same guard `STAT_MODEL_NAMES` has, for the family that had no such list.
+
+    `QUANTILE_MODEL_NAMES` exists because the Streamlit interpreter cannot import
+    `e_quantile_daily_pipeline` (it pulls in sklearn), so the Lab had a hand-written copy that
+    had drifted to one entry while the family offered three.
+    """
+    import e_quantile_daily_pipeline as eq
+
+    assert set(model_catalog.QUANTILE_MODEL_NAMES) == set(eq.registry_models())
+
+
+@pytest.mark.parametrize("name", WIDENING_2026_08_19["E_QUANTILE"])
+def test_a_widening_quantile_model_never_emits_a_crossed_band(name):
+    """A lower edge above its upper edge is not a wide interval, it is an invalid one.
+
+    All three fit each quantile independently, which does not guarantee an order. Measured:
+    HistGBQuantile and XGBQuantile cross on real rows. Nothing downstream repairs it -- the
+    predictions go straight into the yhat_p10/p50/p90 columns, and the caller's `n_cross` is only
+    ever printed -- so the repair has to happen in the family, and it does.
+    """
+    import warnings
+
+    import numpy as np
+    import e_quantile_daily_pipeline as eq
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(900, 10))
+    y = X @ rng.normal(size=10) + rng.normal(size=900)
+
+    class _Cfg:
+        lgbm_params: dict = {}
+        horizon = 5
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        preds, _crossed = eq._predict_quantiles(name, _Cfg, X[:800], y[:800], X[800:],
+                                                (0.1, 0.5, 0.9))
+
+    assert np.all(preds[0.1] <= preds[0.5]), f"{name}: p10 above p50"
+    assert np.all(preds[0.5] <= preds[0.9]), f"{name}: p50 above p90"
+
+
+def test_the_crossing_repair_reports_how_many_rows_it_fixed():
+    """Repaired AND counted. `ResidualRF` repairs silently, so nobody learns when a model
+    crosses constantly, and constant crossing is what a misconfigured quantile model looks
+    like from outside. The count feeds the report the fold loop already prints.
+    """
+    import numpy as np
+    import e_quantile_daily_pipeline as eq
+
+    crossed_row = {0.1: np.array([5.0, 1.0]), 0.5: np.array([3.0, 2.0]),
+                   0.9: np.array([4.0, 3.0])}
+    fixed, n_repaired = eq._enforce_monotone(crossed_row, (0.1, 0.5, 0.9))
+
+    assert n_repaired == 1, "one of the two rows was crossed"
+    assert list(fixed[0.1]) == [5.0, 1.0]
+    assert list(fixed[0.5]) == [5.0, 2.0], "the p50 is raised to the p10, never the reverse"
+    assert list(fixed[0.9]) == [5.0, 3.0]
+
+
+def test_the_crossing_repair_leaves_a_well_ordered_band_alone():
+    import numpy as np
+    import e_quantile_daily_pipeline as eq
+
+    fine = {0.1: np.array([1.0]), 0.5: np.array([2.0]), 0.9: np.array([3.0])}
+    fixed, n_repaired = eq._enforce_monotone(fine, (0.1, 0.5, 0.9))
+    assert n_repaired == 0
+    assert (fixed[0.1], fixed[0.5], fixed[0.9]) == (1.0, 2.0, 3.0) or all(
+        fixed[q][0] == v for q, v in ((0.1, 1.0), (0.5, 2.0), (0.9, 3.0)))
+
+
+def test_ses_holds_the_level_and_holt_carries_a_trend():
+    """The behaviour the two names promise, which is the only reason to have both.
+
+    If SES drifted or HOLT went flat, both would still 'run' and the pair would be two names for
+    one model. On a series with a clear upward trend the difference is visible in one line.
+    """
+    import warnings
+
+    import pandas as pd
+    import run_a_stat
+
+    slope, steps = 10.0, 10
+    idx = pd.bdate_range("2020-01-01", periods=600)
+    y = pd.Series(range(len(idx)), index=idx, dtype=float) * slope + 1000.0
+    future = pd.bdate_range(idx[-1] + pd.offsets.BDay(1), periods=steps)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ses, _, _ = run_a_stat._fc("SES", y, future, {}, "daily")
+        holt, _, _ = run_a_stat._fc("HOLT", y, future, {}, "daily")
+
+    # Compared against the series' own SLOPE, not its level. A first version of this test
+    # required HOLT to move by 5% of the level, which no correct trend forecast could do: the
+    # most a right answer can travel over ten steps is nine increments, here 90 against a level
+    # of 6990. The threshold was wrong, not the model.
+    ideal_span = slope * (steps - 1)
+    ses_span = float(abs(ses[-1] - ses[0]))
+    holt_span = float(holt[-1] - holt[0])
+
+    assert ses_span < 0.1 * ideal_span, (
+        f"SES must hold the level, but its forecast moved by {ses_span:,.2f}")
+    assert holt_span == pytest.approx(ideal_span, rel=0.1), (
+        f"HOLT must carry the trend: expected about {ideal_span:,.0f} over {steps} steps, "
+        f"got {holt_span:,.2f}")
+
+
+def test_nothing_in_the_frontend_hardcodes_a_model_list():
+    """The drift this widening found, and the reason the lists are derived rather than typed.
+
+    Measured on 2026-08-19 before the fix: the registry offered 15 machine-learning models and
+    the Lab named 8; the quantile family offered 3 and the Lab named 1; ETS_DAMPED was missing
+    entirely. Ten registered models could not be run from the Lab at all, while the Models page
+    told readers they could run any untested model there. `b_ml_pipeline` already had a test like
+    this one; the frontend did not, which is exactly where the stale copies lived.
+    """
+    frontend = BACKEND.parent / "frontend"
+    lab = (frontend / "pages" / "08_Lab.py").read_text(encoding="utf-8")
+    for name in ("Ridge", "HistGBDT", "GBQuantile", "SARIMAX"):
+        assert f'"{name}",' not in lab, (
+            f"08_Lab.py names {name!r} in a list. Model lists come from backend_consts, which "
+            f"reads the registry, or the Lab silently offers a stale subset of the shelf.")
+
+    consts = (frontend / "backend_consts.py").read_text(encoding="utf-8")
+    assert "from model_catalog import" in consts, (
+        "backend_consts must read the registry rather than restate it")

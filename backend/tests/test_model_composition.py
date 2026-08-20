@@ -134,11 +134,15 @@ def test_the_derived_counts_are_what_we_tell_a_client(comp):
     Adding a model changes one of these and fails here, which is the whole point: the
     previous pinned string went stale silently when C_DL was added.
     """
+    # 2026-08-19: eleven models registered across three families, none of them measured. The
+    # machine-learning count went 15 -> 21, statistical 5 -> 7, quantile 3 -> 6. What did NOT
+    # change is `evaluated_total`, still 8, which is the number that says whether any of this
+    # made the project stronger.
     assert comp["counts"] == {
-        "machine-learning models": 15,
+        "machine-learning models": 21,
         "deep-learning models": 5,
-        "statistical models": 5,
-        "quantile methods": 3,
+        "statistical models": 7,
+        "quantile methods": 6,
         "reference baselines": 3,
     }, comp["counts"]
 
@@ -183,7 +187,10 @@ def test_the_sentence_never_offers_a_single_headline_total(comp):
 
 def test_the_registry_champion_pool_is_the_machine_learning_models(comp):
     assert comp["champion_pool_category"] == CHAMPION_POOL_CATEGORY
-    assert comp["champion_pool_size"] == 15
+    # 21 since 2026-08-19. Widening the shelf widens the pool a recipe MAY draw from, and that
+    # is not the same as widening what it may draw: an untested model is not gate-eligible, so
+    # nothing here can reach a champion slot without a recorded measurement first.
+    assert comp["champion_pool_size"] == 21
     assert comp["champion_pool"] == sorted(comp["members"]["machine-learning models"])
 
 
