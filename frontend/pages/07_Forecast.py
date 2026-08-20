@@ -43,7 +43,8 @@ from i18n import install as install_language  # language toggle + pending-review
 # the page then died on `TypeError: 'str' object is not callable` the moment it reached the
 # verdict history. `test_no_i18n_shadowing` fails if any page rebinds its i18n import again.
 from i18n import t as _translate  # verdict sentences are fixed copy and are translated
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 st.set_page_config(page_title="Forecast · Treasury Forecast", layout="wide")
@@ -62,6 +63,16 @@ page_intro(
     "This page holds the forecast itself: what each Treasury line is expected to do over "
     "the next few working days, which model produced each figure, and what earned that "
     "model its place."
+)
+page_orientation(
+    can_do=(
+        "Read the forecast for each Treasury line with the range around it, see which model "
+        "produced it and what earned it that place, and generate a fresh forecast."
+    ),
+    numbers_from=(
+        "The latest forward run, and the immutable published issues under "
+        "forecasts/published/."
+    ),
 )
 glossary_note("champion", "exploratory", "holdout", "withheld", "sealed window",
               "P10", "P50", "P90", "baseline", "skill")
@@ -441,7 +452,7 @@ with _tab_run:
                 st.warning(f"**Horizon {_h} is exploratory.** The benchmark, recipe selection and "
                            f"every gate were measured at {VALIDATED_HORIZON} business days. At "
                            f"horizon {_h} no recipe was selected and no gate was measured.")
-            st.error(f"**{EXPLORATORY_LABEL}.** Nothing below is published, enters the track record, "
+            st.error(f"**{_translate(EXPLORATORY_LABEL)}.** Nothing below is published, enters the track record, "
                      f"or carries a gate verdict.")
             if st.button("Run (exploratory)", disabled=not (_tgt and _mdl)):
                 with st.spinner("Running …"):

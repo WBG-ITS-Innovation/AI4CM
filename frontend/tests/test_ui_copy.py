@@ -437,3 +437,71 @@ def test_the_sealed_window_is_defined_once_and_the_pages_do_not_redefine_it():
         text = all_text_of(path)
         assert "never saw while being chosen" not in text or definition in text, (
             f"{path.name} paraphrases the sealed-window definition instead of reusing it")
+
+
+# ---------------------------------------------------------------------------
+# 9. The same header shape on every page
+#
+# Before this, a reader arriving on any page met a different arrangement: some opened on a
+# control, some on four paragraphs of methodology, some on a title and nothing else. The shape
+# is now fixed and dull on purpose, because a reader who learns it once can use it everywhere:
+#
+#   the page's name and one-line subtitle   render_app_header
+#   one or two sentences on what it is      page_intro
+#   what you can do here                    page_orientation(can_do=...)
+#   where these numbers come from           page_orientation(numbers_from=...)
+#   what the words mean, on demand          glossary_note(...)
+#
+# numbers_from is optional and its absence is meaningful: the guide page has no figures at all.
+# ---------------------------------------------------------------------------
+
+#: The one page with no numbers of its own. Everything it says points somewhere else.
+_NO_NUMBERS_OF_ITS_OWN = {"01_Start_here.py"}
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_every_page_says_what_you_can_do_there(path):
+    source = path.read_text(encoding="utf-8")
+    assert "page_orientation(" in source, f"{path.name} has no orientation block"
+    assert "can_do=" in source, f"{path.name} does not say what you can do there"
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_every_page_with_figures_says_where_they_come_from(path):
+    source = path.read_text(encoding="utf-8")
+    if path.name in _NO_NUMBERS_OF_ITS_OWN:
+        assert "numbers_from=" not in source, (
+            f"{path.name} has no figures of its own, so it should not claim a source")
+        return
+    assert "numbers_from=" in source, (
+        f"{path.name} shows figures without saying where they come from")
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_the_orientation_lines_are_finished_sentences(path):
+    """Both are read as prose, so they are held to the prose rules like anything else."""
+    for copy in visible_copy(path):
+        if copy.call != "page_orientation":
+            continue
+        text = copy.text.strip()
+        assert len(text) >= 40, f"{copy.where()}: too short to be useful: {text!r}"
+        assert text.endswith("."), f"{copy.where()} does not finish: {text[-50:]!r}"
+        assert "—" not in text and "--" not in text, f"{copy.where()}: forbidden punctuation"
+
+
+def test_the_two_labels_have_one_wording_between_them():
+    """A helper, not free markdown on each page, so the labels cannot drift into nine variants."""
+    import inspect
+
+    from ui_styles import page_orientation
+
+    src = inspect.getsource(page_orientation)
+    assert "What you can do here." in src
+    assert "Where these numbers come from." in src
+
+    # And no page may write its own version of either label.
+    for path in PAGES:
+        text = all_text_of(path)
+        for label in ("What you can do here", "Where these numbers come from"):
+            assert label not in text, (
+                f"{path.name} writes {label!r} itself instead of calling page_orientation")

@@ -16,7 +16,8 @@ except ImportError:
 
 from ui_styles import inject_design_system  # presentation only
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 st.set_page_config(page_title="Overview · Treasury Forecast", layout="wide")
@@ -34,6 +35,15 @@ render_app_header("Overview", "What this lab does, and what it does not claim")
 page_intro(
     "This is the landing page. It confirms the Lab can find its backend, shows what has "
     "been run so far, and states plainly what this project does and does not claim."
+)
+page_orientation(
+    can_do=(
+        "Check that the Lab can find its backend, see how many runs exist, and read what "
+        "this project does and does not claim."
+    ),
+    numbers_from=(
+        "The run folders under frontend/runs/, and the progress record in reports/."
+    ),
 )
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir

@@ -16,6 +16,7 @@ from i18n import install as install_language  # language toggle + pending-review
 from i18n import t  # this page carries most of the fixed copy in the app
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from ui_styles import inject_design_system, inject_global_css, page_header, page_intro
+from ui_styles import page_orientation  # the same two questions on every page
 from ui_styles import render_app_header
 from ui_styles import render_brand  # the one brand header, in the sidebar
 from ui_styles import section_header
@@ -34,6 +35,12 @@ render_app_header("Start here",
 page_intro(
     "This page is the way in. It says what each page of the Lab is for, what you can do "
     "there, and the difference between an official forecast and an experiment."
+)
+page_orientation(
+    can_do=(
+        "Read what each page is for, what you can do there, and one thing to try on it. "
+        "Every section links straight to its page."
+    ),
 )
 glossary_note("champion", "exploratory", "withheld", "gate", "sealed window", "baseline")
 
