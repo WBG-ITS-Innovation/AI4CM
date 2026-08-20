@@ -288,3 +288,61 @@ class TestBackendBridgeFallback:
         fallback = run_dir / "outputs"
         assert fallback.exists(), "Fallback out_root (run_dir/outputs) should be created"
         assert rc != 0  # Expected: python doesn't exist
+
+
+# ---------------------------------------------------------------------------
+# The downloads offered after a run
+#
+# The same three files plus the archive that the History page keeps for every past run, here
+# for the run that has just finished, so you do not have to leave the page and find it again.
+#
+# The filenames are the real ones, verified in a run folder rather than assumed. There is no
+# predictions.csv and no metrics.csv in this project; the long form is what gets written.
+# ---------------------------------------------------------------------------
+
+LAB_SOURCE = LAB_PAGE.read_text(encoding="utf-8")
+
+
+def test_the_lab_offers_the_same_downloads_history_does():
+    history = (FRONTEND_DIR / "pages" / "06_History.py").read_text(encoding="utf-8")
+    for name in ("predictions_long.csv", "metrics_long.csv", "leaderboard.csv"):
+        assert name in history, f"fixture assumption: History offers {name}"
+        assert name in LAB_SOURCE, f"the Lab does not offer {name} after a run"
+    assert "zip_outputs(" in LAB_SOURCE, "the Lab offers no artifacts archive"
+
+
+def test_the_lab_does_not_invent_filenames_the_backend_never_writes():
+    """The names to offer were checked in a real run folder, not guessed from the brief."""
+    for invented in ('"predictions.csv"', '"metrics.csv"', '"forecast.csv"'):
+        assert invented not in LAB_SOURCE, (
+            f"the Lab offers {invented}, which no run folder contains")
+
+
+def test_the_downloads_look_in_the_cadence_subfolders_too():
+    """A weekly or monthly run keeps its outputs one level down, so the root alone misses them."""
+    block = LAB_SOURCE.split("def _first_existing")[1].split("\n    st.markdown")[0]
+    for cadence in ("daily", "weekly", "monthly"):
+        assert f'"{cadence}"' in block, f"the download lookup skips the {cadence} subfolder"
+
+
+def test_the_run_folder_path_is_shown_as_plain_text():
+    """"Where did it go" is the first question after a run, so it is on screen, not implied."""
+    assert "This run's folder" in LAB_SOURCE
+    assert "st.code(str(_out_dir)" in LAB_SOURCE, (
+        "the run folder must be shown verbatim, so it can be copied")
+
+
+def test_the_lab_points_at_history_by_its_current_filename():
+    """The nav renumbering moved History from 05_ to 06_, and a stale link renders nothing."""
+    assert 'st.page_link("pages/06_History.py"' in LAB_SOURCE
+    assert "05_History" not in LAB_SOURCE
+    assert (FRONTEND_DIR / "pages" / "06_History.py").exists()
+
+
+def test_every_download_key_is_unique_within_the_block():
+    """Streamlit raises DuplicateWidgetID if two download buttons share a key."""
+    import re
+
+    keys = re.findall(r'key=f"(lab_dl_[a-z]+)_\{run_id\}"', LAB_SOURCE)
+    assert len(keys) == len(set(keys)), f"duplicate download keys: {keys}"
+    assert len(keys) >= 4, f"expected four downloads, found keys {keys}"
