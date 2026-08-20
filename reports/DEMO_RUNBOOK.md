@@ -81,7 +81,7 @@ shows a red ❌ and explains itself.
 Open the **"This is not the single best 2024 result"** expander on Expenditure. Say: "the
 system records where its own choice was not the top score, and why."
 
-### C · Models page (🧩)
+### C · Documentation page
 
 Scroll to **Promoted recipes**. Point at two columns:
 
@@ -158,7 +158,7 @@ Supporting facts, if asked:
 | Symptom | Fix |
 |---|---|
 | Forecast page: "No forward run found" | Run `./backend/.venv/bin/python backend/run_forward_forecast.py`. It prints the command itself. |
-| Models page: red "does not reconcile" box | Do **not** hand-wave it. Say "the system is telling us its own records disagree, and we would not present numbers in that state." Then move to the HTML report, which is generated from the same registry and independent of the app. |
+| Documentation page: red "does not reconcile" box | Do **not** hand-wave it. Say "the system is telling us its own records disagree, and we would not present numbers in that state." Then move to the HTML report, which is generated from the same registry and independent of the app. |
 | Streamlit port in use | `./.venv/bin/streamlit run Overview.py --server.port 8502` |
 | A page throws | Skip it. The HTML report is self-contained and needs no app. |
 | Asked for 2025 accuracy | See DO NOT CLAIM. The answer is "that evaluation has not been run; it is a one-shot check and we have deliberately not spent it." |

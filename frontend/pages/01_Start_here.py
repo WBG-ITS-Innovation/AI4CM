@@ -1,4 +1,4 @@
-# pages/00_Start_here.py — The guide. First in the sidebar, and written to be read first.
+# pages/01_Start_here.py — The guide. First in the sidebar, and written to be read first.
 #
 # Why this page exists: the app had eight pages and no way in. A reader arriving at it had to
 # infer from the names which one answered their question, and two of the names ("Lab",
@@ -64,9 +64,9 @@ def _link(path: str, label: str) -> None:
     """A link to another page, resolved against whichever file is the entry point.
 
     Streamlit resolves a page link relative to the entry point, and this app has two. Run
-    normally the entry point is ``Overview.py``, so the path is ``pages/01_Forecast.py``.
+    normally the entry point is ``Overview.py``, so the path is ``pages/07_Forecast.py``.
     Rendered in isolation, as the page tests do, the entry point is this file and the same
-    link has to be ``01_Forecast.py``. Trying both means the guide renders in either case;
+    link has to be ``07_Forecast.py``. Trying both means the guide renders in either case;
     falling back to a caption means a page that is genuinely missing is named rather than
     taking the whole guide down with it.
     """
@@ -89,7 +89,7 @@ def _page(icon: str, title: str, path: str, purpose: str, do: str, try_this: str
 
 
 _page(
-    "🔭", "Forecast", "pages/01_Forecast.py",
+    "🔭", "Forecast", "pages/07_Forecast.py",
     "The forecast itself: what each Treasury line is expected to do over the next working days.",
     "Read the central estimate and the range around it for each line, see which model produced "
     "it and what earned that model its place, and see the next best alternatives with their "
@@ -101,7 +101,7 @@ _page(
 )
 
 _page(
-    "🎯", "Scorecard", "pages/02_Scorecard.py",
+    "🎯", "Scorecard", "pages/08_Scorecard.py",
     "Forecast against reality: how the published forecasts actually did once the day arrived.",
     "See every published prediction that has been scored, with the actual figure beside it, and "
     "every prediction still waiting for its day. You can also upload newly reported actuals, "
@@ -111,7 +111,7 @@ _page(
 )
 
 _page(
-    "📈", "Dashboard", "pages/03_Dashboard.py",
+    "📈", "Dashboard", "pages/04_Dashboard.py",
     "The detail behind one experimental run: predictions, errors and diagnostics.",
     "Overlay a model's predictions on the actual series, inspect where the error came from, and "
     "download the underlying files.",
@@ -120,7 +120,7 @@ _page(
 )
 
 _page(
-    "🔀", "Compare runs", "pages/04_Compare.py",
+    "🔀", "Compare runs", "pages/05_Compare.py",
     "Two to six experimental runs side by side, on the same axes.",
     "Put different models, horizons or configurations next to each other and see which one is "
     "actually better rather than which one you expected to be.",
@@ -129,7 +129,7 @@ _page(
 )
 
 _page(
-    "🕒", "History", "pages/05_History.py",
+    "🕒", "History", "pages/06_History.py",
     "Every experimental run this Lab has produced, oldest to newest.",
     "Browse past runs, see what each was configured with, and download its outputs.",
     "Find a run that failed a check. The Lab keeps those rather than deleting them, because a "
@@ -137,7 +137,7 @@ _page(
 )
 
 _page(
-    "🧩", "Models", "pages/06_Models.py",
+    "🧩", "Models", "pages/09_Documentation.py",
     "The shelf: every model available here, what it does, and whether anybody has measured it.",
     "Read what each model is in plain language, see which ones have a recorded result and which "
     "are registered candidates nobody has run yet, and look up the exact settings any of them "
@@ -147,7 +147,7 @@ _page(
 )
 
 _page(
-    "🧺", "Data pre-processing", "pages/07_Data_Preprocessing.py",
+    "🧺", "Data pre-processing", "pages/02_Data_Preprocessing.py",
     "Turning a raw Treasury export into the clean daily series the models read.",
     "Upload a source file, see what the cleaning steps did to it, and check the result before "
     "it is used.",
@@ -156,7 +156,7 @@ _page(
 )
 
 _page(
-    "🧪", "Lab", "pages/08_Lab.py",
+    "🧪", "Lab", "pages/03_Lab.py",
     "The workbench: run any model on any line, at any horizon, as an experiment.",
     "Choose a family, a model, a target and a horizon, launch it, and watch the backend log as "
     "it runs. Every run here is exploratory and is measured on train and dev data only.",

@@ -1,4 +1,4 @@
-# pages/04_Compare.py — Cross-Run Comparison
+# pages/05_Compare.py — Cross-Run Comparison
 from __future__ import annotations
 from pathlib import Path
 from typing import List, Dict, Optional

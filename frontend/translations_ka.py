@@ -53,7 +53,7 @@ TRANSLATIONS = {
     "Dashboard": "მაჩვენებლების დაფა",
     "Compare runs": "გაშვებების შედარება",
     "Run history": "გაშვებების ისტორია",
-    "Models": "მოდელები",
+    "Documentation": "დოკუმენტაცია",
     "Data pre-processing": "მონაცემთა წინასწარი დამუშავება",
     "Lab": "ლაბორატორია",
     "Overview": "მიმოხილვა",
@@ -69,8 +69,8 @@ TRANSLATIONS = {
         "რამდენიმე გაშვების გვერდიგვერდ განთავსება ერთსა და იმავე მიზანსა და ჰორიზონტზე",
     "Browse past runs and download their outputs":
         "წარსული გაშვებების დათვალიერება და მათი შედეგების ჩამოტვირთვა",
-    "Model families, promoted recipes and their evidence":
-        "მოდელების ოჯახები, დაწინაურებული რეცეპტები და მათი მტკიცებულებები",
+    "Every model, its settings, the promoted recipes and their evidence":
+        "ყოველი მოდელი, მისი პარამეტრები, დაწინაურებული რეცეპტები და მათი მტკიცებულებები",
     "Build and inspect the canonical daily Treasury file":
         "ხაზინის კანონიკური დღიური ფაილის შექმნა და შემოწმება",
     "Configure and launch a backtest run":

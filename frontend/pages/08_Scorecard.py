@@ -1,4 +1,4 @@
-# pages/02_Scorecard.py — Forecast against reality, and the one place actuals arrive.
+# pages/08_Scorecard.py — Forecast against reality, and the one place actuals arrive.
 #
 # This page answers the only question that finally matters about a forecast: when the day
 # came, what actually happened? Everything else in this app is measured on history the models

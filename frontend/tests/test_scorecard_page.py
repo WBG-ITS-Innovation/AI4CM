@@ -35,7 +35,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from published_forecasts import SCORECARD_COLUMNS, SCORECARD_SCHEMA_VERSION  # noqa: E402
 
-PAGE = FRONTEND / "pages" / "02_Scorecard.py"
+PAGE = FRONTEND / "pages" / "08_Scorecard.py"
 SOURCE = PAGE.read_text(encoding="utf-8")
 
 

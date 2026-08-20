@@ -556,10 +556,10 @@ def test_nothing_in_the_frontend_hardcodes_a_model_list():
     this one; the frontend did not, which is exactly where the stale copies lived.
     """
     frontend = BACKEND.parent / "frontend"
-    lab = (frontend / "pages" / "08_Lab.py").read_text(encoding="utf-8")
+    lab = (frontend / "pages" / "03_Lab.py").read_text(encoding="utf-8")
     for name in ("Ridge", "HistGBDT", "GBQuantile", "SARIMAX"):
         assert f'"{name}",' not in lab, (
-            f"08_Lab.py names {name!r} in a list. Model lists come from backend_consts, which "
+            f"03_Lab.py names {name!r} in a list. Model lists come from backend_consts, which "
             f"reads the registry, or the Lab silently offers a stale subset of the shelf.")
 
     consts = (frontend / "backend_consts.py").read_text(encoding="utf-8")
