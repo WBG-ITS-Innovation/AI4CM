@@ -37,14 +37,16 @@ from i18n import t as _t  # this page's fixed headings
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # noqa: E402
+from ui_styles import render_brand  # the one brand header, in the sidebar
 
-st.set_page_config(page_title="Scorecard · Treasury Forecast", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Scorecard · Treasury Forecast", layout="wide")
 inject_global_css()
 inject_design_system()
 
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 render_app_header("Scorecard", "What was forecast, and what actually happened")
 page_intro(
@@ -56,9 +58,6 @@ glossary_note("pending", "champion", "baseline", "skill", "P10", "P50", "P90")
 DATA = REPOROOT / "backend" / "data" / "processed" / "master_daily_clean_treasury.csv"
 UPLOAD_DIR = APPROOT / "runs_uploads" / "actuals"
 
-st.markdown(page_header("🎯 Scorecard",
-                        "Every published forecast, scored against the actual figure once it arrives"),
-            unsafe_allow_html=True)
 
 st.markdown(
     "Every forecast this system publishes is written down before the day it describes, and is "

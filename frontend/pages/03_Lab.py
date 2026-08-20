@@ -34,9 +34,10 @@ from i18n import install as install_language  # language toggle + pending-review
 from i18n import t as _t  # this page's tooltips are its own, and are translated here
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
+from ui_styles import render_brand  # the one brand header, in the sidebar
 from ui_styles import plotly_chrome  # presentation only
 import ops_baseline_view as obv  # the Treasury's planning method, one construction
-st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="Lab · Treasury Forecast", layout="wide")
 inject_global_css()
 
 inject_design_system()
@@ -44,6 +45,7 @@ inject_design_system()
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 
 render_app_header("Lab", "Configure and launch a backtest run")
@@ -132,8 +134,8 @@ HELP: Dict[str, str] = {
     "horizon": (
         "How many steps ahead to forecast at the selected cadence.\n\n"
         "Examples:\n"
-        "• Monthly horizon=6 → forecast 6 months ahead\n"
-        "• Daily horizon=14 → forecast 14 days ahead\n\n"
+        "Monthly horizon=6 means forecast 6 months ahead.\n"
+        "Daily horizon=14 means forecast 14 days ahead.\n\n"
         "Longer horizons are harder and typically increase error."
     ),
     "family": (
@@ -241,7 +243,7 @@ HELP: Dict[str, str] = {
     "quantiles": (
         "Quantiles for risk-aware forecasts.\n\n"
         "Example:\n"
-        "0.1,0.5,0.9 → P10 (low), P50 (median), P90 (high)\n\n"
+        "0.1,0.5,0.9 gives P10 (low), P50 (median), P90 (high).\n\n"
         "Use cases:\n"
         "• planning under uncertainty\n"
         "• conservative vs optimistic scenarios"
@@ -353,11 +355,6 @@ If either path is missing, go to the **Overview** page and re-run setup scripts.
 # -------------------------------------------------------------------
 # Page header
 # -------------------------------------------------------------------
-st.markdown(
-    page_header("🧪 Forecast Lab",
-                "Configure and run forecasting experiments"),
-    unsafe_allow_html=True,
-)
 st.caption(
     "Run forecasting experiments (statistical, ML, deep learning, quantiles) and review outputs immediately. "
     "Each experiment is saved as a run folder for reproducibility."
@@ -441,7 +438,7 @@ with st.expander("Dataset preview", expanded=True):
     head = df.head(200).copy()
     dcol_guess = "date" if "date" in head.columns else head.columns[0]
     dtry = pd.to_datetime(head[dcol_guess], errors="coerce")
-    st.caption(f"Rows: {len(df):,} • date span (preview parse): {dtry.min()} → {dtry.max()}")
+    st.caption(f"Rows: {len(df):,}. Date span (preview parse): {dtry.min()} to {dtry.max()}.")
     st.dataframe(head, use_container_width=True)
 
 # -------------------------------------------------------------------
@@ -740,7 +737,7 @@ def _on_progress(tail: str, elapsed: float):
     status.info(f"Elapsed: {elapsed:.1f}s")
     _scroll_term(log_box, tail)
 
-if st.button("🚀 Run experiment", type="primary", use_container_width=True, help=_lab_help("run_button")):
+if st.button("Run experiment", type="primary", use_container_width=True, help=_lab_help("run_button")):
     py = st.session_state.get("backend_py", "")
     back = st.session_state.get("backend_dir", "")
 

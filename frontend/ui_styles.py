@@ -126,8 +126,12 @@ def page_header(title: str, subtitle: str = "") -> str:
 
 
 def info_tip(text: str) -> str:
-    """Return HTML for an inline info tip box."""
-    return f'<div class="info-tip">💡 {text}</div>'
+    """Return HTML for an inline info tip box.
+
+    No glyph. The box already has a tint and a border saying it is an aside, so a lightbulb
+    beside it repeated that in a picture and nothing else.
+    """
+    return f'<div class="info-tip">{text}</div>'
 
 
 def glossary_table(rows: list) -> str:
@@ -730,16 +734,6 @@ h2 {{ font-size: {TYPE['title'][0]}px; line-height: {TYPE['title'][1]}px;
       letter-spacing: -0.011em; }}
 h3 {{ font-size: {TYPE['lede'][0]}px; line-height: {TYPE['lede'][1]}px; }}
 
-/* ── app header: logo + name + subtitle ─────────────────────────────────────── */
-.ds-appbar {{ display:flex; align-items:center; gap:14px; padding:2px 0 12px;
-  border-bottom:1px solid var(--hairline); margin-bottom:16px; }}
-.ds-appbar .ds-logo {{ flex:0 0 auto; width:44px; height:44px; display:block; }}
-.ds-appbar .ds-logo svg {{ width:100%; height:100%; display:block; }}
-.ds-appbar .ds-name {{ font-size:{TYPE['lede'][0]}px; font-weight:650; color:var(--ink);
-  line-height:1.2; }}
-.ds-appbar .ds-sub {{ font-size:{TYPE['tiny'][0]}px; color:var(--muted); line-height:1.35;
-  max-width:{MEASURE_CH}ch; }}
-
 .ds-card {{ background:#fff; border:1px solid var(--hairline); border-radius:10px;
   padding:14px; margin-bottom:8px; }}
 .ds-card .ds-label {{ font-size:{TYPE['micro'][0]}px; color:var(--muted);
@@ -1126,41 +1120,99 @@ def plotly_chrome(fig, *, showlegend: bool = True, yaxis_tickformat: str = "",
 # with name and subtitle, because a missing mark must not take the page down.
 # ══════════════════════════════════════════════════════════════════════════════
 
-APP_NAME = "Treasury Forecast Lab"
-APP_SUBTITLE = ("Daily cash-flow forecasting for the Georgian Treasury — research and "
-                "evaluation workbench")
+#: The app's name, as one string, shown once per page in the sidebar brand.
+#:
+#: PLACEHOLDER. The final wording is awaiting stakeholder sign-off. It is deliberately one
+#: string rather than a composed lockup so that changing it is this one line plus its
+#: translation, and so a translator sees the whole name in context rather than two fragments.
+#:
+#: No comma and no dash: it reads as a single name, which is what a wordmark is, and it sets
+#: on one line under the seal without needing punctuation to hold it together.
+WORDMARK = "Georgian State Treasury Forecast Lab"
 
 from pathlib import Path as _Path
 
 _LOGO_PATH = _Path(__file__).resolve().parent / "assets" / "logo.svg"
 
 
-def _logo_svg() -> str:
-    """Inline the logo verbatim. Returns "" when the file is absent."""
-    try:
-        raw = _LOGO_PATH.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-    # Strip only an XML prolog/doctype, which cannot appear mid-document. The <svg> element and
-    # everything inside it — paths, fills, viewBox — is passed through untouched.
-    import re as _re
-    raw = _re.sub(r"<\?xml[^>]*\?>", "", raw)
-    raw = _re.sub(r"<!DOCTYPE[^>]*>", "", raw)
-    return raw.strip()
+def brand_css(wordmark: str) -> str:
+    """The stylesheet for the sidebar brand: a light plaque, then the wordmark.
+
+    Two decisions here are not cosmetic.
+
+    **Why the plaque is light.** The sidebar is dark navy, and the emblem is gold on dark navy
+    with white detail. On the dark sidebar its navy passages very nearly disappear. The
+    instruction is that the mark is used as provided and never recoloured, so the fix is to
+    change what sits behind it rather than the mark itself.
+
+    **Why the wordmark is a pseudo-element on the nav.** Streamlit builds the sidebar as
+    stSidebarHeader, then stSidebarNav, then stSidebarUserContent, and an ordinary
+    ``st.sidebar`` call lands in the third of those, below the navigation. Only two things
+    reach above it: ``st.logo``, which writes into the header, and CSS on the nav itself. So
+    the seal goes through ``st.logo`` and the wordmark is drawn on the nav's ::before, which
+    puts it directly under the seal and directly above the list of pages.
+    """
+    return f"""
+<style>
+/* the plaque the seal sits on, and the wordmark under it, as one light band */
+[data-testid="stSidebarHeader"] {{
+  background: {TOK['bg']} !important;
+  padding-top: 12px !important;
+  padding-bottom: 4px !important;
+}}
+[data-testid="stSidebarHeader"] [data-testid="stLogo"] {{
+  height: 46px !important; max-height: 46px !important; width: auto !important;
+  margin: 0 0 0 4px !important;
+}}
+[data-testid="stSidebarNav"] {{ position: relative; }}
+[data-testid="stSidebarNav"]::before {{
+  content: "{wordmark}";
+  display: block;
+  background: {TOK['bg']};
+  color: {TOK['ink']} !important;
+  font-size: {TYPE['small'][0]}px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.006em;
+  padding: 0 16px 12px 16px;
+  margin: -1px 0 10px 0;
+  border-bottom: 1px solid {TOK['hairline']};
+}}
+</style>
+"""
+
+
+def render_brand() -> None:
+    """The one brand header for the whole app: the seal, then the wordmark, above the nav.
+
+    Called once per page, after ``st.set_page_config``. Rendered per page because Streamlit
+    reruns each page script on its own; the reader sees one brand in one place.
+
+    ``st.logo`` is handed the emblem's path, so the file is served exactly as it sits on disk:
+    nothing redraws, recolours, crops or regenerates it. If it is absent the wordmark still
+    renders, because a missing mark must not take the sidebar down.
+    """
+    import streamlit as st
+
+    if _LOGO_PATH.exists():
+        st.logo(str(_LOGO_PATH), size="large")
+    # Assigned first, then passed by name. ui_copy's collector reads call arguments, and a
+    # stylesheet written inline would be gathered as page prose and held to the sentence rules.
+    css = brand_css(_translate(WORDMARK, domain="mixed"))
+    st.markdown(css, unsafe_allow_html=True)
 
 
 def app_header(page_title: str = "", page_subtitle: str = "") -> str:
-    """The header for every page: logo, app name, one-line subtitle.
+    """One page title and one subtitle, as plain text. No mark.
 
-    ``page_title``/``page_subtitle`` override the app-level strings for a specific page.
+    The emblem used to sit here, which meant it appeared beside every page name: "Scorecard"
+    and "Lab" each carried a Treasury seal, as though each page were separately issued. The
+    mark belongs to the app, so it is shown once, in the sidebar, by :func:`render_brand`.
+
+    This renders the page's only heading. Every page previously drew a second, larger title
+    of its own immediately below this one, saying much the same thing with an emoji attached.
     """
-    logo = _logo_svg()
-    logo_html = f'<span class="ds-logo">{logo}</span>' if logo else ""
-    name = _translate(page_title or APP_NAME, domain="mixed")
-    sub = _translate(page_subtitle or APP_SUBTITLE, domain="mixed")
-    return (f'<div class="ds-appbar">{logo_html}'
-            f'<span><span class="ds-name">{name}</span><br>'
-            f'<span class="ds-sub">{sub}</span></span></div>')
+    return page_header(page_title or WORDMARK, page_subtitle)
 
 
 def render_app_header(page_title: str = "", page_subtitle: str = "") -> None:

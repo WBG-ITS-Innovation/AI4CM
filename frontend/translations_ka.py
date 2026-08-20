@@ -54,13 +54,13 @@ TRANSLATIONS = {
     "Compare runs": "გაშვებების შედარება",
     "Run history": "გაშვებების ისტორია",
     "Documentation": "დოკუმენტაცია",
+    "Georgian State Treasury Forecast Lab":
+        "საქართველოს სახელმწიფო ხაზინის პროგნოზის ლაბორატორია",
     "Data pre-processing": "მონაცემთა წინასწარი დამუშავება",
     "Lab": "ლაბორატორია",
     "Overview": "მიმოხილვა",
 
     # ── Page subtitles ──────────────────────────────────────────────────────
-    "What this Lab is, and where to go for each question":
-        "რა არის ეს ლაბორატორია და სად უნდა მიხვიდეთ თითოეული კითხვისთვის",
     "What was forecast, and what actually happened":
         "რა იყო ნაპროგნოზები და რა მოხდა სინამდვილეში",
     "Evaluate one run: accuracy, intervals and integrity checks":
