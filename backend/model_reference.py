@@ -50,6 +50,24 @@ REPO = BACKEND.parent
 #: applies across libraries that share a concept under the same name, with a sensible range.
 #: Ranges are conventional starting points for a search, not measured optima.
 PARAM_MEANING: Dict[str, Dict[str, str]] = {
+    # ── added 2026-08-19 with the models that set them ──────────────────────────────────────
+    # `test_every_reported_parameter_has_a_plain_language_meaning_or_says_none` fails when a
+    # model sets a parameter with no entry here, which is the right guard: a parameter name with
+    # no explanation is a dump, not a reference. These four arrived with TheilSen, KNN and
+    # KernelRidge and the test caught all four.
+    "max_subpopulation": {"controls": "How many small subsets the robust linear fit draws before "
+                                      "taking the middle answer. Without a cap the number grows "
+                                      "combinatorially with the feature set and the fit stops "
+                                      "finishing.", "range": "500 – 10000"},
+    "n_neighbors": {"controls": "How many similar past days are averaged to make a prediction. "
+                                "Fewer follows the nearest days closely and is noisier; more "
+                                "smooths toward the overall average.", "range": "3 – 50"},
+    "weights": {"controls": "Whether nearer days count for more than further ones when their "
+                            "outcomes are averaged. `distance` weights by closeness, `uniform` "
+                            "treats every neighbour alike.", "range": "uniform | distance"},
+    "kernel": {"controls": "The shape the fit is allowed to bend into. `rbf` lets it curve "
+                           "smoothly around each observation; `linear` holds it straight, which "
+                           "would make the model a slower Ridge.", "range": "rbf | linear | poly"},
     "n_estimators": {"controls": "How many trees are built. More trees keep reducing error until "
                                  "they stop helping; they never overfit on their own in a bagged "
                                  "model, but each one costs time.",
@@ -137,11 +155,44 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "A blend of ridge and lasso. It keeps lasso's ability to discard features while handling "
         "correlated features more gracefully — and calendar features are heavily correlated, "
         "since day-of-month and business-day-of-month largely say the same thing."},
+    # Added 2026-08-19. Every one of these is a candidate with no recorded result, and each
+    # says so in its own summary rather than relying on the UNTESTED badge alone: a reader
+    # skimming summaries should not have to cross-reference a badge to learn that.
+    "BayesianRidge": {"family": "Linear", "summary":
+        "Ridge that estimates its own shrinkage from the data instead of being handed a value. "
+        "There is no setting to choose, so it cannot be tuned into looking good, which makes it "
+        "an honest reading next to Ridge on the same features. Registered as a candidate and not "
+        "yet measured."},
+    "TheilSen": {"family": "Linear", "summary":
+        "A robust straight-line fit that takes the middle answer from many small subsets of the "
+        "history. Huber de-weights extreme days one at a time; this is unmoved by a whole run of "
+        "them together, which is what a month-end looks like in this series. Registered as a "
+        "candidate and not yet measured."},
+    "KNN": {"family": "Distance", "summary":
+        "Looks up the most similar days in the past and averages what happened on them, weighted "
+        "by how similar they were. It fits no formula at all, so it answers a different question "
+        "from every other model here: whether days like today have happened before. Registered as "
+        "a candidate and not yet measured."},
+    "KernelRidge": {"family": "Kernel", "summary":
+        "Ridge on a curved feature space rather than a straight one, so it can bend where the "
+        "linear models cannot without splitting the way the trees do. Sits between the two, and "
+        "is measured on scaled features because its kernel is a distance. Registered as a "
+        "candidate and not yet measured."},
     "GBDT_L1": {"family": "Boosted trees", "summary":
         "Boosted trees trained on absolute error, splitting on actual feature values rather than "
         "on the 255-bin histogram its faster sibling uses. Slower, and on a few thousand rows "
         "that costs little; the binning is an approximation precisely at the extreme values this "
         "series carries its information in. Registered as a candidate and not yet measured."},
+    "DecisionTree_L1": {"family": "Single tree", "summary":
+        "One decision tree, trained on absolute error. It is the only model on this shelf whose "
+        "reasoning can be printed and read end to end, which is what matters when somebody has "
+        "to defend a number rather than quote it. Expect it to be beaten by the ensembles. "
+        "Registered as a candidate and not yet measured."},
+    "AdaBoost": {"family": "Boosted trees", "summary":
+        "Boosting that reweights the days the previous trees got most wrong, where the "
+        "gradient-boosted models instead fit what is left over. On a series whose informative "
+        "days are rare and extreme those are genuinely different behaviours. Registered as a "
+        "candidate and not yet measured."},
     "RandomForest": {"family": "Bagged trees", "summary":
         "Many deep trees, each grown on a different random sample of rows and features, then "
         "averaged. Averaging independent errors is what makes it robust; it captures interactions "
@@ -194,6 +245,24 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "the edges cannot cross. Early stopping leaves a gap the size of the forecast horizon, so "
         "the stopping decision is not made against rows whose answers sit inside the validation "
         "slice."},
+    # Added 2026-08-19. The family's three existing members are all tree ensembles, so it could
+    # not say whether its band widths are a property of this series or of trees. These widen it
+    # on purpose: one linear, one binned, one exact-split.
+    "LinearQuantile": {"family": "Quantile", "summary":
+        "Quantile regression on a straight line — the only member of this family that is not a "
+        "tree. That is the point of it: when every other member produces bands of a similar "
+        "width, this one says whether that is the data speaking or the method. Registered as a "
+        "candidate and not yet measured."},
+    "HistGBQuantile": {"family": "Boosted trees (quantile)", "summary":
+        "The binned sibling of the gradient-boosted quantile model: same pinball loss, splitting "
+        "on a histogram of the features rather than on their actual values. One fit per quantile, "
+        "sorted afterwards so the edges cannot cross. Registered as a candidate and not yet "
+        "measured."},
+    "XGBQuantile": {"family": "Boosted trees (quantile)", "summary":
+        "XGBoost's own quantile objective, one fit per quantile, sorted afterwards so the edges "
+        "cannot cross. Needs XGBoost 2.0 or newer; where the package is older the model is "
+        "omitted rather than quietly falling back to a mean fit under a quantile name. Registered "
+        "as a candidate and not yet measured."},
     # ── A_STAT (backend/run_a_stat.py) ──────────────────────────────────────────────────────
     # These keys use the family's own UPPERCASE dispatch names. They were previously "ETS" and
     # "Theta", which matched nothing the pipeline dispatches on and nothing model_pool()
@@ -210,6 +279,16 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
     "THETA": {"family": "Statistical", "summary":
         "A classical decomposition method: de-trend the series, forecast the pieces, recombine. "
         "Strong on smooth seasonal series and a well-known competition benchmark."},
+    "SES": {"family": "Statistical", "summary":
+        "Exponential smoothing with no trend and no seasonal term, so it tracks the level only. "
+        "It is the plainest member of this family, and it exists to say how much of the fuller "
+        "method's accuracy comes from the level alone. Registered as a candidate and not yet "
+        "measured."},
+    "HOLT": {"family": "Statistical", "summary":
+        "Exponential smoothing with a trend but no seasonal term, and the trend continues at the "
+        "same slope rather than flattening out. It sits between the level-only method and the "
+        "damped one, so the three together show what the trend and the damping are each worth. "
+        "Registered as a candidate and not yet measured."},
     "SARIMAX": {"family": "Statistical", "summary":
         "Seasonal ARIMA with optional external regressors. Models the series through its own "
         "autocorrelation and differencing, and is the only A_STAT model that can take exogenous "

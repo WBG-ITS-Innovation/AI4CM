@@ -172,7 +172,81 @@ the two lists agree. `_fc` refuses a name it has no branch for rather than falli
 to a naive forecast, which is what it used to do, and which meant an unimplemented name
 would be published under the requested model's label.
 
-`ETS_DAMPED` was added exactly this way and is a short worked example.
+`ETS_DAMPED` was added exactly this way and is a short worked example. `SES` and `HOLT`
+were added on 2026-08-19 as a second one; they share the same `ExponentialSmoothing` call
+as `ETS` but sit in their own branch rather than widening the condition `ETS` and
+`ETS_DAMPED` share, because those two have measured numbers behind them and a new code
+path inside their branch would be a new code path inside the thing that produced them.
+
+---
+
+## Adding a quantile model instead
+
+The quantile family produces a range rather than a single number, and it builds its
+estimators per fold like the statistical family. Two edits in
+`backend/e_quantile_daily_pipeline.py`:
+
+1. an entry in `registry_models()`, `{name: one-line description}`;
+2. a branch in `_predict_quantiles` returning `({quantile: array}, n_crossed_rows)`.
+
+Add the name to `QUANTILE_MODEL_NAMES` in `backend/model_catalog.py` too, for the same
+reason as the statistical list: a test asserts the two agree.
+
+**The one thing that is easy to get wrong.** If you fit each quantile as its own model,
+nothing guarantees the p10 lands below the p50. A band whose lower edge is above its upper
+edge is not a wide interval, it is an invalid one. Nothing downstream fixes it for you: the
+predictions go straight into the `yhat_p10` / `yhat_p50` / `yhat_p90` columns, and the
+`n_cross` your branch returns is only ever *printed*. So pass your predictions through
+`_enforce_monotone`, which sorts each row and returns the count of rows it had to fix:
+
+```python
+if model_name == "MyQuantile":
+    return _enforce_monotone({q: _fit_mine(X_tr, y_tr, X_new, q) for q in quantiles},
+                             quantiles)
+```
+
+Return the count rather than zero. Constant crossing is what a misconfigured quantile
+model looks like from outside, and a silent repair means nobody ever finds out.
+
+`LinearQuantile`, `HistGBQuantile` and `XGBQuantile` were added this way on 2026-08-19.
+Two of the three cross on real rows, which is why the paragraph above exists.
+
+---
+
+## What you do NOT have to update
+
+Nothing in `frontend/`. The Lab's model pickers read the registry through
+`frontend/backend_consts.py`, which imports `model_catalog` directly. That is why the
+catalogue keeps no heavy imports at module level.
+
+This is worth stating because it was not always true, and the failure was quiet. Until
+2026-08-19 those lists were typed by hand with a comment asking whoever added a model to
+remember. Nobody had: the registry offered 15 machine-learning models and the Lab named 8,
+the quantile family offered 3 and the Lab named 1, and `ETS_DAMPED` was missing entirely.
+**Ten registered models could not be run from the Lab at all**, while the Models page told
+readers they could run any untested model there. A test now fails if a model list
+reappears in `08_Lab.py`.
+
+One trap if you ever touch that file. `ModelSpec.installed` calls `find_spec` in whichever
+interpreter asks, and there it is the Streamlit one, where XGBoost, LightGBM and CatBoost
+are absent because they live in `backend/.venv`. Filtering the Lab's list on that flag
+would delete XGBoost and LightGBM from the interface while the runs that use them work
+perfectly, so the lists are deliberately unfiltered.
+
+## What you DO have to update
+
+One test, on purpose:
+`test_regression_mutations.py::test_the_model_counts_are_pinned_so_a_headline_number_cannot_drift`.
+
+It pins the shelf size, the split by family, and how many models anybody has actually
+measured. It fails when you add a model, and that is the design: the app shows a count to a
+reader, so the count changes deliberately with its composition restated, rather than
+drifting. Update the numbers and the docstring's account of what changed.
+
+The number to watch is `evaluated_total`. On 2026-08-19 eleven models were registered and
+it did not move: 42 models on the shelf, still 8 measured, so the untested count went from
+20 to 31. Growing the shelf and growing the evidence are different events, and quoting the
+first as though it were the second is the thing this whole file is arranged to prevent.
 
 ---
 

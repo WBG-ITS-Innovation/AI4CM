@@ -206,6 +206,18 @@ A_STAT_MODELS: Dict[str, Dict[str, str]] = {
               "summary": "A classical decomposition method: de-trend the series, forecast the "
                          "pieces, recombine. Strong on smooth seasonal series and a well-known "
                          "competition benchmark."},
+    # Added 2026-08-19. Both are exponential smoothing with one part switched off, and both are
+    # here because ETS as configured carries a trend AND a seasonal term: when it wins, nothing
+    # says which part earned it. These two separate the question.
+    "SES": {"role": "forecast",
+            "summary": "Exponential smoothing with no trend and no seasonal term, so it tracks "
+                       "the level only. It is the plainest member of this family, and it says "
+                       "how much of the fuller method's accuracy comes from the level alone."},
+    "HOLT": {"role": "forecast",
+             "summary": "Exponential smoothing with a trend but no seasonal term, and the trend "
+                        "continues at the same slope rather than flattening out. Sits between "
+                        "the level-only method and the damped one, so the three together show "
+                        "what the trend and the damping are each worth."},
 }
 
 
@@ -291,6 +303,36 @@ def _fc(model: str, y_tr: pd.Series, idx: pd.DatetimeIndex,
                 sf = pi.summary_frame(alpha=pi_alpha)
                 return y_pred, sf["pi_lower"].values.astype(float), sf["pi_upper"].values.astype(float)
             except Exception:
+                return y_pred, *_nan_pi(n)
+        except Exception:
+            y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)
+            return y_pred, *_nan_pi(n)
+
+    if m in ("SES", "HOLT"):
+        # A separate branch rather than two more names on the ETS tuple above. ETS and
+        # ETS_DAMPED are measured models, and widening a condition they share to admit two new
+        # ones would put a new code path inside the branch that produces their numbers. The
+        # duplication here is the seven lines of construction, not the seasonal fallback or the
+        # interval handling, because neither applies: both of these are seasonal-free by
+        # definition, which is the whole point of them.
+        #
+        # SES holds the level. HOLT adds an undamped trend. Neither takes an override: the
+        # smoothing weights are estimated, and the only structural choices are the two that
+        # distinguish the names, so there is nothing left to configure.
+        trend = "add" if m == "HOLT" else None
+        try:
+            fit = ExponentialSmoothing(y_tr, trend=trend, seasonal=None,
+                                       damped_trend=False,
+                                       initialization_method="estimated").fit(optimized=True)
+            y_pred = fit.forecast(n).values.astype(float)
+            try:
+                pi = fit.get_prediction(start=len(y_tr), end=len(y_tr) + n - 1)
+                sf = pi.summary_frame(alpha=pi_alpha)
+                return y_pred, sf["pi_lower"].values.astype(float), sf["pi_upper"].values.astype(float)
+            except Exception:
+                # Measured on statsmodels 0.14.6: neither of these two exposes
+                # `get_prediction`, so both report no interval rather than a made-up one. The
+                # attempt is kept so a later statsmodels is picked up without an edit here.
                 return y_pred, *_nan_pi(n)
         except Exception:
             y_pred = np.repeat(y_tr.iloc[-1], n).astype(float)

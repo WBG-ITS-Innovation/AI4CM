@@ -531,11 +531,11 @@ ov: Dict[str, Any] = {
 
 # Model selection + family-specific knobs
 if family == "B_ML":
-    model = st.selectbox(
-        "Model (ML)",
-        ["Ridge", "Lasso", "ElasticNet", "RandomForest", "ExtraTrees", "HistGBDT", "XGBoost", "LightGBM"],
-        index=0,
-    )
+    # From the registry, not typed here. This list was eight names while the registry held
+    # fifteen, so Huber, GBDT_L1, HistGBDT_L1, XGBoost_L1, LightGBM_L1 and both CatBoost entries
+    # could not be run from the Lab at all -- while the Models page told readers they could run
+    # any untested model here. See frontend/backend_consts.py.
+    model = st.selectbox("Model (ML)", ML_MODEL_OPTIONS, index=0)
 
     st.markdown(
         """
@@ -565,11 +565,9 @@ To reduce overfitting and keep the run tractable, you can limit how many are use
         ov["exog_top_k"] = st.number_input("exog_top_k", 0, 64, 8, help=_lab_help("exog_top_k"))
 
 elif family == "A_STAT":
-    model = st.selectbox(
-        "Model (Stat)",
-        ["ETS", "SARIMAX", "STL_ARIMA", "THETA", "NAIVE", "WEEKDAY_MEAN", "MOVAVG"],
-        index=0,
-    )
+    # From the registry. This list was missing ETS_DAMPED, which has been registered since the
+    # MVP consolidation.
+    model = st.selectbox("Model (Stat)", [label for label, _ in STAT_MODEL_OPTIONS], index=0)
     with st.expander("Notes on statistical models", expanded=False):
         st.markdown(
             """
@@ -584,7 +582,7 @@ Statistical models are typically strong baselines and are easier to explain and 
         )
 
 elif family == "C_DL":
-    model = st.selectbox("Model (DL)", ["GRU", "LSTM", "TCN", "Transformer", "MLP"], index=0)
+    model = st.selectbox("Model (DL)", DL_MODEL_OPTIONS, index=0)
 
     st.markdown(
         """
@@ -600,7 +598,9 @@ Deep learning models typically require more training time. The key parameters ar
     ov["device"] = st.selectbox("device", ["auto", "cpu", "cuda"], index=0, help=_lab_help("device"))
 
 else:
-    model = st.selectbox("Model (Quantile)", ["GBQuantile"], index=0)
+    # From the registry. This offered a single name while the family had three implemented and
+    # dispatchable, so ResidualRF and LGBMQuantile were unreachable from the Lab.
+    model = st.selectbox("Model (Quantile)", QUANTILE_MODEL_OPTIONS, index=0)
 
     st.markdown(
         """
