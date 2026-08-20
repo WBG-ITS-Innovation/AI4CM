@@ -40,6 +40,7 @@ VERBATIM_CALLS = {"code", "json"}
 #: This project's own presentation helpers, which render their arguments as page copy.
 PROJECT_TEXT_HELPERS = {
     "page_header", "section_header", "callout_box", "reading_this_chart", "info_tip",
+    "page_orientation", "definition",
     "empty_state", "render_app_header", "gate_badge_tri", "page_intro", "term_help",
     "glossary_note",
 }

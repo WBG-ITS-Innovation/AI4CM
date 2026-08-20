@@ -32,7 +32,9 @@ RUNS_DIR = runs_dir()
 
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from i18n import t as _t  # fixed copy on this page is translated at the render site
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 import ops_baseline_view as obv  # the Treasury's planning method, from the one construction
@@ -50,6 +52,15 @@ render_app_header("Dashboard", "Evaluate one run: accuracy, intervals and integr
 page_intro(
     "This page shows the detail behind one experimental run: how accurate it was, where its "
     "errors fell, and whether its checks passed. Nothing here is published."
+)
+page_orientation(
+    can_do=(
+        "Load one experimental run, overlay its predictions on the actual series, see where "
+        "its error came from, and download its files."
+    ),
+    numbers_from=(
+        "One run folder under frontend/runs/. Nothing here is recomputed."
+    ),
 )
 glossary_note("MASE", "champion", "skill", "baseline", "gate")
 # ──────────────────────────────────────────────────────────────────────
@@ -716,7 +727,7 @@ with tab_overlay:
     # Say what the comparison line is, or say why there is not one. A chart that quietly loses
     # its comparator invites the reader to assume the model had nothing to beat.
     if obv.usable(ops):
-        st.caption(obv.CAPTION_WHY_FLAT)
+        st.caption(_t(obv.CAPTION_WHY_FLAT))
     elif ops_why:
         st.caption(ops_why)
 

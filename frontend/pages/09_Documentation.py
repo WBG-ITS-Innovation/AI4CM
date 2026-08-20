@@ -21,7 +21,8 @@ from ui_styles import inject_design_system  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
 from i18n import t as _t  # the shelf's status labels are fixed copy
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 st.set_page_config(page_title="Documentation · Treasury Forecast", layout="wide")
@@ -38,6 +39,16 @@ render_app_header("Documentation",
 page_intro(
     "This page is the shelf: every model available here, what it does in plain language, "
     "and whether anybody has recorded a measured result for it."
+)
+page_orientation(
+    can_do=(
+        "Read what each model is in plain language, see which have a measured result and "
+        "which are untested, look up any model's settings, and read how a model is added."
+    ),
+    numbers_from=(
+        "registry/recipes.json for the promoted recipes, and experiments/log.csv for every "
+        "measured figure."
+    ),
 )
 glossary_note("MASE", "champion", "withheld", "gate", "baseline")
 

@@ -950,6 +950,25 @@ def page_intro(text: str) -> None:
     _st.markdown(f'<p class="page-intro">{_translate(text)}</p>', unsafe_allow_html=True)
 
 
+def page_orientation(*, can_do: str = "", numbers_from: str = "") -> None:
+    """The two questions every page answers after its intro, in the same shape every time.
+
+    "What you can do here" and "Where these numbers come from". Both optional, because not
+    every page has numbers: the guide page has none, and the data page's numbers are the
+    reader's own file.
+
+    A helper rather than free markdown on each page so the labels cannot drift into nine
+    variations of the same heading, which is what they were.
+    """
+    import streamlit as _st
+
+    if can_do:
+        _st.markdown(f"**{_translate('What you can do here.')}** {_translate(can_do)}")
+    if numbers_from:
+        _st.markdown(
+            f"**{_translate('Where these numbers come from.')}** {_translate(numbers_from)}")
+
+
 #: Every term a reader might meet, and what it means in words they already have.
 #:
 #: One definition each, used by the tooltips, the expanders and the guide page, so a term
@@ -963,9 +982,10 @@ GLOSSARY = {
         "data refits it without ever re-choosing it."
     ),
     "exploratory": (
-        "A run somebody launched to see what would happen. It is never published, never "
-        "written to the official forecast, and never entered in the scorecard, and every "
-        "page that produces one says so while it is showing it."
+        "A run you launched yourself to see what a model would do. It is measured on the "
+        "training and development data only, it is never published, it is never written to the "
+        "official forecast, and it never enters the scorecard. Every page that produces one "
+        "says so while it is showing it."
     ),
     "baseline": (
         "A deliberately simple rule that every model is measured against, such as assuming "
@@ -1011,6 +1031,22 @@ GLOSSARY = {
            "below it.",
     "P90": "The high end of the published range. The actual figure should fall above it "
            "about one day in ten.",
+    "train and dev": (
+        "The two earliest stretches of the history. Train is what a model learns from. Dev is "
+        "the next stretch, used to compare models and pick between them. Everything you launch "
+        "from the Lab is measured on these two and nothing later."
+    ),
+    "horizon h": (
+        "How many working days ahead a forecast reaches. At h=1 it predicts the next working "
+        "day; at h=5 it predicts five working days out. The further ahead it reaches, the wider "
+        "its honest range has to be. Official forecasts use h=5 and only h=5, because that is "
+        "the one horizon everything here was measured at."
+    ),
+    "run folder": (
+        "The folder one run writes everything into, named for what it ran and when. It holds "
+        "the predictions, the metrics, the leaderboard, the plots, and a record of the exact "
+        "configuration it ran with. Nothing is overwritten: a second run gets its own folder."
+    ),
     "pending": (
         "A published forecast whose day has not been reported yet, so there is no actual "
         "figure to score it against. It is listed rather than hidden."

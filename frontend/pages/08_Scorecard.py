@@ -35,7 +35,8 @@ from ui_styles import inject_design_system, plotly_chrome  # noqa: E402
 from i18n import install as install_language  # language toggle + pending-review note
 from i18n import t as _t  # this page's fixed headings
 from ui_styles import glossary_note  # plain-language definitions, on demand
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # noqa: E402
 from ui_styles import render_brand  # the one brand header, in the sidebar
 
@@ -52,6 +53,16 @@ render_app_header("Scorecard", "What was forecast, and what actually happened")
 page_intro(
     "This page compares published forecasts to what actually happened, once the day "
     "arrives. It is also where newly reported actuals are uploaded."
+)
+page_orientation(
+    can_do=(
+        "See every published forecast and whether it has been scored, upload newly reported "
+        "actuals, and read how the scored ones did."
+    ),
+    numbers_from=(
+        "The published issues under forecasts/published/, scored against the canonical data "
+        "file."
+    ),
 )
 glossary_note("pending", "champion", "baseline", "skill", "P10", "P50", "P90")
 

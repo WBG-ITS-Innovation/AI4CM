@@ -18,7 +18,8 @@ except ImportError:
 
 from ui_styles import inject_design_system  # presentation only
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 from ui_styles import plotly_chrome  # presentation only
@@ -35,6 +36,15 @@ render_app_header("Data pre-processing", "Build and inspect the canonical daily 
 page_intro(
     "This page turns a raw Treasury export into the clean daily series the models read, and "
     "reports what the cleaning changed so a surprising number can be traced back to it."
+)
+page_orientation(
+    can_do=(
+        "Upload a raw Treasury export, see what the cleaning steps did to it, and check the "
+        "result before anything uses it."
+    ),
+    numbers_from=(
+        "The file you upload. Nothing on this page reads the canonical data."
+    ),
 )
 
 st.write(

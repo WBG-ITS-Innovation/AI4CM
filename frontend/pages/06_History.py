@@ -41,7 +41,8 @@ from ui_styles import (inject_design_system, ds_metric, empty_state, callout_box
 from format_gel import NOT_REPORTED
 
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 st.set_page_config(page_title="History · Treasury Forecast", layout="wide")
@@ -57,6 +58,15 @@ render_app_header("Run history", "Browse past runs and download their outputs")
 page_intro(
     "This page lists every experimental run this Lab has produced, including the ones that "
     "failed their checks, and lets you download what each of them wrote."
+)
+page_orientation(
+    can_do=(
+        "Browse every run this Lab has produced, see what each was configured with, and "
+        "download its outputs."
+    ),
+    numbers_from=(
+        "The run folders under frontend/runs/, including the runs that failed their checks."
+    ),
 )
 
 def _ago(ts: float) -> str:

@@ -32,7 +32,8 @@ from ui_styles import inject_design_system  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
 from i18n import t as _t  # this page's tooltips are its own, and are translated here
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 from ui_styles import plotly_chrome  # presentation only
@@ -48,13 +49,24 @@ inject_design_system()
 render_brand()
 install_language()
 
-render_app_header("Lab", "Configure and launch a backtest run")
+render_app_header("Lab", "Try any model on any Treasury line, at any horizon, safely")
 page_intro(
-    "This page is the workbench: run any model on any Treasury line, at any horizon, as an "
-    "experiment. Every run launched here is measured on train and dev data only and is "
-    "never published."
+    "Try any model on any Treasury line, at any horizon, safely. Nothing here is published, "
+    "nothing here changes the official forecast, and every result is measured on training and "
+    "development data only."
 )
-glossary_note("exploratory", "sealed window", "holdout", "baseline")
+page_orientation(
+    can_do=(
+        "Choose a family, a model, a Treasury line and a horizon, launch it, watch the "
+        "backend log, and download what it wrote."
+    ),
+    numbers_from=(
+        "The run you just launched, and the data file you pointed it at. Training and "
+        "development data only."
+    ),
+)
+glossary_note("exploratory", "train and dev", "sealed window", "horizon h", "run folder",
+              "baseline", "skill")
 
 # ── The exploratory contract, stated where nobody can miss it ────────────────
 # Everything launched from this page is exploratory. It is bounded to train and dev
@@ -62,8 +74,9 @@ glossary_note("exploratory", "sealed window", "holdout", "baseline")
 # folders. See ``frontend/exploratory.py`` for why the bound is applied here rather
 # than left to whatever each backend family defaults to.
 st.info(
-    "**Exploratory runs.** " + EXPLORATORY_NOTE + " Nothing launched from this page is "
-    "published, and nothing here changes the official forecast."
+    f"**{_t('Exploratory runs.')}** " + _t(EXPLORATORY_NOTE) + " "
+    + _t("Nothing launched from this page is published, and nothing here changes the "
+         "official forecast.")
 )
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
@@ -518,7 +531,7 @@ profile = st.radio(
     index=0,
     help=_lab_help("profile"),
 )
-st.caption(DEMO_CLIP_NOTE)
+st.caption(_t(DEMO_CLIP_NOTE))
 
 # Profile → default override payload
 ov: Dict[str, Any] = {
@@ -599,29 +612,29 @@ elif family == "F_FOUNDATION":
     _fm_choices, _fm_missing = foundation_options()
     if not _fm_choices:
         model = None
-        st.warning(
+        st.warning(_t(
             "**No foundation model is installed.** These are optional extras, kept out of the "
             "core install so a fresh clone is never held up by a large download. Install them "
             "with `./backend/.venv/bin/python -m pip install -r "
             "backend/requirements-foundation.txt`, then reopen this page."
-        )
+        ))
     else:
         model = st.selectbox("Model (Foundation)", _fm_choices, index=0)
     for _name, _why in _fm_missing:
         st.caption(f"**{_name}** is not available here. {_why}")
-    st.info(
+    st.info(_t(
         "**These models were never trained on Treasury data.** Each one was trained once, by "
         "somebody else, on a large collection of other people's series, and is asked to forecast "
         "this one from its recent history alone. There is no fitting step. That makes a run here "
         "a reading on how much of this series is predictable from its shape, and nothing more: "
         "no foundation model can become the model behind an official forecast, because a "
         "published recipe may only draw from the machine-learning family."
-    )
-    st.caption(
+    ))
+    st.caption(_t(
         "Weights are downloaded once and then cached on this machine, so the first run of a model "
         "is slower than the rest and nothing downloads afterwards. Each checkpoint is pinned to "
         "an exact version, so a rerun uses the same weights as the first run."
-    )
+    ))
 
 else:
     # From the registry. This offered a single name while the family had three implemented and
@@ -762,7 +775,7 @@ if st.button("Run experiment", type="primary", use_container_width=True, help=_l
     _blocked = check_can_run(_dates, horizon, int(ov_final.get("min_train_years") or 0))
     if _blocked:
         st.error(_blocked)
-        st.caption(EXPLORATORY_NOTE)
+        st.caption(_t(EXPLORATORY_NOTE))
         st.stop()
 
     # ── Create run folder structure ─────────────────────────────────
@@ -816,7 +829,7 @@ if st.button("Run experiment", type="primary", use_container_width=True, help=_l
         _failure = explain_failure(out_real, _log_text, exit_code=rc)
         if is_guard_refusal(_failure):
             st.warning("**This run was stopped on purpose.** " + _failure.headline)
-            st.caption(EXPLORATORY_NOTE)
+            st.caption(_t(EXPLORATORY_NOTE))
         else:
             st.error("**This run did not finish.** " + _failure.headline)
         with st.expander("Technical detail", expanded=False):
@@ -832,7 +845,7 @@ if st.button("Run experiment", type="primary", use_container_width=True, help=_l
     else:
         st.success(
             f"Finished in {elapsed:.1f}s. Results were written to {out_real}. "
-            + EXPLORATORY_NOTE
+            + _t(EXPLORATORY_NOTE)
         )
 
     # Overlay preview
@@ -914,7 +927,7 @@ if st.button("Run experiment", type="primary", use_container_width=True, help=_l
             # Say what the comparison line is, or say why there is not one. Silence here reads
             # as "this model had nothing to beat", which is the one wrong conclusion available.
             if _base_drawn:
-                st.caption(obv.CAPTION_WHY_FLAT)
+                st.caption(_t(obv.CAPTION_WHY_FLAT))
             elif base_why:
                 st.caption(base_why)
         else:

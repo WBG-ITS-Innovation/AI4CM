@@ -19,7 +19,8 @@ except ImportError:
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 from ui_styles import render_brand  # the one brand header, in the sidebar
 st.set_page_config(page_title="Compare · Treasury Forecast", layout="wide")
@@ -35,6 +36,15 @@ render_app_header("Compare runs", "Put several runs side by side on the same tar
 page_intro(
     "This page puts two or more experimental runs side by side on the same axes, so a "
     "difference between them can be seen rather than assumed."
+)
+page_orientation(
+    can_do=(
+        "Put two to six experimental runs on the same axes and see which is actually better "
+        "rather than which you expected to be."
+    ),
+    numbers_from=(
+        "The run folders you select. Each figure is read from the run that produced it."
+    ),
 )
 
 # -------------------- helpers --------------------
