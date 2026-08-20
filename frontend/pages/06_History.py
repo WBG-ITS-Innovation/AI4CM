@@ -43,20 +43,21 @@ from format_gel import NOT_REPORTED
 from i18n import install as install_language  # language toggle + pending-review note
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
-st.set_page_config(page_title="History · Treasury Forecast", page_icon="🕒", layout="wide")
+from ui_styles import render_brand  # the one brand header, in the sidebar
+st.set_page_config(page_title="History · Treasury Forecast", layout="wide")
 inject_global_css()
 inject_design_system()
 
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 render_app_header("Run history", "Browse past runs and download their outputs")
 page_intro(
     "This page lists every experimental run this Lab has produced, including the ones that "
     "failed their checks, and lets you download what each of them wrote."
 )
-st.markdown(page_header("🕒 Run History", "Browse and manage past experiments"), unsafe_allow_html=True)
 
 def _ago(ts: float) -> str:
     d = time.time() - ts
@@ -130,16 +131,16 @@ def _scan_runs() -> pd.DataFrame:
             "Model filter": cfg.get("model_filter",""),
             "Best model (MAE)": f"{best_model} ({best_mae})" if best_model else "",
             "Outputs path": str(out),
-            "Has preds": "✅" if preds_p else "—",
-            "Has metrics": "✅" if mets_p else "—",
-            "Has leaderboard": "✅" if lb_p else "—",
+            "Has preds": "yes" if preds_p else "no",
+            "Has metrics": "yes" if mets_p else "no",
+            "Has leaderboard": "yes" if lb_p else "no",
             "Duration (s)": int(dur) if dur else "",
         })
     return pd.DataFrame(rows)
 
 # Controls
 c1, c2, c3, c4 = st.columns([1,1,1,2])
-with c1: st.button("🔄 Refresh", on_click=lambda: st.cache_data.clear(), use_container_width=True)
+with c1: st.button("Refresh", on_click=lambda: st.cache_data.clear(), use_container_width=True)
 with c2: fam = st.text_input("Filter text", value="")
 with c3: only_ok = st.checkbox("Only runs with predictions", value=False)
 with c4:
@@ -170,14 +171,14 @@ if df.empty:
 if fam.strip():
     f = fam.lower(); df = df[df.apply(lambda r: f in (" ".join(map(str, r.values))).lower(), axis=1)]
 if only_ok:
-    df = df[df["Has preds"] == "✅"]
+    df = df[df["Has preds"] == "yes"]
 
 st.subheader("Overview")
 _visible = [c for c in visible if c in df.columns]
 if not _visible:
     _visible = list(df.columns)
 st.dataframe(df[_visible], use_container_width=True, hide_index=True)
-st.download_button("⬇️ Download overview (CSV)", data=df.to_csv(index=False).encode("utf-8"), file_name="runs_overview.csv")
+st.download_button("Download overview (CSV)", data=df.to_csv(index=False).encode("utf-8"), file_name="runs_overview.csv")
 
 # Drill-down
 st.markdown("---")
@@ -206,7 +207,7 @@ with cB:
 with cC:
     st.caption("Quick downloads")
     if out.exists():
-        st.download_button("⬇️ All artifacts (.zip)", data=zip_outputs(out), file_name=f"{sel}_artifacts.zip", use_container_width=True)
+        st.download_button("All artifacts (.zip)", data=zip_outputs(out), file_name=f"{sel}_artifacts.zip", use_container_width=True)
     if preds_p:
         st.download_button("Predictions CSV", data=preds_p.read_bytes(), file_name="predictions_long.csv", use_container_width=True)
     if mets_p:

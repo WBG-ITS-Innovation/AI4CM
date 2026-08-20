@@ -44,7 +44,8 @@ from i18n import install as install_language  # language toggle + pending-review
 from i18n import t as _translate  # verdict sentences are fixed copy and are translated
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
-st.set_page_config(page_title="Forecast · Treasury Forecast", page_icon="🔭", layout="wide")
+from ui_styles import render_brand  # the one brand header, in the sidebar
+st.set_page_config(page_title="Forecast · Treasury Forecast", layout="wide")
 inject_global_css()
 
 inject_design_system()
@@ -52,6 +53,7 @@ inject_design_system()
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 
 render_app_header("Forward forecast", "The next working days, which are dates beyond the end of the data")
@@ -105,9 +107,6 @@ from format_gel import gel_millions as m  # noqa: E402
 # ──────────────────────────────────────────────────────────────────────
 # Page
 # ──────────────────────────────────────────────────────────────────────
-st.markdown(page_header("🔭 Forward forecast",
-                        "The next five working days, which are dates not yet in the data"),
-            unsafe_allow_html=True)
 
 data = load_all()
 if data is None:
@@ -457,8 +456,8 @@ for target in fc["target"].unique():
     gcols = st.columns(len(gates))
     for col, (key, g) in zip(gcols, gates.items()):
         with col:
-            icon = "✅" if g.get("passed") else "❌"
-            st.markdown(f"{icon} **{g.get('name', key)}**")
+            verdict = _translate("passed") if g.get("passed") else _translate("failed")
+            st.markdown(f"**{g.get('name', key)}**: {verdict}")
             st.caption(g.get("reason_plain", ""))
 
     # ══════════════════════════════════════════════════════════════════════
@@ -483,7 +482,7 @@ for target in fc["target"].unique():
 
     _mc1, _mc2 = st.columns([1.15, 0.85], gap="large")
     with _mc1:
-        st.markdown(f"🏆 **{_shelf['champion_model']}** is the champion")
+        st.markdown(f"**{_shelf['champion_model']}** is the champion")
         st.caption(_shelf["champion_sentence"])
     with _mc2:
         _ops = _shelf["ops"]
@@ -615,7 +614,7 @@ if _modes_ok:
                      f"nothing is published and no gate is claimed.")
         if _runnable:
             st.caption("Will run: " + ", ".join(
-                f"**{t}** → `{_reg[t]['recipe_id']}` ({_reg[t]['model']})" for t in _runnable))
+                f"**{t}** uses `{_reg[t]['recipe_id']}` ({_reg[t]['model']})" for t in _runnable))
         _pub = st.checkbox("Publish to forecasts/published/ under a new issue date", value=False)
         st.caption(
             "The model is not selectable in this mode, and that is deliberate. An official "
@@ -730,7 +729,7 @@ else:
                 _now_w = _VERDICT_WORDS.get(_now, _now)
                 if r.get("changed"):
                     st.markdown(
-                        f"**{r['target']}** &nbsp; {_then_w} &nbsp;→&nbsp; {_now_w}",
+                        f"**{r['target']}** &nbsp; was {_then_w}, now {_now_w}",
                         unsafe_allow_html=True)
                     # The one actionable sentence: it names only the gates that drove the
                     # change, not every gate that differs.

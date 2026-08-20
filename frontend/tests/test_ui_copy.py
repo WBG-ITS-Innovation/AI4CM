@@ -314,3 +314,83 @@ def test_the_rule_is_measured_against_something_real():
     assert longest > 300, (
         "no page hides a long explanation behind an expander, so the rule above is "
         "passing vacuously")
+
+
+# ---------------------------------------------------------------------------
+# 7. No emoji
+#
+# The app was decorated throughout: a telescope beside "Forecast", a target beside
+# "Scorecard", a test tube beside "Lab", a trophy beside the champion, a lightbulb inside
+# every info tip, a downward arrow on every download button, and ticks and crosses standing in
+# for the words "passed" and "failed". 137 instances across the ten pages and the helpers.
+#
+# They went for three reasons. They are decoration in a document a finance ministry reads.
+# They duplicate text that is already there, so a reader gets the same fact twice, once in a
+# form they cannot search for or read aloud. And a glyph carrying meaning on its own, a bare
+# tick in a table cell, is unreadable to a screen reader and to anyone whose font lacks it.
+#
+# WHAT THIS FORBIDS, precisely. Characters with emoji presentation: the pictograph planes, and
+# the older symbols that render as emoji either inherently or because they are followed by
+# variation selector 16. It does NOT forbid text-presentation marks. That distinction is the
+# whole point rather than a loophole:
+#
+#   * ✓ and ✕ in ui_styles._GATE_STYLE stay. They render beside the words "passed" and
+#     "failed", not instead of them, and DESIGN_TOKENS §3 asks for a second, non-colour
+#     encoding so a badge survives being printed in greyscale.
+#   * The bullet, the arrow and the en dash are punctuation, judged as punctuation by the
+#     rules above rather than as pictures.
+# ---------------------------------------------------------------------------
+
+#: Emoji-presentation characters. Two clauses: the pictograph planes, which are emoji by
+#: default, and any character followed by U+FE0F, which is a request for emoji presentation
+#: whatever the base character was.
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF]"          # pictographs, symbols, transport, supplemental
+    "|.️"                          # anything explicitly asking for emoji presentation
+    "|[✅❌❎❓-❕❗➕-➗"   # heavy tick, crosses, marks
+    "⬛⬜⭐⭕⚡✨➡⬆⬇]"  # blocks, star, bolt, arrows
+)
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=lambda p: p.name)
+def test_no_emoji_in_visible_copy(path):
+    """Nothing a reader sees is decorated with a pictograph."""
+    bad = [(c, _EMOJI.findall(c.text)) for c in visible_copy(path) if _EMOJI.search(c.text)]
+    assert not bad, (
+        "emoji in user-visible copy:\n"
+        + "\n".join(f"  {c.where()}: {found} in {c.text[:80]!r}" for c, found in bad))
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=lambda p: p.name)
+def test_no_emoji_anywhere_in_the_source_a_reader_could_reach(path):
+    """Wider than the copy collector, because most of them were never prose.
+
+    Of the 137 found when this rule went in, the copy collector saw 59. The rest were
+    ``icon=`` arguments to ``callout_box`` and ``metric_card``, values in a table column, and
+    glyphs assembled inside a helper's body. All of those reach a reader; none of them is a
+    call argument the collector treats as prose. So this reads the lines directly, skipping
+    comments, where this project's long explanations live and where the punctuation rules do
+    not apply.
+    """
+    offenders = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        found = _EMOJI.findall(line)
+        if found:
+            offenders.append(f"  {path.name}:{lineno}: {found} in {line.strip()[:80]!r}")
+    assert not offenders, "emoji in source a reader can reach:\n" + "\n".join(offenders)
+
+
+def test_the_gate_glyphs_are_deliberately_not_emoji():
+    """The exemption is real and narrow, so it is asserted rather than left as a comment.
+
+    ``✓`` and ``✕`` are text-presentation dingbats sitting beside the words they reinforce. If
+    somebody swaps them for ``✅`` and ``❌`` the badge gains nothing and this fails.
+    """
+    from ui_styles import _GATE_STYLE
+
+    for state, style in _GATE_STYLE.items():
+        glyph, word = style[0], style[1]
+        assert not _EMOJI.search(glyph), f"{state} uses an emoji glyph: {glyph!r}"
+        assert word.strip(), f"{state} has a glyph but no word beside it"

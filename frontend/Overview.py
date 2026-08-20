@@ -18,7 +18,8 @@ from ui_styles import inject_design_system  # presentation only
 from i18n import install as install_language  # language toggle + pending-review note
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
-st.set_page_config(page_title="Overview · Treasury Forecast", page_icon="📊", layout="wide")
+from ui_styles import render_brand  # the one brand header, in the sidebar
+st.set_page_config(page_title="Overview · Treasury Forecast", layout="wide")
 inject_global_css()
 
 inject_design_system()
@@ -26,6 +27,7 @@ inject_design_system()
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 
 render_app_header("Overview", "What this lab does, and what it does not claim")
@@ -40,12 +42,6 @@ RUNS_DIR = runs_dir()
 # ─────────────────────────────────────────────────────────────
 # HERO
 # ─────────────────────────────────────────────────────────────
-st.markdown(
-    page_header("Georgia Treasury Forecast Lab",
-                "A forecasting lab for daily Treasury cash lines, covering statistical, machine "
-                "learning, deep learning and quantile models"),
-    unsafe_allow_html=True,
-)
 
 # The guide comes first and is called out on its own, because the row of six links below it
 # was the whole of the app's navigation and none of the labels tells a new reader which page
@@ -55,25 +51,25 @@ st.info(
     "one thing to try, and it explains the difference between an official forecast and an "
     "experiment. It is the shortest way in."
 )
-st.page_link("pages/01_Start_here.py", label="🧭 Start here: the guide to this Lab")
+st.page_link("pages/01_Start_here.py", label="Start here: the guide to this Lab")
 st.write("")
 
 c1, c2, c3, c4, c5, c6, c7 = st.columns([1,1,1,1,1,1,1])
 with c1:
-    st.page_link("pages/07_Forecast.py", label="🔭 Forecast", help="The forecast for the next working days, and the evidence behind it.")
+    st.page_link("pages/07_Forecast.py", label="Forecast", help="The forecast for the next working days, and the evidence behind it.")
 with c2:
-    st.page_link("pages/08_Scorecard.py", label="🎯 Scorecard", help="How past published forecasts actually did, and where new actuals are uploaded.")
+    st.page_link("pages/08_Scorecard.py", label="Scorecard", help="How past published forecasts actually did, and where new actuals are uploaded.")
 with c3:
-    st.page_link("pages/03_Lab.py", label="🧪 Open Lab", help="Configure a run and launch the backend with live logs.")
+    st.page_link("pages/03_Lab.py", label="Lab", help="Configure a run and launch the backend with live logs.")
 with c4:
-    st.page_link("pages/04_Dashboard.py", label="📈 Open Dashboard", help="Explore Actual vs Baseline vs Predictions.")
+    st.page_link("pages/04_Dashboard.py", label="Dashboard", help="Explore Actual vs Baseline vs Predictions.")
 with c5:
-    st.page_link("pages/05_Compare.py", label="🔀 Compare Runs", help="Side-by-side comparison of 2 to 6 runs.")
+    st.page_link("pages/05_Compare.py", label="Compare runs", help="Side-by-side comparison of 2 to 6 runs.")
 with c6:
-    st.page_link("pages/06_History.py", label="🕒 See History", help="Browse and download artifacts from past runs.")
+    st.page_link("pages/06_History.py", label="History", help="Browse and download artifacts from past runs.")
 with c7:
-    st.page_link("pages/09_Documentation.py", label="🧩 Models", help="Every model on the shelf, and whether anyone has measured it.")
-st.page_link("pages/02_Data_Preprocessing.py", label="🧺 Data Pre-processing", help="Standardise and clean source data files.")
+    st.page_link("pages/09_Documentation.py", label="Documentation", help="Every model on the shelf, and whether anyone has measured it.")
+st.page_link("pages/02_Data_Preprocessing.py", label="Data pre-processing", help="Standardise and clean source data files.")
 
 st.markdown("---")
 
@@ -143,13 +139,13 @@ with right:
         """
 | Feature | Status |
 |---|---|
-| Statistical PIs (ETS/SARIMAX) | ✅ |
-| Conformal PIs (ML) | ✅ |
-| Ensemble (median/top-K/weighted) | ✅ |
-| Feature importance (ML) | ✅ |
-| Quality gate (5% skill) | ✅ |
-| Data pre-flight checks | ✅ |
-| Multi-horizon batch | ✅ |
+| Statistical PIs (ETS/SARIMAX) | Yes |
+| Conformal PIs (ML) | Yes |
+| Ensemble (median/top-K/weighted) | Yes |
+| Feature importance (ML) | Yes |
+| Quality gate (5% skill) | Yes |
+| Data pre-flight checks | Yes |
+| Multi-horizon batch | Yes |
         """
     )
 
@@ -207,17 +203,17 @@ else:
                     st.caption("_No log found for this run._")
             with top[1]:
                 p = out_dir / "predictions_long.csv"
-                st.markdown("**predictions_long.csv**" + (" ✅" if p.exists() else " (not written)"))
-                st.page_link("pages/04_Dashboard.py", label="➡️ View in Dashboard")
+                st.markdown("**predictions_long.csv**" + (" written" if p.exists() else " (not written)"))
+                st.page_link("pages/04_Dashboard.py", label="View in Dashboard")
             with top[2]:
                 m = out_dir / "metrics_long.csv"
-                st.markdown("**metrics_long.csv**" + (" ✅" if m.exists() else " (not written)"))
+                st.markdown("**metrics_long.csv**" + (" written" if m.exists() else " (not written)"))
                 if m.exists():
                     st.download_button("Download", data=m.read_bytes(), file_name="metrics_long.csv",
                                        use_container_width=True, key=f"ov_dl_metrics_{idx}")
             with top[3]:
                 if out_dir.exists():
-                    st.download_button("⬇️ All artifacts (.zip)", data=zip_outputs(out_dir),
+                    st.download_button("All artifacts (.zip)", data=zip_outputs(out_dir),
                                        file_name=f"{run.name}_artifacts.zip",
                                        use_container_width=True, key=f"ov_dl_zip_{idx}")
                 else:
