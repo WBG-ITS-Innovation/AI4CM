@@ -14,6 +14,19 @@ the growth curve of the test suite, from 569 to 1,850 across the two interpreter
 (1,322 under `backend/.venv` and 528 under `frontend/.venv`; neither run alone is the
 whole suite, which the 2026-08-19 MVP record explains).
 
+## ⚠️ Commit SHAs in records dated before 2026-08-20
+
+On 2026-08-20 the history of `main` was rewritten to strip tool co-author
+trailers and one non-human commit author, which changed 229 of the 232 commit
+SHAs. **Every SHA cited in a record dated before that day refers to pre-rewrite
+history and no longer resolves.** The content those records describe is
+unchanged — only the hashes moved. To translate an old SHA into its current one,
+look it up in `commit-map-2026-08-20-strip.txt` beside these records (`grep
+^<old-sha> docs/sessions/commit-map-2026-08-20-strip.txt`); the complete
+pre-rewrite history is also preserved as a bundle at
+`../AI4CM-pre-strip-20260820.bundle` if the old objects themselves are needed.
+Full detail in [the rewrite record](2026-08-20-strip-coauthor-trailers.md).
+
 ## The records
 
 | Date | Record | What it covers |
@@ -44,6 +57,7 @@ whole suite, which the 2026-08-19 MVP record explains).
 | 2026-08-19 | [README and docs hygiene](2026-08-19-readme-and-docs-hygiene.md) | Making the repository presentable to a Treasury reader. Found four durable documents stating the opposite of the code — `SIGNAL_FINDING.md`'s conclusion is inverted by the sentinel recalibration. Documentation only |
 | 2026-08-19 | [Final MVP polish](2026-08-19-final-mvp-polish.md) | Four of ten tasks, split after the backend work with the reason stated at plan time. The Forecast page's crash was **name shadowing**, not i18n: a module-level `if` rebound the translator to a Treasury line name 550 lines below its import, and the page's own render test could not see it because AppTest runs at default widget values. The flat Ops baseline was a display bug and scoring was never affected, but the Dashboard was **inventing** a baseline for the stock target out of the day-of-week mean of the actuals. Thirteen models registered, and **ten already-registered models turned out to be unreachable from the Lab** while the Models page said otherwise. Carries two scoring findings for a separate session |
 | 2026-08-19 | [MVP consolidation](2026-08-19-mvp-consolidation.md) | Seven tasks across the interface, the registry and the copy. Found that **seven of thirteen models the Lab offered had no recorded result on any target**, Ridge among them; that the full suite is two commands and every previous "green" skipped the page tests; and that the Dashboard crashed outright on any run with no integrity report |
+| 2026-08-20 | [Stripping tool co-author trailers](2026-08-20-strip-coauthor-trailers.md) | Metadata only, no file content touched anywhere — proved by all 232 tree hashes matching in order. Removed 18 co-author trailers and, the finding that would otherwise have made the exercise fail its own goal, **one commit actually authored by a non-human identity**, which alone would have kept it in the contributors list. 229 of 232 SHAs changed; the mapping is committed beside this record |
 
 ## How to read them
 
