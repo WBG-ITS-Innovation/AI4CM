@@ -286,7 +286,7 @@ def test_forecast_modes_exposes_a_cli_so_the_frontend_need_not_import_models():
     assert 'if __name__ == "__main__"' in src
     assert "--mode" in src and "--publish" in src
 
-    page = (BACKEND.parent / "frontend" / "pages" / "05_Forecast.py").read_text()
+    page = (BACKEND.parent / "frontend" / "pages" / "01_Forecast.py").read_text()
     code = "\n".join(l for l in page.splitlines() if not l.lstrip().startswith("#"))
     assert "from forecast_modes import" not in code, (
         "the page imports the modelling stack again; it must dispatch to the backend interpreter"

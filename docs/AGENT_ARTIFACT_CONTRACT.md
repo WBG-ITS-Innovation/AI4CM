@@ -121,8 +121,11 @@ or recompute without re-deriving the categories itself:
 |---|---|---|
 | `counts` | `{category: int}` | Five categories: machine-learning models, deep-learning models, statistical models, quantile methods, reference baselines |
 | `members` | `{category: [name]}` | Every counted model named |
-| `champion_pool` | `[name]` | The models a **registry recipe** may promote as its `point_model` — what an official published forecast is selected from (currently the 13 machine-learning models) |
+| `champion_pool` | `[name]` | The models a **registry recipe** may promote as its `point_model` — what an official published forecast is selected from (currently the machine-learning models). Being in this pool is a *structural* fact and is not evidence: see `evaluated` below |
 | `champion_pool_category` | string | Which category that pool is |
+| `evaluated` | `[name]` | Every non-baseline entry with at least one row in `experiments/log.csv`, so a figure exists that can be quoted and traced to the run that produced it |
+| `untested` | `[name]` | Every non-baseline entry with **no** ledger row. Runnable, and with no number anybody may quote. Derived from the ledger, never declared |
+| `evaluated_total` / `untested_total` | int | The two counts above. **8 and 20 at the time of writing** |
 | `daily_best_model_families` | `[family]` | Every family this file writes a per-family `best_model` for. **The Agent ranks across these, not across `champion_pool`** — conflating the two is how a true sentence becomes a wrong one |
 | `promoted_by_registry` | `[name]` | Distinct models the live recipes actually promote. Three recipes currently name **two** models (Revenues and Expenditure share `LightGBM_L1`), so this is not a recipe count |
 | `promoted_outside_champion_pool` | `[name]` | Integrity cross-check. **Non-empty means the eligible pool a client was told about is wrong** |
@@ -130,6 +133,13 @@ or recompute without re-deriving the categories itself:
 **Never sum `counts` into a headline number.** The entries are not one kind of thing: three are
 reference baselines and three are interval methods, and summing presents the ruler as a rival to the
 models measured against it. See `reports/gate_audit.md` §4.
+
+**Never quote `counts` as a measure of work done, either.** A count of the shelf is not a count of
+the evidence. Of the 28 non-baseline entries, **8 have a recorded result and 20 have none**, so
+"31 models" describes what can be run and badly overstates what has been measured. When a
+consumer needs one number for how much has been established, it is `evaluated_total`. `client_framing`
+already states both, which is why the contract says to quote that sentence verbatim rather than
+assembling one from these fields.
 
 > **`client_framing` — the same gap as `data_file`, one layer up.** `model_reference.client_framing()`
 > and `composition()` existed, were tested, and were written by nothing, so no artifact carried the

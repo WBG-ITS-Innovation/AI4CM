@@ -19,6 +19,11 @@ def main():
         folds=json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("folds", 3),  # None = use ALL folds (thorough mode)
         min_train_years=int(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("min_train_years", 4)),
         eval_start=json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("eval_start", None),
+        # ``Config`` has carried eval_end since the fold tiler learned to cap the
+        # window; this runner simply never read it, so a caller could bound the start
+        # of an evaluation but not its end -- and the end is the edge the sealed
+        # window sits behind.
+        eval_end=json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("eval_end", None),
         model_filter=_getenv("TG_MODEL_FILTER", "").strip() or None,
         quantiles=tuple(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("quantiles", [0.1,0.5,0.9])),
         lags_daily=tuple(json.loads(_getenv("TG_PARAM_OVERRIDES", "{}")).get("lags_daily", [1,5,20])),
@@ -50,4 +55,14 @@ def main():
     print(f"[runner] Elapsed: {time.time()-t0:.1f}s")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as _e:
+        # See the C_DL runners: one report shape across all four families.
+        try:
+            from runner_errors import write_error_report
+            write_error_report(os.environ.get("TG_OUT_ROOT", "outputs"), _e,
+                               context="E_QUANTILE univariate")
+        except Exception:
+            pass
+        raise

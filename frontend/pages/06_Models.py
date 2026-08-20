@@ -11,12 +11,27 @@ except ImportError:
     def inject_global_css(): pass
     def page_header(t, s=""): return f"<h1>{t}</h1><p>{s}</p>"
 
+from ui_styles import help_text  # tooltips, translated at render time
 from ui_styles import inject_design_system  # presentation only
+from ui_styles import glossary_note  # plain-language definitions, on demand
+from i18n import install as install_language  # language toggle + pending-review note
+from i18n import t as _t  # the shelf's status labels are fixed copy
+from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
 st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
 inject_design_system()
+
+# The language toggle and, in Georgian, the standing note that the translation has
+# not been reviewed by a native speaker. One call per page; everything else the
+# reader sees is translated inside the shared helpers.
+install_language()
 render_app_header("Models", "Model families, promoted recipes and their evidence")
+page_intro(
+    "This page is the shelf: every model available here, what it does in plain language, "
+    "and whether anybody has recorded a measured result for it."
+)
+glossary_note("MASE", "champion", "withheld", "gate", "baseline")
 st.markdown(
     page_header("🧩 Model Families & Parameters",
                 "Reference guide for all available forecasting models and their configurations"),
@@ -54,7 +69,7 @@ def _render_registry() -> None:
         st.warning(str(exc))
         return
 
-    st.subheader("Promoted recipes — one per target")
+    st.subheader("Promoted recipes, one per target")
     st.caption(
         "Champions selected on training folds and confirmed on 2024. "
         "**Nothing here is approved**: no approval workflow exists yet, and neither "
@@ -68,13 +83,13 @@ def _render_registry() -> None:
         rows.append({
             "Target": r["target"],
             "Model": r["point_model"],
-            "Intervals": r.get("interval_model", "—"),
+            "Intervals": r.get("interval_model", "not recorded"),
             "Typical error 2024 (M GEL)": _gel_m(cred["dev_mae"]),
             "vs benchmark": f"{cred['skill_vs_ruler_pct']:.1f}% better",
             "Verdict": ("✅ forecast" if pub["verdict"] == "publishable"
                         else "❌ withheld as forecast"),
             "Status": r["status"],
-            "Approved by": r["approved_by"] or "— nobody —",
+            "Approved by": r["approved_by"] or "nobody",
         })
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
@@ -92,16 +107,16 @@ def _render_registry() -> None:
         cred, pub = r["dev_credentials"], r["publication"]
         verdict = ("usable as a forecast" if pub["verdict"] == "publishable"
                    else "WITHHELD as a forecast")
-        with st.expander(f"{r['target']} — {r['point_model']} · {verdict}"):
+        with st.expander(f"{r['target']}: {r['point_model']} · {verdict}"):
             st.markdown(f"**Recipe id** `{r['id']}`  \n"
                         f"**Family** {r['family']} · **Intervals** "
-                        f"{r.get('interval_model', '—')}  \n"
+                        f"{r.get('interval_model', 'not recorded')}  \n"
                         f"**Target scaling** {r['scaling']}  \n"
                         f"**Fiscal calendar version** `{r['calendar_version']}`")
             st.markdown("**Feature groups**: " + ", ".join(r["feature_groups"]) +
                         (("  \n**Exogenous blocks**: " + ", ".join(r["exog_blocks"]))
                          if r.get("exog_blocks") else ""))
-            st.markdown(f"**Why this recipe** — {r['provenance_note']}")
+            st.markdown(f"**Why this recipe.** {r['provenance_note']}")
 
             st.markdown("**Evidence (2024 confirmation)**")
             e1, e2, e3 = st.columns(3)
@@ -114,7 +129,7 @@ def _render_registry() -> None:
             st.markdown("**Checks**")
             for key, g in cred["gates"].items():
                 icon = "✅" if g.get("passed") else "❌"
-                st.markdown(f"- {icon} **{g.get('name', key)}** — "
+                st.markdown(f"- {icon} **{g.get('name', key)}.** "
                             f"{g.get('reason_plain', '')}")
                 if g.get("corroboration"):
                     st.caption(f"  {g['corroboration']}")
@@ -204,7 +219,7 @@ def defaults_a():
 
 def table_a() -> pd.DataFrame:
     rows = [
-        dict(Model="NaiveLast", Parameter="—",
+        dict(Model="NaiveLast", Parameter="none",
              Meaning="Forecast equals the last observed value.",
              WhyItMatters="Establishes a sanity baseline and helps detect random-walk behavior.",
              Suggested="No tuning.", Runtime="⚡"),
@@ -329,7 +344,7 @@ def table_c() -> pd.DataFrame:
         dict(Model="Global", Parameter="batch_size",
              Meaning="Mini-batch size during training.",
              WhyItMatters="Impacts speed and memory; too large can cause memory errors.",
-             Suggested="CPU: 16–64; GPU: 32–128", Runtime="—"),
+             Suggested="CPU: 16 to 64; GPU: 32 to 128", Runtime="not recorded"),
         dict(Model="Global", Parameter="max_epochs / early stopping",
              Meaning="Training duration and stopping behavior.",
              WhyItMatters="More epochs can improve accuracy but increases runtime and overfit risk.",
@@ -658,9 +673,60 @@ def _render_model_detail() -> None:
 
     _names = sorted(models)
     _champ_names = {n for n in _names if n in champs}
-    st.caption(f"{len(_names)} models in the pool · {len(_champ_names)} promoted as a champion "
+    _n_evaluated = sum(1 for m in models.values() if m.get("status") == "evaluated")
+    _n_untested = sum(1 for m in models.values() if m.get("status") == "untested")
+    st.caption(f"{len(_names)} models on the shelf · {len(_champ_names)} promoted as a champion "
                f"({', '.join(sorted(_champ_names))}) · "
-               f"{sum(1 for m in models.values() if not m['available'])} unavailable")
+               f"{sum(1 for m in models.values() if not m['available'])} unavailable here")
+
+    # ── The shelf, with what has and has not been measured ────────────────────
+    #
+    # This table is the reason the status field exists. Before it, an untested model
+    # appeared in the list beside a champion with nothing distinguishing them, and the
+    # Lab's default selection was Ridge, which has no recorded result on any target.
+    st.markdown("**Every model on the shelf, and whether anyone has measured it**")
+    st.markdown(
+        f"{_n_evaluated} of these have a recorded result that can be quoted and traced back "
+        f"to the run that produced it. {_n_untested} are registered candidates with no "
+        f"recorded result yet. A candidate can be run as an experiment and cannot become "
+        f"the model behind an official forecast until a result has been recorded for it."
+    )
+    # Translated at lookup, like every other fixed label. These are the words the shelf
+    # table shows in its Status column, so leaving them out of the translation layer would
+    # have left the one column a reader scans in English while the rest of the page moved.
+    _STATUS_LABEL = {
+        "evaluated": _t("measured"),
+        "untested": _t("UNTESTED"),
+        "baseline": _t("reference rule"),
+        "unavailable": _t("not installed here"),
+    }
+    st.dataframe(pd.DataFrame([{
+        "Model": n,
+        "Family": models[n].get("pipeline", "not recorded"),
+        "Status": _STATUS_LABEL.get(models[n].get("status"), models[n].get("status", "not recorded")),
+        "Measured on": ", ".join(models[n].get("measured_on") or []) or "nothing yet",
+        "Can be a champion": "yes" if models[n].get("gate_eligible") else "no",
+    } for n in _names]), hide_index=True, use_container_width=True)
+
+    with st.expander("What does UNTESTED mean?"):
+        st.markdown(
+            "- It means no measured result has been recorded for that model on any target, "
+            "so there is no number to show for it and nothing for the publication checks to "
+            "read.\n"
+            "- It does **not** mean the model is bad, or that it has never been executed. It "
+            "means nobody has yet run it through the evaluation that produces a quotable "
+            "figure.\n"
+            "- You can run an untested model as an experiment from the Lab or from the "
+            "comparison on the Forecast page. Nothing you run there is published.\n"
+            "- It cannot become the model behind an official forecast until a result has "
+            "been recorded, because an official recipe cites the run that measured it and "
+            "that citation is checked.\n"
+            "- A **reference rule** is not a candidate at all. Carrying the last value "
+            "forward is the yardstick the others are measured against, so asking whether it "
+            "was measured is the wrong question.\n"
+            "- Adding a model is one entry in `backend/model_catalog.py`. See "
+            "`docs/ADDING_A_MODEL.md`."
+        )
 
     _pick = st.selectbox("Model", _names,
                          index=_names.index("LightGBM_L1") if "LightGBM_L1" in _names else 0)
@@ -673,10 +739,22 @@ def _render_model_detail() -> None:
                  f"be run or configured. It is listed here rather than hidden, so the pool's "
                  f"contents do not silently change with the environment.")
 
+    # ── status, before anything that looks like a number ──────────────────────
+    if m.get("status") == "untested":
+        st.warning(f"**UNTESTED.** {m.get('status_note', '')}")
+    elif m.get("status") == "baseline":
+        st.info(f"**Reference rule.** {m.get('status_note', '')}")
+    elif m.get("status") == "evaluated":
+        st.success(
+            "**Measured.** This model has a recorded result on "
+            + ", ".join(m.get("measured_on") or [])
+            + ", so the figures below can be traced back to the runs that produced them."
+        )
+
     # ── description: general, not measured ────────────────────────────────────
     st.markdown(f"#### {_pick}")
-    st.caption(f"{m.get('family', '—')} · {m.get('pipeline')} · class "
-               f"`{m.get('class', '—')}`")
+    st.caption(f"{m.get('family', 'not recorded')} · {m.get('pipeline')} · class "
+               f"`{m.get('class', 'not recorded')}`")
     if m.get("summary"):
         st.markdown(m["summary"])
         st.caption(f"_{m['description_kind']}._ It describes how the model works; it says nothing "
@@ -689,7 +767,7 @@ def _render_model_detail() -> None:
             st.success(f"**Promoted as champion for {rec['target']}** · recipe `{rec['id']}`")
             st.markdown(
                 f"**Status** {rec['status']}  \n"
-                f"**Approved by** {rec['approved_by'] or 'none — no approval workflow exists yet'}  \n"
+                f"**Approved by** {rec['approved_by'] or 'nobody, because no approval workflow exists yet'}  \n"
                 f"**Target scaling** {rec['scaling']}  \n"
                 f"**Feature groups** {', '.join(rec['feature_groups'])}"
                 + (f"  \n**Exogenous blocks** {', '.join(rec['exog_blocks'])}"
@@ -713,7 +791,7 @@ def _render_model_detail() -> None:
     _set = hp.get("set_by_pipeline", [])
     if _set:
         st.caption(f"{len(_set)} of {hp['n_total']} parameters are set by the pipeline; the rest "
-                   f"are library defaults. Read live from the code — if a value changes in the "
+                   f"are library defaults. Read live from the code, so if a value changes in the "
                    f"pipeline, it changes here.")
         st.dataframe(pd.DataFrame([{
             "Parameter": p["name"], "Current value": p["value"],
@@ -721,7 +799,7 @@ def _render_model_detail() -> None:
             "Sensible range": p["range"] or NOT_REPORTED} for p in _set]),
             hide_index=True, use_container_width=True)
     elif m["available"]:
-        st.caption("This model holds no explicitly set parameters — it runs on library defaults, "
+        st.caption("This model holds no explicitly set parameters. It runs on library defaults, "
                    "or is constructed per fold.")
     if hp.get("library_default"):
         with st.expander(f"Inherited library defaults ({len(hp['library_default'])})"):
@@ -741,7 +819,7 @@ def _render_model_detail() -> None:
                 looked_in=str(_repo / "experiments"),
                 command="Run an ablation for this model; runs append to the log automatically"),
             unsafe_allow_html=True)
-        st.caption("A model with no logged run is not a bad model — it is an unmeasured one. "
+        st.caption("A model with no logged run is not a bad model. It is an unmeasured one. "
                    "Nothing here is inferred from a sibling model.")
     else:
         _tsel = st.multiselect("Target", sorted({r["target"] for r in rows}), default=[])
@@ -761,10 +839,10 @@ def _render_model_detail() -> None:
             "run_id": r["run_id"],
         } for r in _view]), hide_index=True, use_container_width=True,
             column_config={
-                "Skill vs ruler": st.column_config.TextColumn(help=HELP["skill"]),
-                "Signal": st.column_config.TextColumn(help=HELP["sentinel"]),
-                "MASE": st.column_config.TextColumn(help=HELP["mase"]),
-                "Coverage high": st.column_config.TextColumn(help=HELP["tercile_coverage"]),
+                "Skill vs ruler": st.column_config.TextColumn(help=help_text("skill")),
+                "Signal": st.column_config.TextColumn(help=help_text("sentinel")),
+                "MASE": st.column_config.TextColumn(help=help_text("mase")),
+                "Coverage high": st.column_config.TextColumn(help=help_text("tercile_coverage")),
                 "run_id": st.column_config.TextColumn(
                     help="The logged run this row came from. Its full record, including data and "
                          "code fingerprints, is in experiments/runs/<run_id>.json."),

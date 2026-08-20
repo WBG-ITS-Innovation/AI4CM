@@ -1,0 +1,61 @@
+# Foundation forecasters: OPTIONAL extras, exploratory only.
+#
+# Not part of the core install, on purpose. A fresh clone following the README setup does not
+# need this file, and nothing here is required for the app, the registry or the test suite to
+# work. Every import in backend/foundation_models.py is lazy, so with these absent the models
+# report themselves as not installed and everything else behaves normally.
+#
+#   ./backend/.venv/bin/python -m pip install -r backend/requirements-foundation.txt
+#
+# WHY EVERY VERSION IS EXACT
+# --------------------------
+# A zero-shot forecast is reproducible only if both the code and the weights are fixed. The
+# versions below are the ones actually installed and actually measured on 2026-08-19, not a
+# compatible range. The weights are pinned separately, by commit hash, in
+# backend/foundation_models.py -- a tag or `main` can move, and a forecast whose weights can
+# change underneath it is not a record of anything.
+#
+# INSTALLED INTO backend/.venv, AND WHY THAT WAS SAFE
+# ---------------------------------------------------
+# `pip install --dry-run` was run first and checked against the committed snapshot at
+# docs/sessions/pip-freeze-before-fm-2026-08-19.txt. It would not move numpy (2.4.4), pandas
+# (3.0.2) or torch (2.11.0), which are the three that would have forced a separate interpreter.
+# Verified after installing: all three unchanged, along with scikit-learn, lightgbm, xgboost,
+# catboost and statsmodels.
+#
+# One package was upgraded in place rather than added: click 8.3.1 -> 8.4.2, required by typer,
+# which transformers pulls in. That is the only pre-existing package this file changes.
+#
+# WHAT DOWNLOADS, AND WHEN
+# ------------------------
+# Installing these fetches no model weights. Weights arrive the first time a model is actually
+# run and are cached under ~/.cache/huggingface/hub. After that first fetch nothing downloads at
+# runtime: the pinned revision resolves from the local cache without a network call. Measured on
+# the Chronos small bolt checkpoint: 17.4s on the first load including download, 0.1s from cache.
+
+chronos-forecasting==2.3.1
+
+# Pulled in by the above. Pinned rather than left to resolve, so a rebuild of this environment in
+# six months installs the versions these figures were measured on.
+accelerate==1.14.0
+annotated-doc==0.0.5
+anyio==4.14.2
+einops==0.8.2
+h11==0.16.0
+hf-xet==1.6.0
+httpcore==1.0.9
+httpx==0.28.1
+huggingface_hub==1.28.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+regex==2026.7.19
+rich==15.0.0
+safetensors==0.8.0
+shellingham==1.5.4
+tokenizers==0.22.2
+transformers==5.15.1
+typer==0.27.1
+
+# Upgraded from 8.3.1 by typer's requirement. Recorded here because it is the one change this
+# file makes to a package the core install already had.
+click==8.4.2

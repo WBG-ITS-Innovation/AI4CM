@@ -50,6 +50,24 @@ REPO = BACKEND.parent
 #: applies across libraries that share a concept under the same name, with a sensible range.
 #: Ranges are conventional starting points for a search, not measured optima.
 PARAM_MEANING: Dict[str, Dict[str, str]] = {
+    # ── added 2026-08-19 with the models that set them ──────────────────────────────────────
+    # `test_every_reported_parameter_has_a_plain_language_meaning_or_says_none` fails when a
+    # model sets a parameter with no entry here, which is the right guard: a parameter name with
+    # no explanation is a dump, not a reference. These four arrived with TheilSen, KNN and
+    # KernelRidge and the test caught all four.
+    "max_subpopulation": {"controls": "How many small subsets the robust linear fit draws before "
+                                      "taking the middle answer. Without a cap the number grows "
+                                      "combinatorially with the feature set and the fit stops "
+                                      "finishing.", "range": "500 – 10000"},
+    "n_neighbors": {"controls": "How many similar past days are averaged to make a prediction. "
+                                "Fewer follows the nearest days closely and is noisier; more "
+                                "smooths toward the overall average.", "range": "3 – 50"},
+    "weights": {"controls": "Whether nearer days count for more than further ones when their "
+                            "outcomes are averaged. `distance` weights by closeness, `uniform` "
+                            "treats every neighbour alike.", "range": "uniform | distance"},
+    "kernel": {"controls": "The shape the fit is allowed to bend into. `rbf` lets it curve "
+                           "smoothly around each observation; `linear` holds it straight, which "
+                           "would make the model a slower Ridge.", "range": "rbf | linear | poly"},
     "n_estimators": {"controls": "How many trees are built. More trees keep reducing error until "
                                  "they stop helping; they never overfit on their own in a bagged "
                                  "model, but each one costs time.",
@@ -124,6 +142,11 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "express 'the answer is this much of feature A plus that much of feature B', so it cannot "
         "represent an interaction like 'the 15th matters, but only in a month with a holiday'. "
         "Fast, stable, and the honest floor a tree model has to beat."},
+    "Huber": {"family": "Linear", "summary":
+        "A straight-line fit whose loss stops growing quadratically once a residual gets large, "
+        "so a single enormous day pulls it far less than it pulls an ordinary linear fit. This "
+        "series has single days ten times the local level, which is exactly the situation the "
+        "loss was designed for. Registered as a candidate and not yet measured."},
     "Lasso": {"family": "Linear", "summary":
         "Ridge's cousin with a penalty that can drive coefficients to exactly zero, so it selects "
         "features as it fits. Useful when most inputs are irrelevant, which is often true of a "
@@ -132,6 +155,44 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "A blend of ridge and lasso. It keeps lasso's ability to discard features while handling "
         "correlated features more gracefully — and calendar features are heavily correlated, "
         "since day-of-month and business-day-of-month largely say the same thing."},
+    # Added 2026-08-19. Every one of these is a candidate with no recorded result, and each
+    # says so in its own summary rather than relying on the UNTESTED badge alone: a reader
+    # skimming summaries should not have to cross-reference a badge to learn that.
+    "BayesianRidge": {"family": "Linear", "summary":
+        "Ridge that estimates its own shrinkage from the data instead of being handed a value. "
+        "There is no setting to choose, so it cannot be tuned into looking good, which makes it "
+        "an honest reading next to Ridge on the same features. Registered as a candidate and not "
+        "yet measured."},
+    "TheilSen": {"family": "Linear", "summary":
+        "A robust straight-line fit that takes the middle answer from many small subsets of the "
+        "history. Huber de-weights extreme days one at a time; this is unmoved by a whole run of "
+        "them together, which is what a month-end looks like in this series. Registered as a "
+        "candidate and not yet measured."},
+    "KNN": {"family": "Distance", "summary":
+        "Looks up the most similar days in the past and averages what happened on them, weighted "
+        "by how similar they were. It fits no formula at all, so it answers a different question "
+        "from every other model here: whether days like today have happened before. Registered as "
+        "a candidate and not yet measured."},
+    "KernelRidge": {"family": "Kernel", "summary":
+        "Ridge on a curved feature space rather than a straight one, so it can bend where the "
+        "linear models cannot without splitting the way the trees do. Sits between the two, and "
+        "is measured on scaled features because its kernel is a distance. Registered as a "
+        "candidate and not yet measured."},
+    "GBDT_L1": {"family": "Boosted trees", "summary":
+        "Boosted trees trained on absolute error, splitting on actual feature values rather than "
+        "on the 255-bin histogram its faster sibling uses. Slower, and on a few thousand rows "
+        "that costs little; the binning is an approximation precisely at the extreme values this "
+        "series carries its information in. Registered as a candidate and not yet measured."},
+    "DecisionTree_L1": {"family": "Single tree", "summary":
+        "One decision tree, trained on absolute error. It is the only model on this shelf whose "
+        "reasoning can be printed and read end to end, which is what matters when somebody has "
+        "to defend a number rather than quote it. Expect it to be beaten by the ensembles. "
+        "Registered as a candidate and not yet measured."},
+    "AdaBoost": {"family": "Boosted trees", "summary":
+        "Boosting that reweights the days the previous trees got most wrong, where the "
+        "gradient-boosted models instead fit what is left over. On a series whose informative "
+        "days are rare and extreme those are genuinely different behaviours. Registered as a "
+        "candidate and not yet measured."},
     "RandomForest": {"family": "Bagged trees", "summary":
         "Many deep trees, each grown on a different random sample of rows and features, then "
         "averaged. Averaging independent errors is what makes it robust; it captures interactions "
@@ -184,6 +245,38 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "the edges cannot cross. Early stopping leaves a gap the size of the forecast horizon, so "
         "the stopping decision is not made against rows whose answers sit inside the validation "
         "slice."},
+    # Added 2026-08-19. The family's three existing members are all tree ensembles, so it could
+    # not say whether its band widths are a property of this series or of trees. These widen it
+    # on purpose: one linear, one binned, one exact-split.
+    "LinearQuantile": {"family": "Quantile", "summary":
+        "Quantile regression on a straight line — the only member of this family that is not a "
+        "tree. That is the point of it: when every other member produces bands of a similar "
+        "width, this one says whether that is the data speaking or the method. Registered as a "
+        "candidate and not yet measured."},
+    "HistGBQuantile": {"family": "Boosted trees (quantile)", "summary":
+        "The binned sibling of the gradient-boosted quantile model: same pinball loss, splitting "
+        "on a histogram of the features rather than on their actual values. One fit per quantile, "
+        "sorted afterwards so the edges cannot cross. Registered as a candidate and not yet "
+        "measured."},
+    "XGBQuantile": {"family": "Boosted trees (quantile)", "summary":
+        "XGBoost's own quantile objective, one fit per quantile, sorted afterwards so the edges "
+        "cannot cross. Needs XGBoost 2.0 or newer; where the package is older the model is "
+        "omitted rather than quietly falling back to a mean fit under a quantile name. Registered "
+        "as a candidate and not yet measured."},
+    # ── F_FOUNDATION (backend/foundation_models.py) ─────────────────────────────────────────
+    "Chronos_Bolt_Small": {"family": "Pretrained zero-shot", "summary":
+        "A forecaster trained once by somebody else on a large collection of other people's time "
+        "series, then asked to forecast this one from its recent history alone. There is no "
+        "fitting step and it has never seen Georgian Treasury data, which is what makes it a "
+        "different kind of reading from everything else here: it says how much of this series is "
+        "predictable from shape alone. Exploratory only. It cannot become the model behind an "
+        "official forecast, and it has not been measured."},
+    "TimesFM_2p5_200M": {"family": "Pretrained zero-shot", "summary":
+        "A second forecaster trained by somebody else on other people's time series, larger than "
+        "the one above and from a different research group, asked the same question in the same "
+        "way. Two independent zero-shot readings are worth more than one: where they agree, the "
+        "agreement says something neither could say alone. Exploratory only. It cannot become the "
+        "model behind an official forecast, and it has not been measured."},
     # ── A_STAT (backend/run_a_stat.py) ──────────────────────────────────────────────────────
     # These keys use the family's own UPPERCASE dispatch names. They were previously "ETS" and
     # "Theta", which matched nothing the pipeline dispatches on and nothing model_pool()
@@ -192,9 +285,24 @@ DESCRIPTIONS: Dict[str, Dict[str, str]] = {
     "ETS": {"family": "Statistical", "summary":
         "Exponential smoothing — a weighted average of the past where recent observations count "
         "for more, with optional trend and seasonal terms. Uses only the target's own history."},
+    "ETS_DAMPED": {"family": "Statistical", "summary":
+        "The same method with the trend damped, so a trend it has picked up flattens out as the "
+        "forecast reaches further ahead instead of continuing indefinitely. Usually the safer of "
+        "the two at longer horizons, where an undamped trend can run away from the level. "
+        "Registered as a candidate and not yet measured."},
     "THETA": {"family": "Statistical", "summary":
         "A classical decomposition method: de-trend the series, forecast the pieces, recombine. "
         "Strong on smooth seasonal series and a well-known competition benchmark."},
+    "SES": {"family": "Statistical", "summary":
+        "Exponential smoothing with no trend and no seasonal term, so it tracks the level only. "
+        "It is the plainest member of this family, and it exists to say how much of the fuller "
+        "method's accuracy comes from the level alone. Registered as a candidate and not yet "
+        "measured."},
+    "HOLT": {"family": "Statistical", "summary":
+        "Exponential smoothing with a trend but no seasonal term, and the trend continues at the "
+        "same slope rather than flattening out. It sits between the level-only method and the "
+        "damped one, so the three together show what the trend and the damping are each worth. "
+        "Registered as a candidate and not yet measured."},
     "SARIMAX": {"family": "Statistical", "summary":
         "Seasonal ARIMA with optional external regressors. Models the series through its own "
         "autocorrelation and differencing, and is the only A_STAT model that can take exogenous "
@@ -363,6 +471,34 @@ def model_pool() -> Dict[str, Dict]:
             entry["missing_library"] = _cdl_why
         out.setdefault(name, entry)
 
+    # F_FOUNDATION. Pretrained zero-shot forecasters, added 2026-08-19. Optional extras, so the
+    # usual rule applies: a model whose package is absent is marked unavailable and says which
+    # package it needs, rather than disappearing and leaving "why can I not pick this" unanswered.
+    #
+    # `foundation_models` imports nothing heavy at module level, so this block is safe from the
+    # Streamlit interpreter and `availability()` never loads a checkpoint or touches the network.
+    try:
+        import foundation_models as _fm
+
+        for name, info in _fm.availability().items():
+            entry = {"name": name, "pipeline": _fm.FAMILY_FOUNDATION,
+                     "available": info["installed"],
+                     "class": "(pretrained checkpoint, not fitted here)",
+                     "registry_description": info["summary"],
+                     "repo": info["repo"],
+                     "revision": info["revision"],
+                     "hyperparameters": {
+                         "set_by_pipeline": [], "library_default": [], "n_total": 0,
+                         "note": ("Nothing is fitted here, so there are no training parameters to "
+                                  "show. What determines the answer is the checkpoint, pinned by "
+                                  "commit hash, and how much history it was given.")}}
+            if not info["installed"]:
+                entry["missing_library"] = info["reason"]
+            out.setdefault(name, entry)
+    except Exception as exc:                       # noqa: BLE001 - optional extras
+        # The family failing to enumerate must not remove every other model from the page.
+        print(f"[foundation] registry unavailable: {type(exc).__name__}: {exc}")
+
     # Models that exist in the code but are unavailable because a library is missing must SAY so
     # rather than vanishing from the page.
     for name, flag, lib in (("XGBoost", bml.HAVE_XGB, "xgboost"),
@@ -376,9 +512,19 @@ def model_pool() -> Dict[str, Dict]:
                          "class": "(unavailable)", "missing_library": lib,
                          "hyperparameters": {"set_by_pipeline": [], "library_default": [],
                                              "n_total": 0}}
+    # Has anybody recorded a result for this model? Derived from the experiment ledger by
+    # `model_catalog`, never declared. Carried on every pool entry so the Models page can
+    # badge an untested model rather than showing it beside a champion undifferentiated,
+    # which is how Ridge came to be the Lab's default selection with no recorded result.
+    from model_catalog import status_of, measured_targets, untested_badge, EVALUATED
+
     for name, d in out.items():
         d.update(DESCRIPTIONS.get(name, {"family": "—", "summary": ""}))
         d["description_kind"] = "general description, not a measured claim"
+        d["status"] = status_of(name)
+        d["measured_on"] = list(measured_targets(name))
+        d["gate_eligible"] = d["status"] == EVALUATED
+        d["status_note"] = "" if d["status"] == EVALUATED else untested_badge(name)
     return out
 
 
@@ -398,20 +544,42 @@ _CATEGORY_BY_PIPELINE = {
     "B_ML": "machine-learning models",
     "C_DL": "deep-learning models",
     "E_QUANTILE": "quantile methods",
+    # Added 2026-08-19. A separate category rather than folded into C_DL, because the two mean
+    # different things: every C_DL model was trained on Treasury data by this pipeline, and a
+    # foundation model has never seen it. Counting them together would make "deep-learning
+    # models: 5" describe two kinds of claim in a sentence a client reads.
+    "F_FOUNDATION": "pretrained zero-shot forecasters",
 }
 
 #: Order the categories appear in the sentence.
 CATEGORY_ORDER = ("machine-learning models", "deep-learning models", "statistical models",
-                  "quantile methods", "reference baselines")
+                  "quantile methods", "pretrained zero-shot forecasters", "reference baselines")
 
 #: Categories whose models produce point forecasts and are ranked against each other on a
 #: target. Quantile methods produce intervals; baselines are the ruler. Neither competes.
+#:
+#: "pretrained zero-shot forecasters" is deliberately NOT here, and the omission is the point.
+#: They produce a point forecast, so they COULD be ranked; they are excluded because they are
+#: exploratory and were never put through this project's evaluation protocol. Adding them would
+#: raise the competing count with entries carrying no measurement, which is exactly the sentence
+#: `client_framing` exists to keep honest.
 COMPETING_CATEGORIES = ("machine-learning models", "deep-learning models", "statistical models")
 
 #: The category a registry recipe draws its `point_model` from. Cross-checked against
 #: `registry/recipes.json` by `composition()`, so promoting a model from another family
 #: fails rather than quietly widening the pool we describe to a client.
 CHAMPION_POOL_CATEGORY = "machine-learning models"
+
+#: Families that are enumerable here but do NOT run in the daily production pipeline.
+#:
+#: F_FOUNDATION is launched from the Lab and is deliberately absent from the default FAMILIES in
+#: ``run_daily_forecast.sh``. That distinction is load-bearing rather than tidy:
+#: ``daily_best_model_families`` used to be "every pipeline in the pool", which quietly assumed
+#: every enumerable family also runs daily. Adding a Lab-only family broke the assumption in a
+#: way that reaches outside this repo -- the Agent contract ranks families from that list, so it
+#: would have expected a per-family ``best_model`` for a family the daily summary never writes
+#: one for, and gone looking for an artifact that does not exist.
+EXPLORATORY_ONLY_FAMILIES = frozenset({"F_FOUNDATION"})
 
 
 def client_category(entry: Dict) -> str:
@@ -443,9 +611,10 @@ def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
     * `champion_pool` — the models a **registry recipe** may promote as its `point_model`,
       i.e. the set an official published forecast is selected from.
     * `daily_best_model_families` — the families `daily_summary.py` writes a per-family
-      `best_model` for. Every family that produces a leaderboard is in here, so a consumer
-      ranking families (as the Agent does) is choosing across all of them, not across
-      `champion_pool`.
+      `best_model` for. Every family that produces a leaderboard IN THE DAILY RUN is in here, so
+      a consumer ranking families (as the Agent does) is choosing across all of them, not across
+      `champion_pool`. Lab-only families are excluded, or the list would promise an artifact the
+      daily run never writes; see `EXPLORATORY_ONLY_FAMILIES`.
     """
     pool = model_pool() if pool is None else pool
 
@@ -469,6 +638,31 @@ def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
     promoted = sorted({r["point_model"] for r in load_registry()["recipes"]})
     off_pool = [m for m in promoted if m not in champion_pool]
 
+    # How many of these have a result anybody could quote? Counted, not assumed.
+    #
+    # Adding this changed the picture the sentence paints. Measured the day it was added,
+    # only 8 of the 28 non-baseline entries had a row in experiments/log.csv, so a sentence
+    # saying "13 machine-learning models compete on each target" was describing a shelf
+    # rather than a body of evidence. The counts below let the sentence say both.
+    #
+    # The ledger is the right test rather than a harsh one: a registry recipe cites a
+    # ledger run_id and registry.verify_against_log checks it, so a model with no ledger
+    # row cannot become a champion however many times it has been executed.
+    from model_catalog import EVALUATED, status_of
+
+    evaluated, untested = [], []
+    for name, entry in pool.items():
+        if client_category(entry) == "reference baselines":
+            continue
+        (evaluated if status_of(name) == EVALUATED else untested).append(name)
+    # `client_category` and `model_catalog.BASELINE` must agree about which entries are
+    # rulers, or one of the two counts is wrong. Checked here rather than left to trust.
+    from model_catalog import BASELINE
+    _rulers = {n for n, e in pool.items() if client_category(e) == "reference baselines"}
+    assert _rulers == {n for n in pool if status_of(n) == BASELINE}, (
+        "the client categories and the model catalogue disagree about which entries are "
+        "reference baselines")
+
     return {
         "counts": counts,
         "members": members,
@@ -477,9 +671,16 @@ def composition(pool: Optional[Dict[str, Dict]] = None) -> Dict:
         "champion_pool_category": CHAMPION_POOL_CATEGORY,
         "champion_pool": champion_pool,
         "champion_pool_size": len(champion_pool),
+        "evaluated": sorted(evaluated),
+        "untested": sorted(untested),
+        "evaluated_total": len(evaluated),
+        "untested_total": len(untested),
         "promoted_by_registry": promoted,
         "promoted_outside_champion_pool": off_pool,
-        "daily_best_model_families": sorted({e["pipeline"] for e in pool.values()}),
+        # Families the DAILY pipeline writes a best_model for. Lab-only families are excluded:
+        # see EXPLORATORY_ONLY_FAMILIES for why this is not merely cosmetic.
+        "daily_best_model_families": sorted({e["pipeline"] for e in pool.values()}
+                                            - EXPLORATORY_ONLY_FAMILIES),
     }
 
 
@@ -506,6 +707,16 @@ def client_framing(pool: Optional[Dict[str, Dict]] = None) -> str:
     if counts["reference baselines"]:
         sentence += (f"; {counts['reference baselines']} further entries are reference "
                      f"baselines, not competitors")
+    # The clause that stops the sentence describing a shelf as though it were evidence.
+    #
+    # "Recorded result" is the precise claim and it is narrower than "has been run": A_STAT
+    # runs daily and writes a leaderboard into its run folder without entering anything in
+    # experiments/log.csv. What the ledger holds is what a recipe can cite and what the
+    # publication checks can read, so a model outside it has no quotable number.
+    if comp["untested_total"]:
+        sentence += (f". Of those, {comp['evaluated_total']} have a recorded result on at "
+                     f"least one target and {comp['untested_total']} are registered "
+                     f"candidates with no recorded result yet")
     return sentence + "."
 
 

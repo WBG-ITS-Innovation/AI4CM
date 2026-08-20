@@ -22,3 +22,27 @@ def runs_dir() -> Path:
     """The run-artifacts root. ``AI4CM_RUNS_DIR`` overrides the default when set."""
     override = os.environ.get(ENV_VAR, "").strip()
     return Path(override).expanduser() if override else APPROOT / "runs"
+
+
+#: Overrides the scorecard the Scorecard page READS.
+#:
+#: Only the read path. Scoring always writes the real ``forecasts/scorecard.csv``, because a
+#: scoring run that could be redirected by an environment variable would let a test, or a
+#: mistyped shell, quietly replace the track record.
+#:
+#: This exists for one reason: the honest state of this project today is zero scored rows, and
+#: a page that has only ever been seen empty is a page whose scored branch has never rendered.
+#: The override lets that branch be rendered against a clearly-labelled synthetic file, and the
+#: page says on screen that it is reading one.
+SCORECARD_ENV_VAR = "AI4CM_SCORECARD"
+
+
+def scorecard_path() -> Path:
+    """The scorecard to display. ``AI4CM_SCORECARD`` overrides the default when set."""
+    override = os.environ.get(SCORECARD_ENV_VAR, "").strip()
+    return Path(override).expanduser() if override else APPROOT.parent / "forecasts" / "scorecard.csv"
+
+
+def scorecard_is_overridden() -> bool:
+    """True when the page is reading a substituted scorecard rather than the real one."""
+    return bool(os.environ.get(SCORECARD_ENV_VAR, "").strip())

@@ -79,15 +79,8 @@ if __name__ == "__main__":
         print(f"[runner] ERROR: {e}")
         print("[runner] Full traceback:")
         traceback.print_exc()
-        # Write error to artifacts/error.json
-        error_path = Path(cfg.out_root) / "artifacts" / "error.json"
-        error_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(error_path, "w", encoding="utf-8") as f:
-            import json
-            json.dump({
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "traceback": traceback.format_exc()
-            }, f, indent=2)
+        # See the univariate runner: one shared report helper across all four families.
+        from runner_errors import write_error_report
+        error_path = write_error_report(cfg.out_root, e, context="B_ML multivariate")
         print(f"[runner] Error details saved to: {error_path}")
         sys.exit(1)

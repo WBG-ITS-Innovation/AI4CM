@@ -24,8 +24,8 @@ sys.path.insert(0, str(REPO / "backend"))
 pytest.importorskip("streamlit", reason="streamlit is installed in frontend/.venv only")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-DASHBOARD = FRONTEND / "pages" / "01_Dashboard.py"
-HISTORY = FRONTEND / "pages" / "02_History.py"
+DASHBOARD = FRONTEND / "pages" / "03_Dashboard.py"
+HISTORY = FRONTEND / "pages" / "05_History.py"
 
 
 @pytest.fixture(autouse=True)
@@ -150,7 +150,7 @@ def test_dashboard_reconciles_its_ranking_with_the_integrity_report():
     )
 
 
-# ── item 7: 02_History crashed with an empty runs directory ───────────────────
+# ── item 7: 05_History crashed with an empty runs directory ───────────────────
 
 def test_history_renders_with_an_empty_runs_directory(tmp_path, monkeypatch):
     """The live crash: df[visible] on an empty frame raised
@@ -163,7 +163,7 @@ def test_history_renders_with_an_empty_runs_directory(tmp_path, monkeypatch):
     at = AppTest.from_file(str(HISTORY), default_timeout=60)
     at.run()
     assert not at.exception, (
-        "02_History still raises with an empty runs directory: "
+        "05_History still raises with an empty runs directory: "
         + "; ".join(str(e.value) for e in at.exception)
     )
 
@@ -270,13 +270,67 @@ def test_kpi_strip_shows_the_six_measured_metrics_with_tooltips():
         assert by[hit[0]].help, f"{want} has no help tooltip"
 
 
-def test_sentinel_kpi_shows_its_threshold():
-    """A ratio without its threshold is unreadable — 1.13 means nothing until you know 1.50 is
-    required."""
+def test_sentinel_kpi_shows_its_threshold(tmp_path, monkeypatch):
+    """A ratio without its threshold is unreadable: 1.13 means nothing on its own.
+
+    Two things changed here in the MVP consolidation.
+
+    The threshold itself was wrong. This asserted 1.50, and the page printed 1.50, and both
+    were superseded by P2, which calibrated the sentinel against a measured null
+    distribution and moved it to 1.15. The number is now imported from
+    ``publication_gates`` rather than retyped, and this test reads it from there too, so
+    the KPI and the check that decides verdicts cannot say different things again.
+
+    The test also built no run and rendered against whatever happened to be in the
+    developer's runs folder, so it passed or failed on local state. It now renders against
+    a run it constructs, which is what the other tests in this file do.
+    """
+    from publication_gates import SENTINEL_MIN
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    _make_run_with_sentinel(runs, ratio=4.2)
+    monkeypatch.setenv("AI4CM_RUNS_DIR", str(runs))
+
     at = AppTest.from_file(str(DASHBOARD), default_timeout=180)
     at.run()
-    v = next((m.value for m in at.metric if m.label == "Signal check"), "")
-    assert "1.50" in str(v), f"the 1.50 threshold is not shown: {v!r}"
+    v = str(next((m.value for m in at.metric if m.label == "Signal check"), ""))
+    assert f"{SENTINEL_MIN:.2f}" in v, f"the {SENTINEL_MIN} threshold is not shown: {v!r}"
+    assert "1.50" not in v, "the superseded threshold must not be quoted at a reader"
+
+
+def _make_run_with_sentinel(root, ratio: float):
+    """A minimal run carrying a sentinel ratio, so the KPI has something to render."""
+    import json as _json
+
+    # The Dashboard reads a run's artifacts from <run>/outputs, not from <run>. Writing them
+    # one level up produces a page that renders cleanly, stops at "No predictions found",
+    # and has no KPI strip at all, which is a passing smoke test and a useless one here.
+    d = root / "run_sentinel" / "outputs"
+    (d / "artifacts").mkdir(parents=True, exist_ok=True)
+    idx = pd.bdate_range("2024-01-01", periods=60)
+    rng = np.random.default_rng(0)
+    y = 1e8 + 2e7 * rng.normal(0, 1, 60)
+    pd.DataFrame({
+        "date": idx, "target_date": idx, "origin_date": idx - pd.offsets.BDay(5),
+        "origin_value": y * 0.98, "target": "Revenues", "horizon": 5,
+        "model": "LightGBM_L1", "y_true": y, "y_pred": y * 1.01,
+    }).to_csv(d / "predictions_long.csv", index=False)
+    pd.DataFrame({"model": ["LightGBM_L1"], "MAE": [2.0e7], "RMSE": [3.0e7],
+                  "R2": [0.4], "target": ["Revenues"], "horizon": [5]}
+                 ).to_csv(d / "leaderboard.csv", index=False)
+    pd.DataFrame({"model": ["LightGBM_L1"], "target": ["Revenues"], "horizon": [5],
+                  "fold": [1], "MAE": [2.0e7], "RMSE": [3.0e7], "MASE": [0.92],
+                  "R2": [0.4]}).to_csv(d / "metrics_long.csv", index=False)
+    (d / "artifacts" / "integrity_report.json").write_text(_json.dumps({
+        "pipeline": "ML", "target": "Revenues", "horizon": 5, "run_status": "SUCCESS",
+        "quality_gate_passed": True, "alignment_ok": True, "n_misaligned": 0,
+        "best_model": "LightGBM_L1", "mae_best": 2.0e7, "mae_persistence": 3.4e7,
+        "skill_pct": 41.0, "shuffled_to_normal_ratio": ratio, "signal_detected": True,
+        "overfit_ratios": {"LightGBM_L1": 2.1}, "overfit_gate_ratio": 3.0,
+        "overfit_excluded_models": [],
+    }, indent=2))
+    return d
 
 
 def test_coverage_kpi_reads_its_nominal_from_the_artifact():
@@ -316,7 +370,7 @@ NOT_REPORTED_TEXT = "not reported"
 
 # ── item 3: the benchmark series reaches the Forecast chart ───────────────────
 
-FORECAST = FRONTEND / "pages" / "05_Forecast.py"
+FORECAST = FRONTEND / "pages" / "01_Forecast.py"
 
 
 def test_forecast_chart_plots_the_benchmark_as_its_own_trace():

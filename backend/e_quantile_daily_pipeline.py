@@ -317,12 +317,96 @@ def registry_models() -> Dict[str, str]:
         # gap, so the stopping decision is not made against rows whose targets fall inside
         # the validation block. See backend/tuning.py.
         "LGBMQuantile": "LightGBM (quantile loss, crossing-safe, h-gapped early stopping)",
+        # Added 2026-08-19, UNTESTED. All three existing members are tree ensembles, so the
+        # family could not say whether its interval widths are a property of the data or of
+        # trees. These three widen it deliberately: one linear, one binned, one exact-split.
+        "LinearQuantile": "Linear quantile regression (no trees, straight-line quantiles)",
+        "HistGBQuantile": "HistGradientBoosting (quantile loss, binned splits)",
+        "XGBQuantile": "XGBoost (quantile loss, reg:quantileerror)",
     }
 
 
 def _fit_gb_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
     # Gradient Boosting quantile (pinball loss). Separate model per quantile.
     model = GradientBoostingRegressor(loss="quantile", alpha=q, random_state=42)
+    model.fit(X_tr, y_tr)
+    return model.predict(X_te)
+
+
+def _enforce_monotone(preds: Dict[float, np.ndarray],
+                      quantiles: Sequence[float]) -> Tuple[Dict[float, np.ndarray], int]:
+    """Make each row's quantiles non-decreasing, and count the rows that needed it.
+
+    Fitting each quantile as its own independent model does not guarantee that the p10 comes out
+    below the p50. Measured on the three entries added 2026-08-19, two of them cross on real
+    rows, so this is not a theoretical tidy-up: a reported band with its lower edge above its
+    upper edge is not an interval.
+
+    Nothing downstream fixes this. ``q_preds`` goes straight into the ``yhat_p10``/``yhat_p50``/
+    ``yhat_p90`` columns, and the ``n_cross`` the caller prints is only ever *reported*. So the
+    repair has to happen here, and the count is returned rather than swallowed: ``ResidualRF``
+    repairs silently, which means nobody learns when a model is crossing constantly, and
+    constant crossing is how a misconfigured quantile model looks from the outside.
+    """
+    ordered = sorted(quantiles)
+    if len(ordered) < 2:
+        return preds, 0
+
+    stacked = np.vstack([np.asarray(preds[q], dtype=float) for q in ordered])
+    crossed = int(np.sum(np.any(np.diff(stacked, axis=0) < 0, axis=0)))
+    repaired = np.maximum.accumulate(stacked, axis=0)
+    return {q: repaired[i] for i, q in enumerate(ordered)}, crossed
+
+
+def _fit_linear_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
+    """Linear quantile regression: the only member of this family that is not a tree.
+
+    Worth having for a specific reason. Every other member is a tree ensemble, so when this
+    family's bands come out too narrow there is no way to tell whether that is the data or the
+    method. A straight-line quantile fit answers that.
+
+    ``alpha=0`` is plain quantile regression with no extra shrinkage, so the entry is the method
+    itself rather than a tuned variant of it. Imputed and scaled, because the solver is working
+    on a linear program over the raw columns and an unscaled feature set makes it ill-conditioned.
+    """
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import QuantileRegressor
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    model = Pipeline([("imp", SimpleImputer(strategy="median")),
+                      ("sc", StandardScaler()),
+                      ("est", QuantileRegressor(quantile=q, alpha=0.0, solver="highs"))])
+    model.fit(X_tr, y_tr)
+    return model.predict(X_te)
+
+
+def _fit_hist_gb_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
+    """The binned sibling of GBQuantile: same loss, splits on a histogram rather than values.
+
+    Separate model per quantile, as GBQuantile does. ``min_samples_leaf`` is set rather than left
+    at the default 20, so a leaf cannot hold a single day and memorise it.
+    """
+    from sklearn.ensemble import HistGradientBoostingRegressor
+
+    model = HistGradientBoostingRegressor(loss="quantile", quantile=q, random_state=42,
+                                          min_samples_leaf=20, l2_regularization=1.0)
+    model.fit(X_tr, y_tr)
+    return model.predict(X_te)
+
+
+def _fit_xgb_quantile(X_tr, y_tr, X_te, q: float) -> np.ndarray:
+    """XGBoost's own quantile objective, which needs XGBoost >= 2.0.
+
+    Where the package is too old the model is omitted rather than falling back to squared error,
+    which would put a mean fit in the table under a quantile name. Measured here on XGBoost 3.2.
+    """
+    from xgboost import XGBRegressor
+
+    model = XGBRegressor(objective="reg:quantileerror", quantile_alpha=q,
+                         n_estimators=300, learning_rate=0.05, max_depth=4,
+                         subsample=0.8, colsample_bytree=0.8, min_child_weight=5.0,
+                         reg_lambda=1.0, random_state=42, tree_method="hist", n_jobs=-1)
     model.fit(X_tr, y_tr)
     return model.predict(X_te)
 
@@ -346,6 +430,19 @@ def _predict_quantiles(model_name: str, CONFIG: "Config", X_tr, y_tr, X_new,
         return fit_quantiles("LGBMQuantile", X_tr, y_tr, X_new,
                              dict(CONFIG.lgbm_params or {}), CONFIG.horizon,
                              quantiles=tuple(quantiles))
+    # Added 2026-08-19, UNTESTED. New branches only: nothing above is altered, so the three
+    # models this family has measured numbers for keep the exact code path that produced them.
+    #
+    # All three fit each quantile as its own independent model, which does not guarantee the p10
+    # lands below the p50. Measured: two of the three cross on real rows. So each goes through
+    # `_enforce_monotone`, which repairs the order and RETURNS the count, so the caller's
+    # existing report fires. Returning 0 here would have shipped crossed bands silently.
+    _fitters = {"LinearQuantile": _fit_linear_quantile,
+                "HistGBQuantile": _fit_hist_gb_quantile,
+                "XGBQuantile": _fit_xgb_quantile}
+    if model_name in _fitters:
+        fit = _fitters[model_name]
+        return _enforce_monotone({q: fit(X_tr, y_tr, X_new, q) for q in quantiles}, quantiles)
     raise ValueError(f"Unknown model '{model_name}'")
 
 
