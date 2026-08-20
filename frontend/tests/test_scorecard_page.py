@@ -65,7 +65,8 @@ def _text(at: AppTest) -> str:
     return "\n".join(parts)
 
 
-def _synthetic_scorecard(path: Path, n_days: int = 5) -> Path:
+def _synthetic_scorecard(path: Path, n_days: int = 5, skill: float = 30.0,
+                         hit: bool = True) -> Path:
     """Clearly-synthetic scored rows. Every identifier says so."""
     rows = []
     for target, base in (("Revenues", 4.0e7), ("Expenditure", 5.0e7)):
@@ -82,10 +83,10 @@ def _synthetic_scorecard(path: Path, n_days: int = 5) -> Path:
                 "target_date": str(day.date()),
                 "p10": p50 * 0.9, "p50": p50, "p90": p50 * 1.1, "interval_nominal": 0.8,
                 "y_true": actual, "abs_error": abs(actual - p50),
-                "inside_interval": bool(p50 * 0.9 <= actual <= p50 * 1.1),
+                "inside_interval": bool(hit and p50 * 0.9 <= actual <= p50 * 1.1),
                 "persistence_pred": persistence,
                 "persistence_abs_error": abs(actual - persistence),
-                "skill_vs_ruler_pct": 30.0, "persistence_source": "synthetic",
+                "skill_vs_ruler_pct": skill, "persistence_source": "synthetic",
                 "ops_pred": ops, "ops_abs_error": abs(actual - ops),
                 "skill_vs_ops": 40.0, "ops_source": "synthetic",
                 "scored_in_window": "live", "publication_verdict": "publishable",
@@ -106,13 +107,32 @@ def test_the_page_renders_with_nothing_scored():
     assert "Nothing has been scored yet, and that is the honest state." in text
 
 
-def test_the_empty_state_lists_the_pending_dates():
-    """A record showing only its scored rows can be made to look good by scoring selectively."""
+def test_the_pending_rows_are_shown_in_full_and_not_merely_counted():
+    """A record showing only its scored rows can be made to look good by scoring selectively.
+
+    The pending list moved out of the results section's empty state and into "Published
+    forecasts", where it is now one row per published prediction with its model and its
+    published range, rather than a bare list of dates. So this asserts the property, which is
+    that every waiting row is on screen, rather than the heading it used to sit under.
+    """
     at = _render()
-    assert "Days awaiting their actual figure" in _text(at)
+    text = _text(at)
+    assert "Waiting for actual figures" in text
+
     frames = [df.value for df in at.dataframe]
-    assert frames, "the pending dates must be rendered, not merely counted"
-    assert any("For the day" in list(f.columns) for f in frames)
+    assert frames, "the pending rows must be rendered, not merely counted"
+    pending = [f for f in frames if "For the day" in list(f.columns)]
+    assert pending, f"no table of pending rows; columns were {[list(f.columns) for f in frames]}"
+
+    # Every waiting row, not a sample of them.
+    metrics = {mt.label: mt.value for mt in at.metric}
+    assert len(pending[0]) == int(metrics["Still pending"]), (
+        f"{len(pending[0])} rows shown against {metrics['Still pending']} pending")
+
+    # And enough of each row to be useful: which line, which model, and the published range.
+    for column in ("Treasury line", "Champion model", "Low (P10)", "Central (P50)",
+                   "High (P90)"):
+        assert column in list(pending[0].columns), f"{column} missing from the pending table"
 
 
 def test_the_counts_are_the_real_ones():
@@ -123,10 +143,28 @@ def test_the_counts_are_the_real_ones():
     assert int(metrics["Forecast issues retained"]) > 0
 
 
-def test_the_intro_explains_pending_without_jargon():
+def test_the_intro_explains_the_loop_without_jargon():
+    """The top of the page must say what the page is and where the reader is in the cycle."""
     text = _text(_render())
-    assert "has not yet been reported" in text
-    assert "scored against the actual figure once that figure arrives" in text
+    assert "Published forecasts are compared to what actually happened" in text
+    assert "This is also where you upload them." in text
+    # The loop, in order, in plain words.
+    assert "written down before the day it describes" in text
+    assert "you upload it here" in text
+    assert "listed as pending" in text
+
+
+def test_the_page_states_the_live_situation_rather_than_a_typed_figure():
+    """"25 rows are waiting" must come from the scorer, or it becomes a lie on the first upload."""
+    at = _render()
+    text = _text(at)
+    pending = int({mt.label: mt.value for mt in at.metric}["Still pending"])
+    assert f"{pending} published forecast rows are waiting for actual figures" in text
+    assert "Upload the Treasury's reported values to score them." in text
+
+    source = PAGE.read_text(encoding="utf-8")
+    assert "25 published" not in source, (
+        "the count is hardcoded; it must be read from the scorer")
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +288,195 @@ def test_the_page_does_not_overclaim(tmp_path, monkeypatch):
     for overclaim in ("proven in production", "guaranteed", "always accurate",
                       "state of the art"):
         assert overclaim not in text
+
+
+# ---------------------------------------------------------------------------
+# 4. The published-forecasts inventory
+#
+# Read from forecasts/published/<issue_date>/forecast.csv, which is the record: written on the
+# issue date and never edited. Nothing is copied or cached elsewhere, and whether a row counts
+# as scored is decided by the scorer's own output rather than re-derived here.
+# ---------------------------------------------------------------------------
+
+def test_the_inventory_reads_the_publication_log_and_stores_nothing():
+    source = PAGE.read_text(encoding="utf-8")
+    assert "from published_forecasts import list_published" in source, (
+        "the inventory must come from the publication log, not from a second copy")
+    assert 'forecast.csv' in source
+    for writer in (".to_csv(", "open(", "write_text(", "write_bytes("):
+        # The uploader legitimately writes the candidate file; nothing else may write.
+        occurrences = source.count(writer)
+        if writer == "write_bytes(":
+            assert occurrences <= 1, f"{writer} appears {occurrences} times"
+        else:
+            assert occurrences == 0, f"the page writes with {writer}, so it stores a copy"
+
+
+def test_scored_versus_pending_is_decided_by_the_scorer_not_by_this_page():
+    """Re-deriving "does this day have truth" would be a second copy of the scorer's rule."""
+    source = PAGE.read_text(encoding="utf-8")
+    fn = source.split("def load_published_rows")[1].split("\ndef ")[0]
+    assert "scorecard" in fn.lower(), "scored status is not read from the scorecard"
+    for reinvention in ("last_date", "Timestamp(", "bdate_range", "<= today", "TruthNotAvailable"):
+        assert reinvention not in fn, (
+            f"load_published_rows decides truth availability itself, via {reinvention!r}")
+
+
+def test_the_inventory_degrades_to_a_message_when_nothing_is_published(monkeypatch, tmp_path):
+    """A fresh clone has no forecasts/published/, and the page must still render."""
+    import published_forecasts
+
+    monkeypatch.setattr(published_forecasts, "PUBLISHED_ROOT", tmp_path / "absent")
+    at = _render()
+    text = _text(at)
+    assert "No published forecast is held on this machine" in text
+    assert not at.exception
+
+
+def test_every_published_row_carries_its_model_and_its_range():
+    at = _render()
+    frames = [f for f in (df.value for df in at.dataframe) if "For the day" in list(f.columns)]
+    assert frames, "no inventory table rendered"
+    got = list(frames[0].columns)
+    for column in ("For the day", "Treasury line", "Issued", "Champion model",
+                   "Low (P10)", "Central (P50)", "High (P90)"):
+        assert column in got, f"{column} missing; columns are {got}"
+
+
+def test_the_inventory_explains_why_a_day_can_appear_twice():
+    """Two issues forecast the same Revenues days from the same origin, so dates repeat.
+
+    Without a sentence saying so, a duplicated date reads as a bug in the table.
+    """
+    assert "forecast in two issues from the" in _text(_render())
+
+
+# ---------------------------------------------------------------------------
+# 5. Retraining is explained, and is not a button
+# ---------------------------------------------------------------------------
+
+def test_the_page_offers_no_way_to_retrain_or_reselect():
+    """Checked by mechanism, not by the word.
+
+    The page legitimately says "retrain" several times, in the section heading and in the link
+    to docs/REFRESH_AND_RETRAIN.md, because explaining retraining is the whole point of it. So
+    this looks for the things that would actually do it.
+    """
+    source = PAGE.read_text(encoding="utf-8")
+    for mechanism in ("official_run", "run_forward", "exploratory_run", "save_registry",
+                      "forecast_modes", "subprocess", '"--mode"', "--publish"):
+        assert mechanism not in source, f"the Scorecard page reaches for {mechanism!r}"
+
+    buttons = [b.label for b in _render().get("button")]
+    for b in buttons:
+        low = b.lower()
+        assert "retrain" not in low and "re-choose" not in low and "reselect" not in low, \
+            f"a retrain button exists: {buttons}"
+
+
+def test_the_retraining_explainer_renders_the_policy_rather_than_restating_it():
+    """A hand-written copy of the policy is the copy that goes stale."""
+    from registry import champion_policy
+
+    policy = champion_policy()
+    text = _text(_render())
+    assert policy["statement"] in text, "the policy statement is not rendered verbatim"
+    assert policy["reselection"] == "none" and policy["on_new_data"] == "refit_only"
+
+
+def test_the_explainer_separates_refitting_from_re_choosing():
+    """The whole point of the section: these are different acts and only one is automatic."""
+    text = _text(_render())
+    assert "Installing the file replaces the data the system reads" in text
+    assert "with no button to press" in text
+    assert "What never changes on its own." in text
+
+
+def test_the_written_procedure_exists_and_is_linked():
+    doc = REPO / "docs" / "REFRESH_AND_RETRAIN.md"
+    assert doc.exists(), "docs/REFRESH_AND_RETRAIN.md is missing; the page links to it"
+    body = doc.read_text(encoding="utf-8")
+    # The distinction the doc exists to make, and the plain-words definitions it shares
+    # with the app.
+    # Compared against the unwrapped text: the doc is hard-wrapped, so a sentence a reader
+    # sees as one line is two in the file.
+    flat = " ".join(body.split())
+    for required in ("**Refit.**", "**Re-choose.**",
+                     "never saw while being chosen",
+                     "nothing in this project writes that file",
+                     "assert_selection_free"):
+        assert required in flat, f"the procedure does not cover {required!r}"
+    assert "—" not in body, "the procedure uses an em dash"
+    # The label is on an expander, which _text does not collect.
+    labels = [e.label for e in _render().get("expander")]
+    assert "Read the refresh and retrain procedure" in labels, labels
+
+
+# ---------------------------------------------------------------------------
+# 6. The health verdict, all three branches
+#
+# It is derived only from columns the scorer already writes: skill_vs_ruler_pct and
+# inside_interval. No new metric, no trend, no significance test. On a handful of scored days
+# none of those would mean anything, and the third branch below is the one that says so.
+# ---------------------------------------------------------------------------
+
+def test_the_verdict_says_holding_up_when_it_beats_the_ruler_and_the_range_covers(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("AI4CM_SCORECARD",
+                       str(_synthetic_scorecard(tmp_path / "sc.csv", n_days=8, skill=30.0)))
+    text = _text(_render())
+    assert "Holding up." in text
+    assert "Degrading." not in text
+
+
+def test_the_verdict_says_degrading_when_it_stops_beating_the_ruler(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI4CM_SCORECARD",
+                       str(_synthetic_scorecard(tmp_path / "sc.csv", n_days=8, skill=-6.0)))
+    text = _text(_render())
+    assert "Degrading." in text
+    assert "no longer more accurate than the simple rule of thumb" in text
+    # And it must say what that means: a decision for a person, not an action for the page.
+    assert "deliberate, recorded decision" in text
+
+
+def test_the_verdict_says_degrading_when_the_published_range_stops_covering(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("AI4CM_SCORECARD",
+                       str(_synthetic_scorecard(tmp_path / "sc.csv", n_days=8, skill=30.0,
+                                                hit=False)))
+    text = _text(_render())
+    assert "Degrading." in text
+    assert "covering fewer days than it claims" in text
+
+
+def test_the_verdict_refuses_to_call_it_on_too_few_days(monkeypatch, tmp_path):
+    """A confident verdict from four rows is worse than no verdict."""
+    monkeypatch.setenv("AI4CM_SCORECARD",
+                       str(_synthetic_scorecard(tmp_path / "sc.csv", n_days=3)))
+    text = _text(_render())
+    assert "Too few scored days to call it either way." in text
+    assert "Holding up." not in text and "Degrading." not in text
+
+
+def test_the_verdict_uses_no_metric_the_scorer_did_not_already_write():
+    """"No new metrics" was the constraint. Checked at the source."""
+    from published_forecasts import SCORECARD_COLUMNS
+
+    import ast
+
+    source = PAGE.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    fn_node = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_health_verdict")
+
+    fn = ast.get_source_segment(source, fn_node)
+    used = {c for c in SCORECARD_COLUMNS if f'"{c}"' in fn}
+    assert used <= {"skill_vs_ruler_pct", "inside_interval", "interval_nominal"}, used
+
+    # Checked against the CODE, not the docstring. The docstring names the things the verdict
+    # deliberately is not ("not a trend, a rolling window or a significance test"), so a
+    # substring search over the whole function flags its own explanation.
+    body = fn_node.body[1:] if ast.get_docstring(fn_node) else fn_node.body
+    code = "\n".join(ast.get_source_segment(source, n) or "" for n in body)
+    for invented in ("polyfit", "rolling", "ttest", "pvalue", "corr(", "std()", "ewm("):
+        assert invented not in code, f"the verdict computes something new: {invented!r}"
