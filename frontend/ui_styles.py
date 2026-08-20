@@ -974,7 +974,9 @@ GLOSSARY = {
     ),
     "skill": (
         "How much smaller a model's typical error is than the baseline's, as a percentage. "
-        "40% means its errors are 40% smaller than assuming the last known value repeats."
+        "The baseline holds the last known figure flat, so at this project's horizon of five "
+        "working days it is the figure from five working days earlier. 40% means the model's "
+        "errors are 40% smaller than that."
     ),
     "MASE": (
         "A model's error divided by the error of repeating the same weekday from the "
@@ -987,9 +989,9 @@ GLOSSARY = {
         "seen."
     ),
     "sealed window": (
-        "The most recent stretch of history, held back and read once at the end. It is the "
-        "single clean final reading this project has, so no experiment is allowed to touch "
-        "it and any that tries is refused."
+        "The most recent stretch of history the models never saw while being chosen. We keep "
+        "it untouched so the final score is honest. It can only be spent once, so no "
+        "experiment may be measured on it, and any that tries is refused."
     ),
     "gate": (
         "A check a forecast must pass before it may be published, such as being more "
@@ -997,10 +999,11 @@ GLOSSARY = {
         "attached to its verdict, and none can be switched off from this interface."
     ),
     "withheld": (
-        "A verdict meaning the numbers are not offered as a forecast. Either a simple rule "
-        "of thumb was more accurate, in which case they should not be used at all, or the "
-        "model could not show it anticipates individual days, in which case they are a "
-        "guide to the typical level and nothing more."
+        "Withheld means we do not offer the numbers as a forecast. It happens for one of two "
+        "reasons. Either a simple rule of thumb was more accurate, so the numbers should not "
+        "be used at all. Or the model could not show that it anticipates individual days, so "
+        "the numbers are a guide to the typical level and nothing more. The page always says "
+        "which of the two applies."
     ),
     "P10": "The low end of the published range. The actual figure should fall below it "
            "about one day in ten.",
@@ -1013,6 +1016,30 @@ GLOSSARY = {
         "figure to score it against. It is listed rather than hidden."
     ),
 }
+
+
+# One definition per term, enforced rather than intended.
+#
+# Two terms were defined twice, in HELP and again in GLOSSARY, with different wording. A
+# reader met "withheld" in a tooltip describing one of its two reasons and met it again in an
+# expander describing both, and had no way to know they were the same word. Neither was wrong;
+# they simply were not the same sentence, which is what the house style asks for.
+#
+# GLOSSARY is the definition. HELP keeps its own entries for the terms GLOSSARY does not
+# carry, and defers for the ones it does. test_ui_copy asserts the two never diverge again.
+for _shared in set(HELP) & set(GLOSSARY):
+    HELP[_shared] = GLOSSARY[_shared]
+del _shared
+
+
+def definition(term: str) -> str:
+    """One glossary definition, translated, for use inline in a sentence.
+
+    ``glossary_note`` puts definitions behind an expander and ``term_help`` puts them in a
+    tooltip. This is for the third case: a page that needs to state a definition in the body
+    text, where it must be the SAME sentence rather than a paraphrase of it.
+    """
+    return _translate(GLOSSARY[term]) if term in GLOSSARY else ""
 
 
 def term_help(*terms: str) -> str:

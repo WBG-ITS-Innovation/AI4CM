@@ -394,3 +394,46 @@ def test_the_gate_glyphs_are_deliberately_not_emoji():
         glyph, word = style[0], style[1]
         assert not _EMOJI.search(glyph), f"{state} uses an emoji glyph: {glyph!r}"
         assert word.strip(), f"{state} has a glyph but no word beside it"
+
+
+# ---------------------------------------------------------------------------
+# 8. One definition per term
+#
+# "Define a term in plain words the first time it appears, then reuse the same definition
+# everywhere" is only a rule if something checks it. Two terms, "skill" and "withheld", were
+# defined twice: once in ui_styles.HELP for the tooltips and once in ui_styles.GLOSSARY for the
+# expanders, in different words. Neither was wrong. A reader met "withheld" in a tooltip
+# describing one of its two reasons and again in an expander describing both, with nothing
+# saying they were the same word.
+# ---------------------------------------------------------------------------
+
+def test_a_term_in_both_copy_dictionaries_has_one_wording():
+    from ui_styles import GLOSSARY, HELP
+
+    shared = sorted(set(HELP) & set(GLOSSARY))
+    differing = [k for k in shared if HELP[k].strip() != GLOSSARY[k].strip()]
+    assert not differing, (
+        "these terms are defined twice, in different words:\n"
+        + "\n".join(f"  {k!r}\n    HELP    : {HELP[k][:90]}\n"
+                    f"    GLOSSARY: {GLOSSARY[k][:90]}" for k in differing))
+
+
+def test_the_sealed_window_is_defined_once_and_the_pages_do_not_redefine_it():
+    """The concept appears on the Lab, Forecast and Start here pages.
+
+    It is the single hardest idea in the project to state, so it is stated in one place. A page
+    may name it; a page may not write its own competing definition of it.
+    """
+    from ui_styles import GLOSSARY
+
+    definition = GLOSSARY["sealed window"]
+    assert "never saw while being chosen" in definition, (
+        "the agreed wording has drifted; every page reuses this sentence")
+    assert "spent once" in definition, "the definition no longer says why it is protected"
+
+    # A page writing its own version of the definition, rather than naming the term, is the
+    # drift this guards. The tell is a page restating the mechanism in its own words.
+    for path in PAGES:
+        text = all_text_of(path)
+        assert "never saw while being chosen" not in text or definition in text, (
+            f"{path.name} paraphrases the sealed-window definition instead of reusing it")

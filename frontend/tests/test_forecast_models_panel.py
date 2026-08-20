@@ -15,6 +15,7 @@ The Models panel adds two things that could go wrong quietly.
 """
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -42,8 +43,19 @@ def _compare_body() -> str:
     Copy in this file is written as implicitly concatenated literals across lines, so a
     sentence a reader sees as one string is several in the source. Without the rejoin, an
     assertion about that sentence fails on where the line happened to wrap.
+
+    The function is located by parsing rather than by slicing between text markers. It used to
+    slice from the ``def`` to the comment ``# ── Per target``, and when the page was split into
+    tabs that comment became indented, so the slice ran to the end of the file and swallowed the
+    official-mode dispatch four hundred lines away. The test then failed while the property it
+    guards was still true, which is the worst way for a test to fail.
     """
-    body = SOURCE.split("def _render_compare_alternatives")[1].split("\n# ── Per target")[0]
+    tree = ast.parse(SOURCE)
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "_render_compare_alternatives"),
+              None)
+    assert fn is not None, "_render_compare_alternatives has gone from the Forecast page"
+    body = ast.get_source_segment(SOURCE, fn)
     return re.sub(r'"\s*\n\s*"', "", body)
 
 
