@@ -59,6 +59,11 @@ TRANSLATIONS = {
     "Data pre-processing": "მონაცემთა წინასწარი დამუშავება",
     "Lab": "ლაბორატორია",
     "Overview": "მიმოხილვა",
+    "Forecast": "პროგნოზი",
+    "How to read this page": "როგორ წავიკითხოთ ეს გვერდი",
+    "Two kinds of forecast": "პროგნოზის ორი სახე",
+    "Official": "ოფიციალური",
+    "Exploratory": "საძიებო",
 
     # ── Page subtitles ──────────────────────────────────────────────────────
     "What was forecast, and what actually happened":
@@ -177,8 +182,10 @@ TRANSLATIONS = {
         "სამუშაო დღის წინანდელი მნიშვნელობა უბრალოდ მეორდება. მისი დამარცხება მინიმალური "
         "ზღვარია და არა მიღწევა.",
 
-    "How much smaller a model's typical error is than the baseline's, as a percentage. "
-    "40% means its errors are 40% smaller than assuming the last known value repeats.":
+    "How much smaller a model's typical error is than the baseline's, as a percentage. The "
+    "baseline holds the last known figure flat, so at this project's horizon of five "
+    "working days it is the figure from five working days earlier. 40% means the model's "
+    "errors are 40% smaller than that.":
         "რამდენად ნაკლებია მოდელის ტიპიური შეცდომა საბაზისო წესის შეცდომაზე, პროცენტებში. "
         "40% ნიშნავს, რომ მისი შეცდომები 40%-ით ნაკლებია, ვიდრე ბოლო ცნობილი მნიშვნელობის "
         "გამეორების ვარაუდისას.",
@@ -196,9 +203,9 @@ TRANSLATIONS = {
         "ისტორიის მონაკვეთი, რომელიც განზრახ იყო დაფარული მოდელებისგან მათი შერჩევისას, "
         "რათა მასზე გაზომვამ რაიმე თქვას იმ დღეებზე, რომლებიც მათ არასოდეს უნახავთ.",
 
-    "The most recent stretch of history, held back and read once at the end. It is the "
-    "single clean final reading this project has, so no experiment is allowed to touch it "
-    "and any that tries is refused.":
+    "The most recent stretch of history the models never saw while being chosen. We keep it "
+    "untouched so the final score is honest. It can only be spent once, so no experiment "
+    "may be measured on it, and any that tries is refused.":
         "ისტორიის უახლესი მონაკვეთი, რომელიც შენახულია და ბოლოს ერთხელ იკითხება. ეს არის "
         "ამ პროექტის ერთადერთი სუფთა საბოლოო წაკითხვა, ამიტომ არცერთ ექსპერიმენტს არ "
         "აქვს მასზე შეხების უფლება და ყოველი მცდელობა უარყოფილია.",
@@ -210,10 +217,11 @@ TRANSLATIONS = {
         "წესზე უფრო ზუსტი უნდა იყოს. ყოველ შემოწმებას თავის დასკვნასთან ერთად ახლავს "
         "მარტივ ენაზე ახსნილი მიზეზი და არცერთის გამორთვა ამ ინტერფეისიდან შეუძლებელია.",
 
-    "A verdict meaning the numbers are not offered as a forecast. Either a simple rule of "
-    "thumb was more accurate, in which case they should not be used at all, or the model "
-    "could not show it anticipates individual days, in which case they are a guide to the "
-    "typical level and nothing more.":
+    "Withheld means we do not offer the numbers as a forecast. It happens for one of two "
+    "reasons. Either a simple rule of thumb was more accurate, so the numbers should not be "
+    "used at all. Or the model could not show that it anticipates individual days, so the "
+    "numbers are a guide to the typical level and nothing more. The page always says which "
+    "of the two applies.":
         "დასკვნა, რომელიც ნიშნავს, რომ ციფრები არ არის შემოთავაზებული როგორც პროგნოზი. "
         "ან მარტივი წესი უფრო ზუსტი აღმოჩნდა, და მაშინ ისინი საერთოდ არ უნდა იქნას "
         "გამოყენებული, ან მოდელმა ვერ აჩვენა, რომ ცალკეულ დღეებს წინასწარ განჭვრეტს, და "
@@ -308,14 +316,6 @@ TRANSLATIONS = {
         "პროგნოზს არ ვუწოდებთ.",
 
     # ── The shared tooltips ─────────────────────────────────────────────────
-    "How much smaller this model's typical error is than the shared benchmark of "
-    "'assume the value from five working days ago repeats'. 40% means errors are 40% "
-    "smaller than that benchmark. Every model in the lab is measured against the same "
-    "benchmark, so these numbers are comparable across model families.":
-        "რამდენად ნაკლებია ამ მოდელის ტიპიური შეცდომა საერთო საზომზე, რომელიც ვარაუდობს, "
-        "რომ ხუთი სამუშაო დღის წინანდელი მნიშვნელობა მეორდება. 40% ნიშნავს, რომ შეცდომები "
-        "40%-ით ნაკლებია ამ საზომზე. ლაბორატორიაში ყველა მოდელი ერთი და იმავე საზომით "
-        "იზომება, ამიტომ ეს რიცხვები შედარებადია მოდელების ოჯახებს შორის.",
 
     "A self-test for whether the inputs actually inform the target. We shuffle the "
     "historical answers, refit, and see how much worse the model gets. If the inputs "
@@ -353,15 +353,6 @@ TRANSLATIONS = {
         "უნდა იყოს. ამაზე მნიშვნელოვნად ნაკლები ნიშნავს, რომ დიაპაზონი ძალიან ვიწროა და "
         "რისკს აკნინებს.",
 
-    "The model's numbers are shown, but we are not calling them a forecast. It passed "
-    "its accuracy checks and failed the signal self-test, which means it tracks the "
-    "typical level rather than anticipating individual days. The numbers are useful as a "
-    "guide to the normal range; they should not be relied on to anticipate an unusual day.":
-        "მოდელის ციფრები ნაჩვენებია, მაგრამ ჩვენ მათ პროგნოზს არ ვუწოდებთ. მან სიზუსტის "
-        "შემოწმებები გაიარა, მაგრამ სიგნალის თვითშემოწმება ვერ გაიარა, რაც ნიშნავს, რომ იგი "
-        "ტიპიურ დონეს მიჰყვება და არა ცალკეულ დღეებს განჭვრეტს. ციფრები სასარგებლოა როგორც "
-        "ჩვეულებრივი დიაპაზონის ორიენტირი, მაგრამ მათზე დაყრდნობა უჩვეულო დღის "
-        "განსაჭვრეტად არ შეიძლება.",
 
     "The single shared benchmark: predict that the value five working days ago repeats. "
     "One implementation is used by every model family so that skill numbers are "
