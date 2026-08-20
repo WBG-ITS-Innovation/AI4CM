@@ -1,4 +1,4 @@
-# pages/01_Forecast.py — Forward forecast: the next five working days.
+# pages/07_Forecast.py — Forward forecast: the next five working days.
 #
 # This page shows the one thing the rest of the app does not: predictions for dates that do
 # not exist in the data yet. Everything else in AI4CM backtests against known answers.

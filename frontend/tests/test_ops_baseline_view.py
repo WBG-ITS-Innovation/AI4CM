@@ -37,8 +37,8 @@ sys.path.insert(0, str(REPO / "backend"))
 
 import ops_baseline_view as obv  # noqa: E402
 
-DASHBOARD = FRONTEND / "pages" / "03_Dashboard.py"
-LAB = FRONTEND / "pages" / "08_Lab.py"
+DASHBOARD = FRONTEND / "pages" / "04_Dashboard.py"
+LAB = FRONTEND / "pages" / "03_Lab.py"
 
 #: A run folder with real predictions for a flow target, and one for the stock target.
 FLOW_RUN = FRONTEND / "runs" / "run_B_uni_Ridge_Revenues_Daily_h6_20260819_1538" / "outputs"

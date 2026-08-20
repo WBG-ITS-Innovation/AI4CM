@@ -48,7 +48,7 @@ ModelSpec(
 
 Five fields, and only three of them need thought.
 
-- **`name`** is how it appears everywhere: the Lab's model list, the Models page, the
+- **`name`** is how it appears everywhere: the Lab's model list, the Documentation page, the
   ledger, the leaderboard. Use the same spelling throughout.
 - **`summary`** is one plain sentence, shown to somebody choosing from a list. Say what
   the model *does* and when it might help. Do not name the algorithm and stop, and do not
@@ -76,7 +76,7 @@ Two conventions, both load-bearing:
 
 1. **Import inside the function.** The catalogue is read by the Streamlit interpreter,
    which has pandas and nothing else. A module-level `import sklearn` would make the
-   Models page unable to list your model's name without the whole modelling stack being
+   Documentation page unable to list your model's name without the whole modelling stack being
    installed alongside the web app.
 2. **Set the seed.** Every model here is constructed with `random_state=0` or its
    equivalent, so a rerun reproduces a number rather than approximating it.
@@ -223,9 +223,9 @@ This is worth stating because it was not always true, and the failure was quiet.
 2026-08-19 those lists were typed by hand with a comment asking whoever added a model to
 remember. Nobody had: the registry offered 15 machine-learning models and the Lab named 8,
 the quantile family offered 3 and the Lab named 1, and `ETS_DAMPED` was missing entirely.
-**Ten registered models could not be run from the Lab at all**, while the Models page told
+**Ten registered models could not be run from the Lab at all**, while the Documentation page told
 readers they could run any untested model there. A test now fails if a model list
-reappears in `08_Lab.py`.
+reappears in `03_Lab.py`.
 
 One trap if you ever touch that file. `ModelSpec.installed` calls `find_spec` in whichever
 interpreter asks, and there it is the Streamlit one, where XGBoost, LightGBM and CatBoost

@@ -266,7 +266,7 @@ def test_the_lab_keeps_its_own_tooltips():
     Every tooltip on the Lab page silently became empty and nothing failed, because an
     empty tooltip renders as no tooltip rather than as an error.
     """
-    at = _render(FRONTEND / "pages" / "08_Lab.py", "en")
+    at = _render(FRONTEND / "pages" / "03_Lab.py", "en")
     widgets = at.get("selectbox") + at.get("slider") + at.get("radio")
     helps = [str(getattr(w, "help", "") or "") for w in widgets]
     assert sum(1 for h in helps if h.strip()) >= len(helps) - 1, helps

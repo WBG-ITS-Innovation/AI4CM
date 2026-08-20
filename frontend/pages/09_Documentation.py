@@ -1,4 +1,9 @@
-# pages/04_Models.py — Model Families & Parameters (documentation-style)
+# pages/09_Documentation.py — the reference: every model, every parameter, every promoted
+# recipe, and how to add a model.
+#
+# Renamed from 06_Models.py. This is the one page whose URL moved, because Streamlit derives
+# a page URL from its name and not from its number prefix: /Models became /Documentation.
+# Every in-app link is a page_link to the file, so none of them carried the old URL.
 import json
 from typing import Dict
 
@@ -18,7 +23,7 @@ from i18n import install as install_language  # language toggle + pending-review
 from i18n import t as _t  # the shelf's status labels are fixed copy
 from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
-st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
+st.set_page_config(page_title="Documentation · Treasury Forecast", page_icon="🧩", layout="wide")
 inject_global_css()
 inject_design_system()
 
@@ -26,7 +31,8 @@ inject_design_system()
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
 install_language()
-render_app_header("Models", "Model families, promoted recipes and their evidence")
+render_app_header("Documentation",
+                  "Every model, its settings, the promoted recipes and their evidence")
 page_intro(
     "This page is the shelf: every model available here, what it does in plain language, "
     "and whether anybody has recorded a measured result for it."
@@ -854,3 +860,32 @@ def _render_model_detail() -> None:
 
 
 _render_model_detail()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADDING A MODEL
+#
+# Rendered from docs/ADDING_A_MODEL.md rather than restated here, on the same grounds as the
+# Overview page's progress section: one source, so the page and the written procedure cannot
+# drift. If the file is absent the section says where it should be instead of vanishing.
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown(section_header("Adding a model",
+                           "The procedure for putting a new model on the shelf"),
+            unsafe_allow_html=True)
+
+_ADDING = _Path(__file__).resolve().parents[2] / "docs" / "ADDING_A_MODEL.md"
+st.markdown(_t(
+    "Every model on this page was registered the same way, and the procedure is written down "
+    "rather than passed on by word of mouth. It covers where the entry goes, which fields need "
+    "thought, why the import must sit inside the function, and how to check the model can "
+    "actually be reached from the Lab."
+))
+if _ADDING.exists():
+    st.caption(f"Rendered from `docs/ADDING_A_MODEL.md`.")
+    with st.expander(_t("Read the procedure"), expanded=False):
+        st.markdown(_ADDING.read_text(encoding="utf-8"))
+else:
+    st.info(_t(
+        "The procedure is not on this machine. It belongs at `docs/ADDING_A_MODEL.md` in the "
+        "repository."
+    ))
