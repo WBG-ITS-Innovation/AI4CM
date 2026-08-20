@@ -601,10 +601,13 @@ button[data-testid="stBaseButton-secondary"] {
 }
 
 /* ── Radio pills ────────────────────────────────────────── */
+/* The [role="radiogroup"] step is load-bearing: without it this bordered the widget's own
+   label and its help-tooltip wrapper too, and the tooltip wrapper holds an icon and no
+   text, so it rendered as an empty pill. See test_radio_pills_are_scoped_to_the_options. */
 [data-testid="stRadio"] > div {
     gap: 6px;
 }
-[data-testid="stRadio"] label {
+[data-testid="stRadio"] [role="radiogroup"] label {
     border-radius: 8px;
     border: 1.5px solid #e2e8f0;
     padding: 6px 16px;
