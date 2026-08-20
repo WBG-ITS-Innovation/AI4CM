@@ -26,7 +26,7 @@ from exploratory import (
 )
 from run_errors import explain_failure, is_guard_refusal
 from ui_styles import inject_global_css, page_header, section_header, callout_box, info_tip, COLORS
-from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
+from utils_frontend import load_paths, new_run_folders, zip_outputs, UPLOADS_ROOT
 
 from ui_styles import inject_design_system  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
@@ -919,6 +919,79 @@ if st.button("Run experiment", type="primary", use_container_width=True, help=_l
                 st.caption(base_why)
         else:
             st.caption("No predictions_long.csv found in the outputs folder.")
+
+    # ── Take the files with you ──────────────────────────────────────────────
+    #
+    # The same three downloads the History page offers for any past run, here for the run that
+    # has just finished, so you do not have to leave the page and find it again.
+    #
+    # The names are the real ones in a run folder, checked rather than assumed: predictions_long
+    # .csv, metrics_long.csv, leaderboard.csv and artifacts/. There is no predictions.csv and no
+    # metrics.csv. A weekly or monthly run keeps its files in a cadence subfolder, which is why
+    # each one is looked for in the outputs root and then in daily, weekly and monthly.
+    _out_dir = Path(out_real)
+
+    def _first_existing(name: str):
+        for base in (_out_dir, _out_dir / "daily", _out_dir / "weekly", _out_dir / "monthly"):
+            candidate = base / name
+            if candidate.exists():
+                return candidate
+        return None
+
+    st.markdown(section_header(_t("Take the files with you"),
+                               _t("The same downloads the History page keeps for every run")),
+                unsafe_allow_html=True)
+
+    st.caption(_t("This run's folder"))
+    st.code(str(_out_dir), language="text")
+
+    _preds = _first_existing("predictions_long.csv")
+    _mets = _first_existing("metrics_long.csv")
+    _lb = _first_existing("leaderboard.csv")
+
+    _d1, _d2, _d3, _d4 = st.columns(4)
+    with _d1:
+        if _preds:
+            st.download_button("predictions_long.csv", data=_preds.read_bytes(),
+                               file_name="predictions_long.csv", use_container_width=True,
+                               key=f"lab_dl_preds_{run_id}",
+                               help=_t("One row per forecast: the date, the model, what it "
+                                           "predicted and what actually happened."))
+        else:
+            st.caption(_t("No predictions_long.csv was written."))
+    with _d2:
+        if _mets:
+            st.download_button("metrics_long.csv", data=_mets.read_bytes(),
+                               file_name="metrics_long.csv", use_container_width=True,
+                               key=f"lab_dl_metrics_{run_id}",
+                               help=_t("One row per model and metric, which is the long "
+                                           "form of the leaderboard."))
+        else:
+            st.caption(_t("No metrics_long.csv was written."))
+    with _d3:
+        if _lb:
+            st.download_button("leaderboard.csv", data=_lb.read_bytes(),
+                               file_name="leaderboard.csv", use_container_width=True,
+                               key=f"lab_dl_lb_{run_id}",
+                               help=_t("One row per model, ranked."))
+        else:
+            st.caption(_t("No leaderboard.csv was written."))
+    with _d4:
+        if _out_dir.exists():
+            st.download_button(_t("Everything (.zip)"), data=zip_outputs(_out_dir),
+                               file_name=f"{run_id}_artifacts.zip", use_container_width=True,
+                               key=f"lab_dl_zip_{run_id}",
+                               help=_t("Every file this run wrote, including the config it "
+                                           "ran with and its integrity report."))
+
+    st.caption(_t(
+        "This run is kept. To come back to it later, or to compare it with another, open the "
+        "History page."
+    ))
+    try:
+        st.page_link("pages/06_History.py", label=_t("Open History"))
+    except Exception:                            # noqa: BLE001 - link resolution, not logic
+        st.caption(_t("The History page is in the sidebar."))
 
     if rc == 0:
         with st.expander("Backend log", expanded=False):
