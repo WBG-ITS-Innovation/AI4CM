@@ -1,4 +1,4 @@
-# pages/00_Start_here.py — The guide. First in the sidebar, and written to be read first.
+# pages/01_Start_here.py — The guide. First in the sidebar, and written to be read first.
 #
 # Why this page exists: the app had eight pages and no way in. A reader arriving at it had to
 # infer from the names which one answered their question, and two of the names ("Lab",
@@ -16,29 +16,33 @@ from i18n import install as install_language  # language toggle + pending-review
 from i18n import t  # this page carries most of the fixed copy in the app
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from ui_styles import inject_design_system, inject_global_css, page_header, page_intro
+from ui_styles import page_orientation  # the same two questions on every page
 from ui_styles import render_app_header
+from ui_styles import render_brand  # the one brand header, in the sidebar
 from ui_styles import section_header
 
-st.set_page_config(page_title="Start here · Treasury Forecast", page_icon="🧭", layout="wide")
+st.set_page_config(page_title="Start here · Treasury Forecast", layout="wide")
 inject_global_css()
 inject_design_system()
 
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
-render_app_header("Start here", "What this Lab is, and where to go for each question")
+render_app_header("Start here",
+                  "What each page is for, what you can do there, and one thing to try")
 page_intro(
     "This page is the way in. It says what each page of the Lab is for, what you can do "
     "there, and the difference between an official forecast and an experiment."
 )
-glossary_note("champion", "exploratory", "withheld", "gate", "sealed window", "baseline")
-
-st.markdown(
-    page_header("🧭 Start here",
-                "What each page is for, what you can do there, and one thing to try"),
-    unsafe_allow_html=True,
+page_orientation(
+    can_do=(
+        "Read what each page is for, what you can do there, and one thing to try on it. "
+        "Every section links straight to its page."
+    ),
 )
+glossary_note("champion", "exploratory", "withheld", "gate", "sealed window", "baseline")
 
 st.markdown(t(
     "This Lab forecasts daily Treasury cash lines, and it is built so that every number it "
@@ -64,9 +68,9 @@ def _link(path: str, label: str) -> None:
     """A link to another page, resolved against whichever file is the entry point.
 
     Streamlit resolves a page link relative to the entry point, and this app has two. Run
-    normally the entry point is ``Overview.py``, so the path is ``pages/01_Forecast.py``.
+    normally the entry point is ``Overview.py``, so the path is ``pages/07_Forecast.py``.
     Rendered in isolation, as the page tests do, the entry point is this file and the same
-    link has to be ``01_Forecast.py``. Trying both means the guide renders in either case;
+    link has to be ``07_Forecast.py``. Trying both means the guide renders in either case;
     falling back to a caption means a page that is genuinely missing is named rather than
     taking the whole guide down with it.
     """
@@ -79,9 +83,9 @@ def _link(path: str, label: str) -> None:
     st.caption(f"{label} (this page could not be linked from here)")
 
 
-def _page(icon: str, title: str, path: str, purpose: str, do: str, try_this: str) -> None:
+def _page(title: str, path: str, purpose: str, do: str, try_this: str) -> None:
     """One section per page. The same three questions each time, so the page scans."""
-    st.markdown(section_header(f"{icon} {title}", purpose), unsafe_allow_html=True)
+    st.markdown(section_header(title, purpose), unsafe_allow_html=True)
     st.markdown(f"**{t('What you can do there.')}** {do}")
     st.markdown(f"**{t('One thing to try.')}** {try_this}")
     _link(path, f"Open {title}")
@@ -89,7 +93,7 @@ def _page(icon: str, title: str, path: str, purpose: str, do: str, try_this: str
 
 
 _page(
-    "🔭", "Forecast", "pages/01_Forecast.py",
+    "Forecast", "pages/07_Forecast.py",
     "The forecast itself: what each Treasury line is expected to do over the next working days.",
     "Read the central estimate and the range around it for each line, see which model produced "
     "it and what earned that model its place, and see the next best alternatives with their "
@@ -101,7 +105,7 @@ _page(
 )
 
 _page(
-    "🎯", "Scorecard", "pages/02_Scorecard.py",
+    "Scorecard", "pages/08_Scorecard.py",
     "Forecast against reality: how the published forecasts actually did once the day arrived.",
     "See every published prediction that has been scored, with the actual figure beside it, and "
     "every prediction still waiting for its day. You can also upload newly reported actuals, "
@@ -111,7 +115,7 @@ _page(
 )
 
 _page(
-    "📈", "Dashboard", "pages/03_Dashboard.py",
+    "Dashboard", "pages/04_Dashboard.py",
     "The detail behind one experimental run: predictions, errors and diagnostics.",
     "Overlay a model's predictions on the actual series, inspect where the error came from, and "
     "download the underlying files.",
@@ -120,7 +124,7 @@ _page(
 )
 
 _page(
-    "🔀", "Compare runs", "pages/04_Compare.py",
+    "Compare runs", "pages/05_Compare.py",
     "Two to six experimental runs side by side, on the same axes.",
     "Put different models, horizons or configurations next to each other and see which one is "
     "actually better rather than which one you expected to be.",
@@ -129,7 +133,7 @@ _page(
 )
 
 _page(
-    "🕒", "History", "pages/05_History.py",
+    "History", "pages/06_History.py",
     "Every experimental run this Lab has produced, oldest to newest.",
     "Browse past runs, see what each was configured with, and download its outputs.",
     "Find a run that failed a check. The Lab keeps those rather than deleting them, because a "
@@ -137,17 +141,17 @@ _page(
 )
 
 _page(
-    "🧩", "Models", "pages/06_Models.py",
-    "The shelf: every model available here, what it does, and whether anybody has measured it.",
+    "Documentation", "pages/09_Documentation.py",
+    "The reference: every model available here, what it does, and whether anybody has measured it.",
     "Read what each model is in plain language, see which ones have a recorded result and which "
-    "are registered candidates nobody has run yet, and look up the exact settings any of them "
-    "was configured with.",
+    "are registered candidates nobody has run yet, look up the exact settings any of them was "
+    "configured with, and read how a new model is added.",
     "Sort the shelf by status. Rather more of these are untested than measured, which is worth "
     "knowing before quoting how many models this project has.",
 )
 
 _page(
-    "🧺", "Data pre-processing", "pages/07_Data_Preprocessing.py",
+    "Data pre-processing", "pages/02_Data_Preprocessing.py",
     "Turning a raw Treasury export into the clean daily series the models read.",
     "Upload a source file, see what the cleaning steps did to it, and check the result before "
     "it is used.",
@@ -156,7 +160,7 @@ _page(
 )
 
 _page(
-    "🧪", "Lab", "pages/08_Lab.py",
+    "Lab", "pages/03_Lab.py",
     "The workbench: run any model on any line, at any horizon, as an experiment.",
     "Choose a family, a model, a target and a horizon, launch it, and watch the backend log as "
     "it runs. Every run here is exploratory and is measured on train and dev data only.",
@@ -164,7 +168,7 @@ _page(
     "here is published, so there is nothing to be careful about.",
 )
 
-st.markdown(section_header("📊 Overview", "The landing page: what the Lab is, and its settings."),
+st.markdown(section_header("Overview", "The landing page: what the Lab is, and its settings."),
             unsafe_allow_html=True)
 st.markdown(
     "**What you can do there.** Confirm the Lab can find its backend, see how many runs exist, "
@@ -209,7 +213,7 @@ def _door(rows) -> None:
 
 
 with left:
-    st.success("### 🔒 Official")
+    st.success("### Official")
     _door([
         ("What it is.",
          "A forecast produced by the champion model for that Treasury line, at the one "
@@ -229,7 +233,7 @@ with left:
     ])
 
 with right:
-    st.warning("### 🧪 Exploratory")
+    st.warning("### Exploratory")
     _door([
         ("What it is.",
          "Any model, on any line, at any horizon, because somebody wanted to see what it "

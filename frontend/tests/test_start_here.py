@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "backend"))
 pytest.importorskip("streamlit", reason="streamlit is installed in frontend/.venv only")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-PAGE = FRONTEND / "pages" / "00_Start_here.py"
+PAGE = FRONTEND / "pages" / "01_Start_here.py"
 SOURCE = PAGE.read_text(encoding="utf-8")
 PAGES_DIR = FRONTEND / "pages"
 
@@ -172,5 +172,5 @@ def test_no_sentence_is_left_unfinished():
 def test_the_overview_page_points_at_the_guide():
     """A guide nobody can find from the landing page is a guide nobody reads."""
     overview = (FRONTEND / "Overview.py").read_text(encoding="utf-8")
-    assert 'st.page_link("pages/00_Start_here.py"' in overview
+    assert 'st.page_link("pages/01_Start_here.py"' in overview
     assert "New here?" in overview

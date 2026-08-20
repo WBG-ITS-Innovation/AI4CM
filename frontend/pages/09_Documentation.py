@@ -1,4 +1,9 @@
-# pages/04_Models.py — Model Families & Parameters (documentation-style)
+# pages/09_Documentation.py — the reference: every model, every parameter, every promoted
+# recipe, and how to add a model.
+#
+# Renamed from 06_Models.py. This is the one page whose URL moved, because Streamlit derives
+# a page URL from its name and not from its number prefix: /Models became /Documentation.
+# Every in-app link is a page_link to the file, so none of them carried the old URL.
 import json
 from typing import Dict
 
@@ -16,27 +21,36 @@ from ui_styles import inject_design_system  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
 from i18n import t as _t  # the shelf's status labels are fixed copy
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
-st.set_page_config(page_title="Models · Treasury Forecast", page_icon="🧩", layout="wide")
+from ui_styles import render_brand  # the one brand header, in the sidebar
+st.set_page_config(page_title="Documentation · Treasury Forecast", layout="wide")
 inject_global_css()
 inject_design_system()
 
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
-render_app_header("Models", "Model families, promoted recipes and their evidence")
+render_app_header("Documentation",
+                  "Every model, its settings, the promoted recipes and their evidence")
 page_intro(
     "This page is the shelf: every model available here, what it does in plain language, "
     "and whether anybody has recorded a measured result for it."
 )
-glossary_note("MASE", "champion", "withheld", "gate", "baseline")
-st.markdown(
-    page_header("🧩 Model Families & Parameters",
-                "Reference guide for all available forecasting models and their configurations"),
-    unsafe_allow_html=True,
+page_orientation(
+    can_do=(
+        "Read what each model is in plain language, see which have a measured result and "
+        "which are untested, look up any model's settings, and read how a model is added."
+    ),
+    numbers_from=(
+        "registry/recipes.json for the promoted recipes, and experiments/log.csv for every "
+        "measured figure."
+    ),
 )
+glossary_note("MASE", "champion", "withheld", "gate", "baseline")
 
 # ──────────────────────────────────────────────────────────────────────
 # PROMOTED RECIPES (live, from registry/recipes.json)
@@ -86,8 +100,8 @@ def _render_registry() -> None:
             "Intervals": r.get("interval_model", "not recorded"),
             "Typical error 2024 (M GEL)": _gel_m(cred["dev_mae"]),
             "vs benchmark": f"{cred['skill_vs_ruler_pct']:.1f}% better",
-            "Verdict": ("✅ forecast" if pub["verdict"] == "publishable"
-                        else "❌ withheld as forecast"),
+            "Verdict": ("forecast" if pub["verdict"] == "publishable"
+                        else "withheld as forecast"),
             "Status": r["status"],
             "Approved by": r["approved_by"] or "nobody",
         })
@@ -128,8 +142,8 @@ def _render_registry() -> None:
 
             st.markdown("**Checks**")
             for key, g in cred["gates"].items():
-                icon = "✅" if g.get("passed") else "❌"
-                st.markdown(f"- {icon} **{g.get('name', key)}.** "
+                verdict = _t("passed") if g.get("passed") else _t("failed")
+                st.markdown(f"- **{g.get('name', key)}**, {verdict}. "
                             f"{g.get('reason_plain', '')}")
                 if g.get("corroboration"):
                     st.caption(f"  {g['corroboration']}")
@@ -152,8 +166,6 @@ def _render_registry() -> None:
 
 
 _render_registry()
-
-RUNTIME_LEGEND = "⚡ very fast · ⏱ medium · 🐢 slower"
 
 # ---------------------------- helpers ----------------------------
 def dl_csv_button(df: pd.DataFrame, label: str, filename: str):
@@ -222,31 +234,31 @@ def table_a() -> pd.DataFrame:
         dict(Model="NaiveLast", Parameter="none",
              Meaning="Forecast equals the last observed value.",
              WhyItMatters="Establishes a sanity baseline and helps detect random-walk behavior.",
-             Suggested="No tuning.", Runtime="⚡"),
+             Suggested="No tuning.", Runtime="very fast"),
         dict(Model="WeekdayMean", Parameter="weeks_back",
              Meaning="Average of same weekday over the last N weeks (daily flows).",
              WhyItMatters="Captures weekly operational patterns without complex modeling.",
-             Suggested="4–8", Runtime="⚡"),
+             Suggested="4–8", Runtime="very fast"),
         dict(Model="MovingAverage", Parameter="window",
              Meaning="Simple moving mean over the last W periods.",
              WhyItMatters="Smooths noise; reduces sensitivity to day-to-day spikes.",
-             Suggested="Daily: 7/14/28; Weekly: 4/8/12; Monthly: 3/6/12", Runtime="⚡"),
+             Suggested="Daily: 7/14/28; Weekly: 4/8/12; Monthly: 3/6/12", Runtime="very fast"),
         dict(Model="ETS", Parameter="trend, seasonal, seasonal_periods, damped_trend",
              Meaning="Exponential smoothing with level/trend/seasonality components.",
              WhyItMatters="Often strong baseline with interpretable components.",
-             Suggested="trend='add', seasonal='add', sp=7|52|12, damped=True", Runtime="⏱"),
+             Suggested="trend='add', seasonal='add', sp=7|52|12, damped=True", Runtime="medium"),
         dict(Model="SARIMAX", Parameter="order=(p,d,q), seasonal_order=(P,D,Q,s)",
              Meaning="ARIMA-family with seasonal terms; can support exogenous inputs.",
              WhyItMatters="Captures autocorrelation structure; flexible but can be slower to tune.",
-             Suggested="Keep (p,q,P,Q) ≤ 2; set s=7|52|12", Runtime="⏱/🐢"),
+             Suggested="Keep (p,q,P,Q) ≤ 2; set s=7|52|12", Runtime="medium to slower"),
         dict(Model="STL-ARIMA", Parameter="stl_season_length, arima_order, robust",
              Meaning="Decompose seasonality/trend via STL, then ARIMA on remainder.",
              WhyItMatters="Useful when seasonality is stable and outliers exist (robust STL).",
-             Suggested="stl=7|12; arima=(0,1,1) or (1,0,1); robust=True for spikes", Runtime="⏱"),
+             Suggested="stl=7|12; arima=(0,1,1) or (1,0,1); robust=True for spikes", Runtime="medium"),
         dict(Model="Theta", Parameter="theta, seasonal_periods",
              Meaning="Competition-grade method: trend + smoothing.",
              WhyItMatters="Strong baseline, low tuning burden.",
-             Suggested="theta=2; sp=7|52|12", Runtime="⚡"),
+             Suggested="theta=2; sp=7|52|12", Runtime="very fast"),
     ]
     return pd.DataFrame(rows)
 
@@ -272,47 +284,47 @@ def table_b() -> pd.DataFrame:
         dict(Model="Preprocessing", Parameter="lags",
              Meaning="Past target values used as features.",
              WhyItMatters="Captures seasonality/momentum; main signal in many ML setups.",
-             Suggested="Daily: 1,2,3,7,14,21,28; Weekly: 1,4,12; Monthly: 1,3,12", Runtime="⚡"),
+             Suggested="Daily: 1,2,3,7,14,21,28; Weekly: 1,4,12; Monthly: 1,3,12", Runtime="very fast"),
         dict(Model="Preprocessing", Parameter="rolling_windows",
              Meaning="Trailing window summaries (rolling mean/std, etc.).",
              WhyItMatters="Adds stability and context, especially on noisy flows.",
-             Suggested="Daily: 7/14/28; Weekly: 4/8/12; Monthly: 3/6/12", Runtime="⚡"),
+             Suggested="Daily: 7/14/28; Weekly: 4/8/12; Monthly: 3/6/12", Runtime="very fast"),
         dict(Model="Preprocessing (multi)", Parameter="exog_top_k",
              Meaning="Top-K exogenous columns to include (multivariate).",
              WhyItMatters="Controls dimensionality and reduces overfitting risk.",
-             Suggested="Start 5–15, increase cautiously", Runtime="⏱"),
+             Suggested="Start 5–15, increase cautiously", Runtime="medium"),
         dict(Model="Ridge", Parameter="alpha",
              Meaning="L2 regularization strength.",
              WhyItMatters="Higher alpha reduces overfit on noisy/collinear features.",
-             Suggested="0.1 / 1.0 / 10.0", Runtime="⚡"),
+             Suggested="0.1 / 1.0 / 10.0", Runtime="very fast"),
         dict(Model="Lasso", Parameter="alpha",
              Meaning="L1 regularization strength (sparsity).",
              WhyItMatters="Can select features automatically; may underfit if too strong.",
-             Suggested="0.01 / 0.1 / 1.0", Runtime="⚡"),
+             Suggested="0.01 / 0.1 / 1.0", Runtime="very fast"),
         dict(Model="ElasticNet", Parameter="alpha, l1_ratio",
              Meaning="Mix of L1 and L2 regularization.",
              WhyItMatters="Balances shrinkage and feature selection.",
-             Suggested="alpha=0.1–1.0, l1_ratio=0.2–0.8", Runtime="⚡"),
+             Suggested="alpha=0.1–1.0, l1_ratio=0.2–0.8", Runtime="very fast"),
         dict(Model="RandomForest", Parameter="n_estimators, max_depth, min_samples_leaf",
              Meaning="Bagged trees for nonlinear effects.",
              WhyItMatters="Robust but slower; can overfit without min_samples_leaf.",
-             Suggested="n=400–800; leaf=1–10", Runtime="⏱"),
+             Suggested="n=400–800; leaf=1–10", Runtime="medium"),
         dict(Model="ExtraTrees", Parameter="n_estimators, max_depth",
              Meaning="More randomized tree ensemble.",
              WhyItMatters="Can perform well on noisy data; similar tuning to RF.",
-             Suggested="n=400–800; depth=None", Runtime="⏱"),
+             Suggested="n=400–800; depth=None", Runtime="medium"),
         dict(Model="HistGBDT", Parameter="learning_rate, max_depth, max_leaf_nodes",
              Meaning="Efficient gradient boosting (sklearn).",
              WhyItMatters="Strong performance with manageable tuning.",
-             Suggested="lr=0.05–0.1; depth=3–7", Runtime="⏱"),
+             Suggested="lr=0.05–0.1; depth=3–7", Runtime="medium"),
         dict(Model="XGBoost", Parameter="n_estimators, max_depth, eta, subsample, colsample_bytree, reg_lambda",
              Meaning="Boosted trees (xgboost).",
              WhyItMatters="Often top accuracy; slower; requires regularization to prevent overfit.",
-             Suggested="depth=3–6; eta=0.03–0.1; subs/cols=0.7–0.9; λ=1–5", Runtime="⏱/🐢"),
+             Suggested="depth=3–6; eta=0.03–0.1; subs/cols=0.7–0.9; λ=1–5", Runtime="medium to slower"),
         dict(Model="LightGBM", Parameter="n_estimators, num_leaves, learning_rate, feature_fraction, bagging_fraction, lambda_l2, min_data_in_leaf",
              Meaning="Boosting with leaf-wise growth (lightgbm).",
              WhyItMatters="Very strong but can overfit if leaves are large and min_data_in_leaf is small.",
-             Suggested="leaves=31–127; lr=0.03–0.07; minleaf=20–60", Runtime="⏱/🐢"),
+             Suggested="leaves=31–127; lr=0.03–0.07; minleaf=20–60", Runtime="medium to slower"),
     ]
     return pd.DataFrame(rows)
 
@@ -340,7 +352,7 @@ def table_c() -> pd.DataFrame:
         dict(Model="Global", Parameter="lookback",
              Meaning="Sequence length fed to the model.",
              WhyItMatters="Must be long enough to capture seasonal cycles and regime changes.",
-             Suggested="Daily: 60–120; Weekly: 80–120; Monthly: 36–60", Runtime="⏱"),
+             Suggested="Daily: 60–120; Weekly: 80–120; Monthly: 36–60", Runtime="medium"),
         dict(Model="Global", Parameter="batch_size",
              Meaning="Mini-batch size during training.",
              WhyItMatters="Impacts speed and memory; too large can cause memory errors.",
@@ -348,23 +360,23 @@ def table_c() -> pd.DataFrame:
         dict(Model="Global", Parameter="max_epochs / early stopping",
              Meaning="Training duration and stopping behavior.",
              WhyItMatters="More epochs can improve accuracy but increases runtime and overfit risk.",
-             Suggested="Exploration: 3–15; Final: 30–100", Runtime="🐢"),
+             Suggested="Exploration: 3–15; Final: 30–100", Runtime="slower"),
         dict(Model="LSTM/GRU", Parameter="hidden_size, num_layers, dropout",
              Meaning="Capacity and regularization knobs.",
              WhyItMatters="Higher capacity fits complex patterns but increases overfit risk.",
-             Suggested="hidden=64–128; layers=1–2; dropout=0.1–0.3", Runtime="⏱/🐢"),
+             Suggested="hidden=64–128; layers=1–2; dropout=0.1–0.3", Runtime="medium to slower"),
         dict(Model="TCN", Parameter="levels, kernel_size, dropout",
              Meaning="Causal convolutions with dilation (receptive field).",
              WhyItMatters="Controls how far back the model can “see” effectively.",
-             Suggested="levels=5–7; kernel=3–5; dropout=0.1–0.3", Runtime="⏱"),
+             Suggested="levels=5–7; kernel=3–5; dropout=0.1–0.3", Runtime="medium"),
         dict(Model="Transformer", Parameter="d_model, nhead, num_layers, dim_ff, dropout",
              Meaning="Attention-based sequence model configuration.",
              WhyItMatters="Powerful but can overfit on small datasets; heavier runtime.",
-             Suggested="d=64–128; heads=4–8; layers=2; dropout=0.1", Runtime="🐢"),
+             Suggested="d=64–128; heads=4–8; layers=2; dropout=0.1", Runtime="slower"),
         dict(Model="MLP", Parameter="hidden_dims",
              Meaning="Feed-forward network on flattened windows.",
              WhyItMatters="Fast to train, but may struggle with long seasonal dependencies.",
-             Suggested="[128, 64] + dropout 0.2", Runtime="⏱"),
+             Suggested="[128, 64] + dropout 0.2", Runtime="medium"),
     ]
     return pd.DataFrame(rows)
 
@@ -394,19 +406,19 @@ def table_e() -> pd.DataFrame:
         dict(Model="GBQuantile", Parameter="quantiles",
              Meaning="Probability levels for lower/median/upper forecasts.",
              WhyItMatters="Used for scenario-based planning; not just point predictions.",
-             Suggested="[0.1, 0.5, 0.9] (P10/P50/P90)", Runtime="⏱"),
+             Suggested="[0.1, 0.5, 0.9] (P10/P50/P90)", Runtime="medium"),
         dict(Model="GBQuantile", Parameter="n_estimators, learning_rate",
              Meaning="Number of trees and boosting step size.",
              WhyItMatters="Main bias/variance tradeoff; lower lr typically needs more trees.",
-             Suggested="n=400–800; lr=0.03–0.07", Runtime="⏱/🐢"),
+             Suggested="n=400–800; lr=0.03–0.07", Runtime="medium to slower"),
         dict(Model="GBQuantile", Parameter="max_depth",
              Meaning="Tree depth / interaction complexity.",
              WhyItMatters="Deeper trees fit noise easily on small datasets.",
-             Suggested="3–5 (prefer 3–4 on treasury flows)", Runtime="⏱"),
+             Suggested="3–5 (prefer 3–4 on treasury flows)", Runtime="medium"),
         dict(Model="GBQuantile", Parameter="min_samples_leaf / min_child_weight",
              Meaning="Minimum leaf size regularization.",
              WhyItMatters="Higher values reduce variance/overfit risk.",
-             Suggested="5–20", Runtime="⏱"),
+             Suggested="5–20", Runtime="medium"),
     ]
     return pd.DataFrame(rows)
 
@@ -467,7 +479,6 @@ They are often strong baselines and are usually easier to audit and explain.
     st.subheader("Example Overrides JSON")
     st.caption("These examples are intended as reference. The Lab page constructs overrides automatically based on your selections.")
     codejson(overrides_a())
-    st.caption(f"*Runtime guide:* {RUNTIME_LEGEND}")
 
 with tabs[1]:
     st.header("B · Machine Learning")
@@ -514,7 +525,6 @@ Feature control (`exog_top_k`, `min_data_in_leaf`) is often more impactful than 
     st.subheader("Example Overrides JSON")
     st.caption("These examples are intended as reference. The Lab page constructs overrides automatically based on your selections.")
     codejson(overrides_b())
-    st.caption(f"*Runtime guide:* {RUNTIME_LEGEND}")
 
 with tabs[2]:
     st.header("C · Deep Learning")
@@ -558,7 +568,6 @@ If conformal calibration is enabled in the backend, additional parameters contro
     st.subheader("Example Overrides JSON")
     st.caption("These examples are intended as reference. The Lab page constructs overrides automatically based on your selections.")
     codejson(overrides_c())
-    st.caption(f"*Runtime guide:* {RUNTIME_LEGEND}")
 
 with tabs[3]:
     st.header("E · Quantile")
@@ -593,7 +602,6 @@ This is useful when decisions depend on downside/upside risk (e.g., conservative
     st.subheader("Example Overrides JSON")
     st.caption("These examples are intended as reference. The Lab page constructs overrides automatically based on your selections.")
     codejson(overrides_e())
-    st.caption(f"*Runtime guide:* {RUNTIME_LEGEND}")
 
 with tabs[4]:
     st.header("Glossary")
@@ -854,3 +862,32 @@ def _render_model_detail() -> None:
 
 
 _render_model_detail()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADDING A MODEL
+#
+# Rendered from docs/ADDING_A_MODEL.md rather than restated here, on the same grounds as the
+# Overview page's progress section: one source, so the page and the written procedure cannot
+# drift. If the file is absent the section says where it should be instead of vanishing.
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown(section_header("Adding a model",
+                           "The procedure for putting a new model on the shelf"),
+            unsafe_allow_html=True)
+
+_ADDING = _Path(__file__).resolve().parents[2] / "docs" / "ADDING_A_MODEL.md"
+st.markdown(_t(
+    "Every model on this page was registered the same way, and the procedure is written down "
+    "rather than passed on by word of mouth. It covers where the entry goes, which fields need "
+    "thought, why the import must sit inside the function, and how to check the model can "
+    "actually be reached from the Lab."
+))
+if _ADDING.exists():
+    st.caption(f"Rendered from `docs/ADDING_A_MODEL.md`.")
+    with st.expander(_t("Read the procedure"), expanded=False):
+        st.markdown(_ADDING.read_text(encoding="utf-8"))
+else:
+    st.info(_t(
+        "The procedure is not on this machine. It belongs at `docs/ADDING_A_MODEL.md` in the "
+        "repository."
+    ))

@@ -314,3 +314,194 @@ def test_the_rule_is_measured_against_something_real():
     assert longest > 300, (
         "no page hides a long explanation behind an expander, so the rule above is "
         "passing vacuously")
+
+
+# ---------------------------------------------------------------------------
+# 7. No emoji
+#
+# The app was decorated throughout: a telescope beside "Forecast", a target beside
+# "Scorecard", a test tube beside "Lab", a trophy beside the champion, a lightbulb inside
+# every info tip, a downward arrow on every download button, and ticks and crosses standing in
+# for the words "passed" and "failed". 137 instances across the ten pages and the helpers.
+#
+# They went for three reasons. They are decoration in a document a finance ministry reads.
+# They duplicate text that is already there, so a reader gets the same fact twice, once in a
+# form they cannot search for or read aloud. And a glyph carrying meaning on its own, a bare
+# tick in a table cell, is unreadable to a screen reader and to anyone whose font lacks it.
+#
+# WHAT THIS FORBIDS, precisely. Characters with emoji presentation: the pictograph planes, and
+# the older symbols that render as emoji either inherently or because they are followed by
+# variation selector 16. It does NOT forbid text-presentation marks. That distinction is the
+# whole point rather than a loophole:
+#
+#   * ✓ and ✕ in ui_styles._GATE_STYLE stay. They render beside the words "passed" and
+#     "failed", not instead of them, and DESIGN_TOKENS §3 asks for a second, non-colour
+#     encoding so a badge survives being printed in greyscale.
+#   * The bullet, the arrow and the en dash are punctuation, judged as punctuation by the
+#     rules above rather than as pictures.
+# ---------------------------------------------------------------------------
+
+#: Emoji-presentation characters. Two clauses: the pictograph planes, which are emoji by
+#: default, and any character followed by U+FE0F, which is a request for emoji presentation
+#: whatever the base character was.
+_EMOJI = re.compile(
+    "[\U0001F000-\U0001FAFF]"          # pictographs, symbols, transport, supplemental
+    "|.️"                          # anything explicitly asking for emoji presentation
+    "|[✅❌❎❓-❕❗➕-➗"   # heavy tick, crosses, marks
+    "⬛⬜⭐⭕⚡✨➡⬆⬇]"  # blocks, star, bolt, arrows
+)
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=lambda p: p.name)
+def test_no_emoji_in_visible_copy(path):
+    """Nothing a reader sees is decorated with a pictograph."""
+    bad = [(c, _EMOJI.findall(c.text)) for c in visible_copy(path) if _EMOJI.search(c.text)]
+    assert not bad, (
+        "emoji in user-visible copy:\n"
+        + "\n".join(f"  {c.where()}: {found} in {c.text[:80]!r}" for c, found in bad))
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=lambda p: p.name)
+def test_no_emoji_anywhere_in_the_source_a_reader_could_reach(path):
+    """Wider than the copy collector, because most of them were never prose.
+
+    Of the 137 found when this rule went in, the copy collector saw 59. The rest were
+    ``icon=`` arguments to ``callout_box`` and ``metric_card``, values in a table column, and
+    glyphs assembled inside a helper's body. All of those reach a reader; none of them is a
+    call argument the collector treats as prose. So this reads the lines directly, skipping
+    comments, where this project's long explanations live and where the punctuation rules do
+    not apply.
+    """
+    offenders = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        found = _EMOJI.findall(line)
+        if found:
+            offenders.append(f"  {path.name}:{lineno}: {found} in {line.strip()[:80]!r}")
+    assert not offenders, "emoji in source a reader can reach:\n" + "\n".join(offenders)
+
+
+def test_the_gate_glyphs_are_deliberately_not_emoji():
+    """The exemption is real and narrow, so it is asserted rather than left as a comment.
+
+    ``✓`` and ``✕`` are text-presentation dingbats sitting beside the words they reinforce. If
+    somebody swaps them for ``✅`` and ``❌`` the badge gains nothing and this fails.
+    """
+    from ui_styles import _GATE_STYLE
+
+    for state, style in _GATE_STYLE.items():
+        glyph, word = style[0], style[1]
+        assert not _EMOJI.search(glyph), f"{state} uses an emoji glyph: {glyph!r}"
+        assert word.strip(), f"{state} has a glyph but no word beside it"
+
+
+# ---------------------------------------------------------------------------
+# 8. One definition per term
+#
+# "Define a term in plain words the first time it appears, then reuse the same definition
+# everywhere" is only a rule if something checks it. Two terms, "skill" and "withheld", were
+# defined twice: once in ui_styles.HELP for the tooltips and once in ui_styles.GLOSSARY for the
+# expanders, in different words. Neither was wrong. A reader met "withheld" in a tooltip
+# describing one of its two reasons and again in an expander describing both, with nothing
+# saying they were the same word.
+# ---------------------------------------------------------------------------
+
+def test_a_term_in_both_copy_dictionaries_has_one_wording():
+    from ui_styles import GLOSSARY, HELP
+
+    shared = sorted(set(HELP) & set(GLOSSARY))
+    differing = [k for k in shared if HELP[k].strip() != GLOSSARY[k].strip()]
+    assert not differing, (
+        "these terms are defined twice, in different words:\n"
+        + "\n".join(f"  {k!r}\n    HELP    : {HELP[k][:90]}\n"
+                    f"    GLOSSARY: {GLOSSARY[k][:90]}" for k in differing))
+
+
+def test_the_sealed_window_is_defined_once_and_the_pages_do_not_redefine_it():
+    """The concept appears on the Lab, Forecast and Start here pages.
+
+    It is the single hardest idea in the project to state, so it is stated in one place. A page
+    may name it; a page may not write its own competing definition of it.
+    """
+    from ui_styles import GLOSSARY
+
+    definition = GLOSSARY["sealed window"]
+    assert "never saw while being chosen" in definition, (
+        "the agreed wording has drifted; every page reuses this sentence")
+    assert "spent once" in definition, "the definition no longer says why it is protected"
+
+    # A page writing its own version of the definition, rather than naming the term, is the
+    # drift this guards. The tell is a page restating the mechanism in its own words.
+    for path in PAGES:
+        text = all_text_of(path)
+        assert "never saw while being chosen" not in text or definition in text, (
+            f"{path.name} paraphrases the sealed-window definition instead of reusing it")
+
+
+# ---------------------------------------------------------------------------
+# 9. The same header shape on every page
+#
+# Before this, a reader arriving on any page met a different arrangement: some opened on a
+# control, some on four paragraphs of methodology, some on a title and nothing else. The shape
+# is now fixed and dull on purpose, because a reader who learns it once can use it everywhere:
+#
+#   the page's name and one-line subtitle   render_app_header
+#   one or two sentences on what it is      page_intro
+#   what you can do here                    page_orientation(can_do=...)
+#   where these numbers come from           page_orientation(numbers_from=...)
+#   what the words mean, on demand          glossary_note(...)
+#
+# numbers_from is optional and its absence is meaningful: the guide page has no figures at all.
+# ---------------------------------------------------------------------------
+
+#: The one page with no numbers of its own. Everything it says points somewhere else.
+_NO_NUMBERS_OF_ITS_OWN = {"01_Start_here.py"}
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_every_page_says_what_you_can_do_there(path):
+    source = path.read_text(encoding="utf-8")
+    assert "page_orientation(" in source, f"{path.name} has no orientation block"
+    assert "can_do=" in source, f"{path.name} does not say what you can do there"
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_every_page_with_figures_says_where_they_come_from(path):
+    source = path.read_text(encoding="utf-8")
+    if path.name in _NO_NUMBERS_OF_ITS_OWN:
+        assert "numbers_from=" not in source, (
+            f"{path.name} has no figures of its own, so it should not claim a source")
+        return
+    assert "numbers_from=" in source, (
+        f"{path.name} shows figures without saying where they come from")
+
+
+@pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
+def test_the_orientation_lines_are_finished_sentences(path):
+    """Both are read as prose, so they are held to the prose rules like anything else."""
+    for copy in visible_copy(path):
+        if copy.call != "page_orientation":
+            continue
+        text = copy.text.strip()
+        assert len(text) >= 40, f"{copy.where()}: too short to be useful: {text!r}"
+        assert text.endswith("."), f"{copy.where()} does not finish: {text[-50:]!r}"
+        assert "—" not in text and "--" not in text, f"{copy.where()}: forbidden punctuation"
+
+
+def test_the_two_labels_have_one_wording_between_them():
+    """A helper, not free markdown on each page, so the labels cannot drift into nine variants."""
+    import inspect
+
+    from ui_styles import page_orientation
+
+    src = inspect.getsource(page_orientation)
+    assert "What you can do here." in src
+    assert "Where these numbers come from." in src
+
+    # And no page may write its own version of either label.
+    for path in PAGES:
+        text = all_text_of(path)
+        for label in ("What you can do here", "Where these numbers come from"):
+            assert label not in text, (
+                f"{path.name} writes {label!r} itself instead of calling page_orientation")

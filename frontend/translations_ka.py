@@ -53,14 +53,123 @@ TRANSLATIONS = {
     "Dashboard": "მაჩვენებლების დაფა",
     "Compare runs": "გაშვებების შედარება",
     "Run history": "გაშვებების ისტორია",
-    "Models": "მოდელები",
+    "Documentation": "დოკუმენტაცია",
+    "Georgian State Treasury Forecast Lab":
+        "საქართველოს სახელმწიფო ხაზინის პროგნოზის ლაბორატორია",
     "Data pre-processing": "მონაცემთა წინასწარი დამუშავება",
     "Lab": "ლაბორატორია",
     "Overview": "მიმოხილვა",
+    "Forecast": "პროგნოზი",
+    "How to read this page": "როგორ წავიკითხოთ ეს გვერდი",
+    "Two kinds of forecast": "პროგნოზის ორი სახე",
+    "Official": "ოფიციალური",
+    "Exploratory": "საძიებო",
+
+    # ── Copy added by the tabs, the scorecard loop and the Lab downloads ────
+    #
+    # Short structural copy: headings, table cells, labels and lead-ins. The long
+    # methodological passages this session added are deliberately NOT here, per the
+    # policy in this file's docstring: a machine translation of a subtle paragraph is
+    # worse than an untranslated one a reader can still read in English.
+    "passed": "გაიარა",
+    "failed": "ვერ გაიარა",
+    "Results": "შედეგები",
+    "Yes": "დიახ",
+    "No": "არა",
+    "None": "არცერთი",
+    "Low (P10)": "დაბალი (P10)",
+    "Central (P50)": "ცენტრალური (P50)",
+    "High (P90)": "მაღალი (P90)",
+    "What it is": "რა არის ეს",
+    "For the day": "რომელი დღისთვის",
+    "Issued": "გამოცემულია",
+    "Treasury line": "ხაზინის ხაზი",
+    "Champion model": "ჩემპიონი მოდელი",
+    "Upload actuals": "ფაქტობრივი მონაცემების ატვირთვა",
+    "Checks measured": "გაზომილი შემოწმებები",
+    "Can be published": "შეიძლება გამოქვეყნდეს",
+    "Scored against reality": "შედარებულია რეალობასთან",
+    "Who picks the model": "ვინ ირჩევს მოდელს",
+    "You do, from a list": "თქვენ, სიიდან",
+    "Published forecasts": "გამოქვეყნებული პროგნოზები",
+    "Exploratory runs.": "საძიებო გაშვებები.",
+    "Read the procedure": "წაიკითხეთ პროცედურა",
+    "How the loop works.": "როგორ მუშაობს ციკლი.",
+    "The risk this leaves.": "რა რისკს ტოვებს ეს.",
+    "What published means.": "რას ნიშნავს გამოქვეყნებული.",
+    "Some lines are withheld.": "ზოგიერთი ხაზი შეკავებულია.",
+    "When you upload actuals.": "როდესაც ატვირთავთ ფაქტობრივ მონაცემებს.",
+    "Waiting for actual figures": "ელოდება ფაქტობრივ მაჩვენებლებს",
+    "Already scored": "უკვე შეფასებული",
+    "What never changes on its own.": "რა არ იცვლება თავისით.",
+    "All of them, each with a reason": "ყველა, თითოეული მიზეზით",
+    "What re-choosing would require.": "რას მოითხოვდა ხელახალი არჩევა.",
+    "The forecast for a Treasury line": "პროგნოზი ხაზინის ერთი ხაზისთვის",
+    "No, and there is no setting for it":
+        "არა, და ამისთვის პარამეტრი არ არსებობს",
+    "Nobody here. Its evidence did, once":
+        "აქ არავინ. მისმა მტკიცებულებამ, ერთხელ",
+    "The sealed window is not read here.": "დალუქული ფანჯარა აქ არ იკითხება.",
+    "If the results above say degrading.":
+        "თუ ზემოთ მოცემული შედეგები ამბობს, რომ უარესდება.",
+    "A published forecast is never edited.":
+        "გამოქვეყნებული პროგნოზი არასოდეს რედაქტირდება.",
+    "How the scored forecasts actually did":
+        "როგორ გამოვიდა შეფასებული პროგნოზები სინამდვილეში",
+    "Read the refresh and retrain procedure":
+        "წაიკითხეთ განახლებისა და ხელახალი წვრთნის პროცედურა",
+    "Why re-choosing is a deliberate decision":
+        "რატომ არის ხელახალი არჩევა შეგნებული გადაწყვეტილება",
+    "Any model on any line, to see what it does":
+        "ნებისმიერი მოდელი ნებისმიერ ხაზზე, რომ ვნახოთ რას აკეთებს",
+    "Too few scored days to call it either way.":
+        "შეფასებული დღეები ძალიან ცოტაა, რომ რომელიმე მხარეს დავასკვნათ.",
+    "The rows that are waiting are listed above.":
+        "მოლოდინში მყოფი მწკრივები ზემოთ ჩამოთვლილია.",
+    "What happens to the model when new data arrives":
+        "რა ხდება მოდელთან, როდესაც ახალი მონაცემები მოდის",
+    "It is refitted. It is never re-chosen on its own":
+        "ის ხელახლა ეწყობა. ის არასოდეს ირჩევა ხელახლა თავისით",
+    "Measured instances the registry already records.":
+        "გაზომილი შემთხვევები, რომლებსაც რეესტრი უკვე აღრიცხავს.",
+    "None scored yet, so the results section below is empty.":
+        "ჯერ არცერთი არ არის შეფასებული, ამიტომ ქვემოთ მოცემული შედეგების ნაწილი ცარიელია.",
+    "Nothing has been scored yet, and that is the honest state.":
+        "ჯერ არაფერია შეფასებული და ეს არის პატიოსანი მდგომარეობა.",
+    "Three things worth knowing before you read the figures below":
+        "სამი რამ, რაც ღირს იცოდეთ ქვემოთ მოცემული ციფრების წაკითხვამდე",
+    "Every forecast that was issued, and whether it has been scored":
+        "ყოველი გამოცემული პროგნოზი და შეფასდა თუ არა ის",
+    "Which one you are making is the most useful thing to know here":
+        "რომელს აკეთებთ, ეს არის ყველაზე სასარგებლო, რაც აქ უნდა იცოდეთ",
+    "Add the days the Treasury has now reported, and score against them":
+        "დაამატეთ დღეები, რომლებიც ხაზინამ ახლა დააფიქსირა, და შეაფასეთ მათ მიხედვით",
+    "Holding up.": "ინარჩუნებს მდგომარეობას.",
+    "Degrading.": "უარესდება.",
+    "Only": "მხოლოდ",
+    "Over": "განმავლობაში",
+    "Take the files with you": "წაიღეთ ფაილები თქვენთან",
+    "This run's folder": "ამ გაშვების საქაღალდე",
+    "Everything (.zip)": "ყველაფერი (.zip)",
+    "Open History": "გახსენით ისტორია",
+    "Adding a model": "მოდელის დამატება",
+    "What you can do here.": "რა შეგიძლიათ აქ გააკეთოთ.",
+    "Where these numbers come from.": "საიდან მოდის ეს ციფრები.",
+    "train and dev": "სასწავლო და განვითარების მონაცემები",
+    "horizon h": "ჰორიზონტი h",
+    "run folder": "გაშვების საქაღალდე",
+    "One run folder under frontend/runs/. Nothing here is recomputed.":
+        "ერთი გაშვების საქაღალდე frontend/runs/-ში. აქ არაფერი ხელახლა არ გამოითვლება.",
+    "The file you upload. Nothing on this page reads the canonical data.":
+        "ფაილი, რომელსაც ატვირთავთ. ამ გვერდზე არაფერი კითხულობს კანონიკურ მონაცემებს.",
+    "The run folders under frontend/runs/, and the progress record in reports/.":
+        "გაშვების საქაღალდეები frontend/runs/-ში და პროგრესის ჩანაწერი reports/-ში.",
+    "The run folders you select. Each figure is read from the run that produced it.":
+        "თქვენ მიერ არჩეული გაშვების საქაღალდეები. ყოველი ციფრი იკითხება იმ გაშვებიდან, რომელმაც ის შექმნა.",
+    "issue(s).": "გამოცემა(ები).",
+    "published row(s) across": "გამოქვეყნებული მწკრივ(ებ)ი, სულ",
 
     # ── Page subtitles ──────────────────────────────────────────────────────
-    "What this Lab is, and where to go for each question":
-        "რა არის ეს ლაბორატორია და სად უნდა მიხვიდეთ თითოეული კითხვისთვის",
     "What was forecast, and what actually happened":
         "რა იყო ნაპროგნოზები და რა მოხდა სინამდვილეში",
     "Evaluate one run: accuracy, intervals and integrity checks":
@@ -69,12 +178,12 @@ TRANSLATIONS = {
         "რამდენიმე გაშვების გვერდიგვერდ განთავსება ერთსა და იმავე მიზანსა და ჰორიზონტზე",
     "Browse past runs and download their outputs":
         "წარსული გაშვებების დათვალიერება და მათი შედეგების ჩამოტვირთვა",
-    "Model families, promoted recipes and their evidence":
-        "მოდელების ოჯახები, დაწინაურებული რეცეპტები და მათი მტკიცებულებები",
+    "Every model, its settings, the promoted recipes and their evidence":
+        "ყოველი მოდელი, მისი პარამეტრები, დაწინაურებული რეცეპტები და მათი მტკიცებულებები",
     "Build and inspect the canonical daily Treasury file":
         "ხაზინის კანონიკური დღიური ფაილის შექმნა და შემოწმება",
-    "Configure and launch a backtest run":
-        "უკუტესტის გაშვების კონფიგურაცია და დაწყება",
+    "Try any model on any Treasury line, at any horizon, safely":
+        "სცადეთ ნებისმიერი მოდელი ხაზინის ნებისმიერ ხაზზე, ნებისმიერ ჰორიზონტზე, უსაფრთხოდ",
     "What this lab does, and what it does not claim":
         "რას აკეთებს ეს ლაბორატორია და რას არ ამტკიცებს",
 
@@ -126,12 +235,12 @@ TRANSLATIONS = {
         "მოდელები კითხულობენ, და აღწერს რა შეიცვალა გასუფთავებისას, რათა მოულოდნელი "
         "ციფრი უკან იქამდე იქნას მიკვლეული.",
 
-    "This page is the workbench: run any model on any Treasury line, at any horizon, as "
-    "an experiment. Every run launched here is measured on train and dev data only and is "
-    "never published.":
-        "ეს გვერდი სამუშაო მაგიდაა: გაუშვით ნებისმიერი მოდელი ხაზინის ნებისმიერ ხაზზე, "
-        "ნებისმიერ ჰორიზონტზე, როგორც ექსპერიმენტი. აქ გაშვებული ყველა გაშვება იზომება "
-        "მხოლოდ სასწავლო და სატესტო მონაცემებზე და არასოდეს ქვეყნდება.",
+    "Try any model on any Treasury line, at any horizon, safely. Nothing here is published, "
+    "nothing here changes the official forecast, and every result is measured on training and "
+    "development data only.":
+        "სცადეთ ნებისმიერი მოდელი ხაზინის ნებისმიერ ხაზზე, ნებისმიერ ჰორიზონტზე, "
+        "უსაფრთხოდ. აქედან არაფერი ქვეყნდება, აქ არაფერი ცვლის ოფიციალურ პროგნოზს "
+        "და ყოველი შედეგი იზომება მხოლოდ სასწავლო და განვითარების მონაცემებზე.",
 
     "This is the landing page. It confirms the Lab can find its backend, shows what has "
     "been run so far, and states plainly what this project does and does not claim.":
@@ -163,9 +272,10 @@ TRANSLATIONS = {
         "რომლებზეც არასოდეს ყოფილა მორგებული. ახალი მონაცემების ჩატვირთვა მას თავიდან "
         "არგებს, მაგრამ არასოდეს ირჩევს ხელახლა.",
 
-    "A run somebody launched to see what would happen. It is never published, never "
-    "written to the official forecast, and never entered in the scorecard, and every page "
-    "that produces one says so while it is showing it.":
+    "A run you launched yourself to see what a model would do. It is measured on the "
+    "training and development data only, it is never published, it is never written to the "
+    "official forecast, and it never enters the scorecard. Every page that produces one "
+    "says so while it is showing it.":
         "გაშვება, რომელიც ვინმემ დაიწყო იმის სანახავად, თუ რა მოხდებოდა. იგი არასოდეს "
         "ქვეყნდება, არასოდეს ჩაიწერება ოფიციალურ პროგნოზში და არასოდეს შედის შედეგების "
         "ბარათში. ყოველი გვერდი, რომელიც მას ქმნის, ამას აჩვენებისას აცხადებს.",
@@ -177,8 +287,10 @@ TRANSLATIONS = {
         "სამუშაო დღის წინანდელი მნიშვნელობა უბრალოდ მეორდება. მისი დამარცხება მინიმალური "
         "ზღვარია და არა მიღწევა.",
 
-    "How much smaller a model's typical error is than the baseline's, as a percentage. "
-    "40% means its errors are 40% smaller than assuming the last known value repeats.":
+    "How much smaller a model's typical error is than the baseline's, as a percentage. The "
+    "baseline holds the last known figure flat, so at this project's horizon of five "
+    "working days it is the figure from five working days earlier. 40% means the model's "
+    "errors are 40% smaller than that.":
         "რამდენად ნაკლებია მოდელის ტიპიური შეცდომა საბაზისო წესის შეცდომაზე, პროცენტებში. "
         "40% ნიშნავს, რომ მისი შეცდომები 40%-ით ნაკლებია, ვიდრე ბოლო ცნობილი მნიშვნელობის "
         "გამეორების ვარაუდისას.",
@@ -196,9 +308,9 @@ TRANSLATIONS = {
         "ისტორიის მონაკვეთი, რომელიც განზრახ იყო დაფარული მოდელებისგან მათი შერჩევისას, "
         "რათა მასზე გაზომვამ რაიმე თქვას იმ დღეებზე, რომლებიც მათ არასოდეს უნახავთ.",
 
-    "The most recent stretch of history, held back and read once at the end. It is the "
-    "single clean final reading this project has, so no experiment is allowed to touch it "
-    "and any that tries is refused.":
+    "The most recent stretch of history the models never saw while being chosen. We keep it "
+    "untouched so the final score is honest. It can only be spent once, so no experiment "
+    "may be measured on it, and any that tries is refused.":
         "ისტორიის უახლესი მონაკვეთი, რომელიც შენახულია და ბოლოს ერთხელ იკითხება. ეს არის "
         "ამ პროექტის ერთადერთი სუფთა საბოლოო წაკითხვა, ამიტომ არცერთ ექსპერიმენტს არ "
         "აქვს მასზე შეხების უფლება და ყოველი მცდელობა უარყოფილია.",
@@ -210,10 +322,11 @@ TRANSLATIONS = {
         "წესზე უფრო ზუსტი უნდა იყოს. ყოველ შემოწმებას თავის დასკვნასთან ერთად ახლავს "
         "მარტივ ენაზე ახსნილი მიზეზი და არცერთის გამორთვა ამ ინტერფეისიდან შეუძლებელია.",
 
-    "A verdict meaning the numbers are not offered as a forecast. Either a simple rule of "
-    "thumb was more accurate, in which case they should not be used at all, or the model "
-    "could not show it anticipates individual days, in which case they are a guide to the "
-    "typical level and nothing more.":
+    "Withheld means we do not offer the numbers as a forecast. It happens for one of two "
+    "reasons. Either a simple rule of thumb was more accurate, so the numbers should not be "
+    "used at all. Or the model could not show that it anticipates individual days, so the "
+    "numbers are a guide to the typical level and nothing more. The page always says which "
+    "of the two applies.":
         "დასკვნა, რომელიც ნიშნავს, რომ ციფრები არ არის შემოთავაზებული როგორც პროგნოზი. "
         "ან მარტივი წესი უფრო ზუსტი აღმოჩნდა, და მაშინ ისინი საერთოდ არ უნდა იქნას "
         "გამოყენებული, ან მოდელმა ვერ აჩვენა, რომ ცალკეულ დღეებს წინასწარ განჭვრეტს, და "
@@ -308,14 +421,6 @@ TRANSLATIONS = {
         "პროგნოზს არ ვუწოდებთ.",
 
     # ── The shared tooltips ─────────────────────────────────────────────────
-    "How much smaller this model's typical error is than the shared benchmark of "
-    "'assume the value from five working days ago repeats'. 40% means errors are 40% "
-    "smaller than that benchmark. Every model in the lab is measured against the same "
-    "benchmark, so these numbers are comparable across model families.":
-        "რამდენად ნაკლებია ამ მოდელის ტიპიური შეცდომა საერთო საზომზე, რომელიც ვარაუდობს, "
-        "რომ ხუთი სამუშაო დღის წინანდელი მნიშვნელობა მეორდება. 40% ნიშნავს, რომ შეცდომები "
-        "40%-ით ნაკლებია ამ საზომზე. ლაბორატორიაში ყველა მოდელი ერთი და იმავე საზომით "
-        "იზომება, ამიტომ ეს რიცხვები შედარებადია მოდელების ოჯახებს შორის.",
 
     "A self-test for whether the inputs actually inform the target. We shuffle the "
     "historical answers, refit, and see how much worse the model gets. If the inputs "
@@ -353,15 +458,6 @@ TRANSLATIONS = {
         "უნდა იყოს. ამაზე მნიშვნელოვნად ნაკლები ნიშნავს, რომ დიაპაზონი ძალიან ვიწროა და "
         "რისკს აკნინებს.",
 
-    "The model's numbers are shown, but we are not calling them a forecast. It passed "
-    "its accuracy checks and failed the signal self-test, which means it tracks the "
-    "typical level rather than anticipating individual days. The numbers are useful as a "
-    "guide to the normal range; they should not be relied on to anticipate an unusual day.":
-        "მოდელის ციფრები ნაჩვენებია, მაგრამ ჩვენ მათ პროგნოზს არ ვუწოდებთ. მან სიზუსტის "
-        "შემოწმებები გაიარა, მაგრამ სიგნალის თვითშემოწმება ვერ გაიარა, რაც ნიშნავს, რომ იგი "
-        "ტიპიურ დონეს მიჰყვება და არა ცალკეულ დღეებს განჭვრეტს. ციფრები სასარგებლოა როგორც "
-        "ჩვეულებრივი დიაპაზონის ორიენტირი, მაგრამ მათზე დაყრდნობა უჩვეულო დღის "
-        "განსაჭვრეტად არ შეიძლება.",
 
     "The single shared benchmark: predict that the value five working days ago repeats. "
     "One implementation is used by every model family so that skill numbers are "

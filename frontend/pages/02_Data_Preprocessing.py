@@ -1,4 +1,4 @@
-# pages/07_Data_Preprocessing.py — Data Pre-processing (upload + auto backend paths)
+# pages/02_Data_Preprocessing.py — Data Pre-processing (upload + auto backend paths)
 from __future__ import annotations
 
 import json
@@ -18,26 +18,33 @@ except ImportError:
 
 from ui_styles import inject_design_system  # presentation only
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
+from ui_styles import render_brand  # the one brand header, in the sidebar
 from ui_styles import plotly_chrome  # presentation only
-st.set_page_config(page_title="Data · Treasury Forecast", page_icon="🧹", layout="wide")
+st.set_page_config(page_title="Data · Treasury Forecast", layout="wide")
 inject_global_css()
 inject_design_system()
 
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 render_app_header("Data pre-processing", "Build and inspect the canonical daily Treasury file")
 page_intro(
     "This page turns a raw Treasury export into the clean daily series the models read, and "
     "reports what the cleaning changed so a surprising number can be traced back to it."
 )
-st.markdown(
-    page_header("🧺 Data Pre-processing",
-                "Convert raw Treasury files into standardized forecasting datasets"),
-    unsafe_allow_html=True,
+page_orientation(
+    can_do=(
+        "Upload a raw Treasury export, see what the cleaning steps did to it, and check the "
+        "result before anything uses it."
+    ),
+    numbers_from=(
+        "The file you upload. Nothing on this page reads the canonical data."
+    ),
 )
 
 st.write(
@@ -228,7 +235,7 @@ When you run preprocessing, the backend will:
 """
 )
 
-if st.button("▶️ Run preprocessing", type="primary", use_container_width=True):
+if st.button("Run preprocessing", type="primary", use_container_width=True):
     if not backend_py or not Path(backend_py).exists():
         st.error(
             "Backend Python missing.\n\n"
@@ -282,7 +289,7 @@ if st.button("▶️ Run preprocessing", type="primary", use_container_width=Tru
     report = out_dir / "preprocess_report.json"
     if rc == 0 and report.exists():
         meta = json.loads(report.read_text(encoding="utf-8"))
-        st.success("✅ Pre-processing completed.")
+        st.success("Pre-processing completed.")
         st.subheader("Preprocess report")
         st.json(meta)
 
@@ -294,7 +301,7 @@ if st.button("▶️ Run preprocessing", type="primary", use_container_width=Tru
         out_csv = Path(meta.get("output_csv", ""))
         if out_csv.exists():
             st.download_button(
-                "⬇️ Download processed CSV",
+                "Download processed CSV",
                 data=out_csv.read_bytes(),
                 file_name=out_csv.name,
                 key=f"dl_pp_csv_{out_csv.name}",
@@ -305,11 +312,11 @@ if st.button("▶️ Run preprocessing", type="primary", use_container_width=Tru
         if out_parq and Path(out_parq).exists():
             p = Path(out_parq)
             st.download_button(
-                "⬇️ Download processed Parquet",
+                "Download processed Parquet",
                 data=p.read_bytes(),
                 file_name=p.name,
                 key=f"dl_pp_parq_{p.name}",
                 use_container_width=True,
             )
     else:
-        st.error("❌ Pre-processing failed. See log above.")
+        st.error("Pre-processing failed. See the log above.")

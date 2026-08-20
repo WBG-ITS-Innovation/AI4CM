@@ -1,4 +1,4 @@
-# pages/08_Lab.py — Lab (run models + live log + overlay + REAL hover help + batch runs)
+# pages/03_Lab.py — Lab (run models + live log + overlay + REAL hover help + batch runs)
 from __future__ import annotations
 
 import html
@@ -26,17 +26,19 @@ from exploratory import (
 )
 from run_errors import explain_failure, is_guard_refusal
 from ui_styles import inject_global_css, page_header, section_header, callout_box, info_tip, COLORS
-from utils_frontend import load_paths, new_run_folders, UPLOADS_ROOT
+from utils_frontend import load_paths, new_run_folders, zip_outputs, UPLOADS_ROOT
 
 from ui_styles import inject_design_system  # presentation only
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
 from i18n import t as _t  # this page's tooltips are its own, and are translated here
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
+from ui_styles import render_brand  # the one brand header, in the sidebar
 from ui_styles import plotly_chrome  # presentation only
 import ops_baseline_view as obv  # the Treasury's planning method, one construction
-st.set_page_config(page_title="Lab · Treasury Forecast", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="Lab · Treasury Forecast", layout="wide")
 inject_global_css()
 
 inject_design_system()
@@ -44,15 +46,27 @@ inject_design_system()
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 
-render_app_header("Lab", "Configure and launch a backtest run")
+render_app_header("Lab", "Try any model on any Treasury line, at any horizon, safely")
 page_intro(
-    "This page is the workbench: run any model on any Treasury line, at any horizon, as an "
-    "experiment. Every run launched here is measured on train and dev data only and is "
-    "never published."
+    "Try any model on any Treasury line, at any horizon, safely. Nothing here is published, "
+    "nothing here changes the official forecast, and every result is measured on training and "
+    "development data only."
 )
-glossary_note("exploratory", "sealed window", "holdout", "baseline")
+page_orientation(
+    can_do=(
+        "Choose a family, a model, a Treasury line and a horizon, launch it, watch the "
+        "backend log, and download what it wrote."
+    ),
+    numbers_from=(
+        "The run you just launched, and the data file you pointed it at. Training and "
+        "development data only."
+    ),
+)
+glossary_note("exploratory", "train and dev", "sealed window", "horizon h", "run folder",
+              "baseline", "skill")
 
 # ── The exploratory contract, stated where nobody can miss it ────────────────
 # Everything launched from this page is exploratory. It is bounded to train and dev
@@ -60,8 +74,9 @@ glossary_note("exploratory", "sealed window", "holdout", "baseline")
 # folders. See ``frontend/exploratory.py`` for why the bound is applied here rather
 # than left to whatever each backend family defaults to.
 st.info(
-    "**Exploratory runs.** " + EXPLORATORY_NOTE + " Nothing launched from this page is "
-    "published, and nothing here changes the official forecast."
+    f"**{_t('Exploratory runs.')}** " + _t(EXPLORATORY_NOTE) + " "
+    + _t("Nothing launched from this page is published, and nothing here changes the "
+         "official forecast.")
 )
 APPROOT = Path(__file__).resolve().parent
 from paths import runs_dir
@@ -132,8 +147,8 @@ HELP: Dict[str, str] = {
     "horizon": (
         "How many steps ahead to forecast at the selected cadence.\n\n"
         "Examples:\n"
-        "• Monthly horizon=6 → forecast 6 months ahead\n"
-        "• Daily horizon=14 → forecast 14 days ahead\n\n"
+        "Monthly horizon=6 means forecast 6 months ahead.\n"
+        "Daily horizon=14 means forecast 14 days ahead.\n\n"
         "Longer horizons are harder and typically increase error."
     ),
     "family": (
@@ -241,7 +256,7 @@ HELP: Dict[str, str] = {
     "quantiles": (
         "Quantiles for risk-aware forecasts.\n\n"
         "Example:\n"
-        "0.1,0.5,0.9 → P10 (low), P50 (median), P90 (high)\n\n"
+        "0.1,0.5,0.9 gives P10 (low), P50 (median), P90 (high).\n\n"
         "Use cases:\n"
         "• planning under uncertainty\n"
         "• conservative vs optimistic scenarios"
@@ -353,11 +368,6 @@ If either path is missing, go to the **Overview** page and re-run setup scripts.
 # -------------------------------------------------------------------
 # Page header
 # -------------------------------------------------------------------
-st.markdown(
-    page_header("🧪 Forecast Lab",
-                "Configure and run forecasting experiments"),
-    unsafe_allow_html=True,
-)
 st.caption(
     "Run forecasting experiments (statistical, ML, deep learning, quantiles) and review outputs immediately. "
     "Each experiment is saved as a run folder for reproducibility."
@@ -441,7 +451,7 @@ with st.expander("Dataset preview", expanded=True):
     head = df.head(200).copy()
     dcol_guess = "date" if "date" in head.columns else head.columns[0]
     dtry = pd.to_datetime(head[dcol_guess], errors="coerce")
-    st.caption(f"Rows: {len(df):,} • date span (preview parse): {dtry.min()} → {dtry.max()}")
+    st.caption(f"Rows: {len(df):,}. Date span (preview parse): {dtry.min()} to {dtry.max()}.")
     st.dataframe(head, use_container_width=True)
 
 # -------------------------------------------------------------------
@@ -521,7 +531,7 @@ profile = st.radio(
     index=0,
     help=_lab_help("profile"),
 )
-st.caption(DEMO_CLIP_NOTE)
+st.caption(_t(DEMO_CLIP_NOTE))
 
 # Profile → default override payload
 ov: Dict[str, Any] = {
@@ -602,29 +612,29 @@ elif family == "F_FOUNDATION":
     _fm_choices, _fm_missing = foundation_options()
     if not _fm_choices:
         model = None
-        st.warning(
+        st.warning(_t(
             "**No foundation model is installed.** These are optional extras, kept out of the "
             "core install so a fresh clone is never held up by a large download. Install them "
             "with `./backend/.venv/bin/python -m pip install -r "
             "backend/requirements-foundation.txt`, then reopen this page."
-        )
+        ))
     else:
         model = st.selectbox("Model (Foundation)", _fm_choices, index=0)
     for _name, _why in _fm_missing:
         st.caption(f"**{_name}** is not available here. {_why}")
-    st.info(
+    st.info(_t(
         "**These models were never trained on Treasury data.** Each one was trained once, by "
         "somebody else, on a large collection of other people's series, and is asked to forecast "
         "this one from its recent history alone. There is no fitting step. That makes a run here "
         "a reading on how much of this series is predictable from its shape, and nothing more: "
         "no foundation model can become the model behind an official forecast, because a "
         "published recipe may only draw from the machine-learning family."
-    )
-    st.caption(
+    ))
+    st.caption(_t(
         "Weights are downloaded once and then cached on this machine, so the first run of a model "
         "is slower than the rest and nothing downloads afterwards. Each checkpoint is pinned to "
         "an exact version, so a rerun uses the same weights as the first run."
-    )
+    ))
 
 else:
     # From the registry. This offered a single name while the family had three implemented and
@@ -740,7 +750,7 @@ def _on_progress(tail: str, elapsed: float):
     status.info(f"Elapsed: {elapsed:.1f}s")
     _scroll_term(log_box, tail)
 
-if st.button("🚀 Run experiment", type="primary", use_container_width=True, help=_lab_help("run_button")):
+if st.button("Run experiment", type="primary", use_container_width=True, help=_lab_help("run_button")):
     py = st.session_state.get("backend_py", "")
     back = st.session_state.get("backend_dir", "")
 
@@ -765,7 +775,7 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
     _blocked = check_can_run(_dates, horizon, int(ov_final.get("min_train_years") or 0))
     if _blocked:
         st.error(_blocked)
-        st.caption(EXPLORATORY_NOTE)
+        st.caption(_t(EXPLORATORY_NOTE))
         st.stop()
 
     # ── Create run folder structure ─────────────────────────────────
@@ -819,7 +829,7 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
         _failure = explain_failure(out_real, _log_text, exit_code=rc)
         if is_guard_refusal(_failure):
             st.warning("**This run was stopped on purpose.** " + _failure.headline)
-            st.caption(EXPLORATORY_NOTE)
+            st.caption(_t(EXPLORATORY_NOTE))
         else:
             st.error("**This run did not finish.** " + _failure.headline)
         with st.expander("Technical detail", expanded=False):
@@ -835,7 +845,7 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
     else:
         st.success(
             f"Finished in {elapsed:.1f}s. Results were written to {out_real}. "
-            + EXPLORATORY_NOTE
+            + _t(EXPLORATORY_NOTE)
         )
 
     # Overlay preview
@@ -917,11 +927,84 @@ if st.button("🚀 Run experiment", type="primary", use_container_width=True, he
             # Say what the comparison line is, or say why there is not one. Silence here reads
             # as "this model had nothing to beat", which is the one wrong conclusion available.
             if _base_drawn:
-                st.caption(obv.CAPTION_WHY_FLAT)
+                st.caption(_t(obv.CAPTION_WHY_FLAT))
             elif base_why:
                 st.caption(base_why)
         else:
             st.caption("No predictions_long.csv found in the outputs folder.")
+
+    # ── Take the files with you ──────────────────────────────────────────────
+    #
+    # The same three downloads the History page offers for any past run, here for the run that
+    # has just finished, so you do not have to leave the page and find it again.
+    #
+    # The names are the real ones in a run folder, checked rather than assumed: predictions_long
+    # .csv, metrics_long.csv, leaderboard.csv and artifacts/. There is no predictions.csv and no
+    # metrics.csv. A weekly or monthly run keeps its files in a cadence subfolder, which is why
+    # each one is looked for in the outputs root and then in daily, weekly and monthly.
+    _out_dir = Path(out_real)
+
+    def _first_existing(name: str):
+        for base in (_out_dir, _out_dir / "daily", _out_dir / "weekly", _out_dir / "monthly"):
+            candidate = base / name
+            if candidate.exists():
+                return candidate
+        return None
+
+    st.markdown(section_header(_t("Take the files with you"),
+                               _t("The same downloads the History page keeps for every run")),
+                unsafe_allow_html=True)
+
+    st.caption(_t("This run's folder"))
+    st.code(str(_out_dir), language="text")
+
+    _preds = _first_existing("predictions_long.csv")
+    _mets = _first_existing("metrics_long.csv")
+    _lb = _first_existing("leaderboard.csv")
+
+    _d1, _d2, _d3, _d4 = st.columns(4)
+    with _d1:
+        if _preds:
+            st.download_button("predictions_long.csv", data=_preds.read_bytes(),
+                               file_name="predictions_long.csv", use_container_width=True,
+                               key=f"lab_dl_preds_{run_id}",
+                               help=_t("One row per forecast: the date, the model, what it "
+                                           "predicted and what actually happened."))
+        else:
+            st.caption(_t("No predictions_long.csv was written."))
+    with _d2:
+        if _mets:
+            st.download_button("metrics_long.csv", data=_mets.read_bytes(),
+                               file_name="metrics_long.csv", use_container_width=True,
+                               key=f"lab_dl_metrics_{run_id}",
+                               help=_t("One row per model and metric, which is the long "
+                                           "form of the leaderboard."))
+        else:
+            st.caption(_t("No metrics_long.csv was written."))
+    with _d3:
+        if _lb:
+            st.download_button("leaderboard.csv", data=_lb.read_bytes(),
+                               file_name="leaderboard.csv", use_container_width=True,
+                               key=f"lab_dl_lb_{run_id}",
+                               help=_t("One row per model, ranked."))
+        else:
+            st.caption(_t("No leaderboard.csv was written."))
+    with _d4:
+        if _out_dir.exists():
+            st.download_button(_t("Everything (.zip)"), data=zip_outputs(_out_dir),
+                               file_name=f"{run_id}_artifacts.zip", use_container_width=True,
+                               key=f"lab_dl_zip_{run_id}",
+                               help=_t("Every file this run wrote, including the config it "
+                                           "ran with and its integrity report."))
+
+    st.caption(_t(
+        "This run is kept. To come back to it later, or to compare it with another, open the "
+        "History page."
+    ))
+    try:
+        st.page_link("pages/06_History.py", label=_t("Open History"))
+    except Exception:                            # noqa: BLE001 - link resolution, not logic
+        st.caption(_t("The History page is in the sidebar."))
 
     if rc == 0:
         with st.expander("Backend log", expanded=False):

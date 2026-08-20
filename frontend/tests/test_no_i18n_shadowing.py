@@ -2,7 +2,7 @@
 
 The bug this exists to prevent
 ------------------------------
-`pages/01_Forecast.py` imported the translator as `from i18n import t as _t`, then used `_t` as
+`pages/07_Forecast.py` imported the translator as `from i18n import t as _t`, then used `_t` as
 a loop and assignment variable for a Treasury line name in three places. Two of those sit
 inside a module-level `if`, so they rebound the module global rather than a local: the
 translator became a string, and the next call to it raised

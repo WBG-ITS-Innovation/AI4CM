@@ -1,4 +1,4 @@
-# pages/03_Dashboard.py — Dashboard (interactive overlays, diagnostics, downloads)
+# pages/04_Dashboard.py — Dashboard (interactive overlays, diagnostics, downloads)
 # Redesigned UI: modern analytics aesthetic with strong information hierarchy
 from __future__ import annotations
 from pathlib import Path
@@ -32,22 +32,35 @@ RUNS_DIR = runs_dir()
 
 from ui_styles import glossary_note  # plain-language definitions, on demand
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from i18n import t as _t  # fixed copy on this page is translated at the render site
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
+from ui_styles import render_brand  # the one brand header, in the sidebar
 import ops_baseline_view as obv  # the Treasury's planning method, from the one construction
-st.set_page_config(page_title="Dashboard · Treasury Forecast", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Dashboard · Treasury Forecast", layout="wide")
 inject_global_css()
 inject_design_system()
 
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 
 render_app_header("Dashboard", "Evaluate one run: accuracy, intervals and integrity checks")
 page_intro(
     "This page shows the detail behind one experimental run: how accurate it was, where its "
     "errors fell, and whether its checks passed. Nothing here is published."
+)
+page_orientation(
+    can_do=(
+        "Load one experimental run, overlay its predictions on the actual series, see where "
+        "its error came from, and download its files."
+    ),
+    numbers_from=(
+        "One run folder under frontend/runs/. Nothing here is recomputed."
+    ),
 )
 glossary_note("MASE", "champion", "skill", "baseline", "gate")
 # ──────────────────────────────────────────────────────────────────────
@@ -154,11 +167,6 @@ def _trust_status(grade: str) -> str:
 # ======================================================================
 
 # ── Page header ──────────────────────────────────────────────────────
-st.markdown(
-    page_header("📈 Dashboard",
-                "Interactive results, diagnostics, and model recommendations"),
-    unsafe_allow_html=True,
-)
 
 # ── Run selector ─────────────────────────────────────────────────────
 runs = _list_runs()
@@ -166,7 +174,7 @@ if not runs:
     st.markdown(
         callout_box(
             "No runs yet. Use the <b>Lab</b> page to create your first experiment.",
-            "info", icon="🧪",
+            "info",
         ),
         unsafe_allow_html=True,
     )
@@ -191,7 +199,7 @@ if pred is None or pred.empty:
         callout_box(
             f"No predictions found in <code>{base_dir}</code>. "
             "The run may still be in progress or may have failed.",
-            "caution", icon="⏳",
+            "caution",
         ),
         unsafe_allow_html=True,
     )
@@ -281,7 +289,6 @@ if _integ:
     if _run_status == "SUCCESS" and _qg:
         # Quality gate PASSED — trust the forecast
         _verdict_status = "trust"
-        _verdict_icon = "✅"
         _verdict_title = "Forecast Trusted — Quality Gate Passed"
         _verdict_detail = (
             f"{_pipeline} pipeline passed all checks. "
@@ -290,7 +297,6 @@ if _integ:
     elif _run_status == "FAILED_QUALITY":
         # Quality gate FAILED — model underperforms baseline
         _verdict_status = "fail"
-        _verdict_icon = "⚠️"
         _verdict_title = "Caution — Model Underperforms Baseline"
         _verdict_detail = (
             f"{_pipeline} pipeline: skill {_fmt_pct(_skill)} is below the "
@@ -299,17 +305,14 @@ if _integ:
         )
     elif _run_status == "ERROR":
         _verdict_status = "fail"
-        _verdict_icon = "❌"
         _verdict_title = "Error — Integrity Check Failed"
         _verdict_detail = f"Error: {_integ.get('error', 'unknown')}"
     elif _alignment_ok is False:
         _verdict_status = "fail"
-        _verdict_icon = "🔴"
         _verdict_title = "Alignment Error Detected"
         _verdict_detail = "Forecast dates may be misaligned. Review integrity tab."
     else:
         _verdict_status = "info"
-        _verdict_icon = "ℹ️"
         _verdict_title = f"Pipeline Status: {_run_status}"
         _verdict_detail = f"{_pipeline} pipeline completed."
 
@@ -320,7 +323,6 @@ if _integ:
 
     st.markdown(
         f'<div class="trust-verdict" style="background:{_vbg}; border:1.5px solid {_vbdr};">'
-        f'<span class="tv-icon">{_verdict_icon}</span>'
         f'<div class="tv-text">'
         f'<div class="tv-title" style="color:{_vaccent};">{_verdict_title}</div>'
         f'<div class="tv-detail" style="color:{_vaccent};">{_verdict_detail}</div>'
@@ -332,7 +334,7 @@ else:
         callout_box(
             "No integrity report was found for this run, so the trust checks could "
             "not be performed. Interpret the outputs below with caution.",
-            "caution", icon="⚠️",
+            "caution",
         ),
         unsafe_allow_html=True,
     )
@@ -529,19 +531,19 @@ with st.expander("Detailed Scorecard & Recommendations", expanded=False):
     if _rec["risk_flags"]:
         st.markdown(section_header("Risk Flags", "Issues that need attention"), unsafe_allow_html=True)
         for rf in _rec["risk_flags"]:
-            st.markdown(callout_box(rf, "fail", icon="🔴"), unsafe_allow_html=True)
+            st.markdown(callout_box(rf, "fail"), unsafe_allow_html=True)
 
     # Tips
     if _rec["tips"]:
         st.markdown(section_header("Tips", "Observations about this run"), unsafe_allow_html=True)
         for tip in _rec["tips"]:
-            st.markdown(callout_box(tip, "info", icon="💡"), unsafe_allow_html=True)
+            st.markdown(callout_box(tip, "info"), unsafe_allow_html=True)
 
     # Next steps
     if _rec["next_steps"]:
         st.markdown(section_header("Next Steps"), unsafe_allow_html=True)
         for ns in _rec["next_steps"]:
-            st.markdown(callout_box(ns, "neutral", icon="→"), unsafe_allow_html=True)
+            st.markdown(callout_box(ns, "neutral"), unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════
 # SECTION 2: Controls
@@ -591,7 +593,7 @@ if has_pi_cols and not has_pi:
             "<b>Prediction intervals exist but contain no values.</b> "
             "This run did not produce intervals (common for ML models with "
             "insufficient validation data). Point forecasts are still valid.",
-            "caution", icon="📉",
+            "caution",
         ),
         unsafe_allow_html=True,
     )
@@ -725,7 +727,7 @@ with tab_overlay:
     # Say what the comparison line is, or say why there is not one. A chart that quietly loses
     # its comparator invites the reader to assume the model had nothing to beat.
     if obv.usable(ops):
-        st.caption(obv.CAPTION_WHY_FLAT)
+        st.caption(_t(obv.CAPTION_WHY_FLAT))
     elif ops_why:
         st.caption(ops_why)
 
@@ -756,7 +758,7 @@ with tab_leader:
 
     if metr is None or metr.empty:
         st.markdown(
-            callout_box("No metrics file found for this run.", "info", icon="ℹ️"),
+            callout_box("No metrics file found for this run.", "info"),
             unsafe_allow_html=True,
         )
     else:
@@ -773,7 +775,7 @@ with tab_leader:
 
         if metric_choice not in mf.columns:
             st.markdown(
-                callout_box(f"Metric '{metric_choice}' not found in this run's output.", "caution", icon="⚠️"),
+                callout_box(f"Metric '{metric_choice}' not found in this run's output.", "caution"),
                 unsafe_allow_html=True,
             )
         else:
@@ -838,7 +840,7 @@ with tab_leader:
                         f"<b>{_integ_best}</b>. The integrity report is authoritative, because a "
                         f"model that wins on error but fails the capacity gate is not the "
                         f"best model.",
-                        "caution", icon="⚠️"),
+                        "caution"),
                     unsafe_allow_html=True)
             elif _integ_best:
                 st.caption(f"Best model agrees with the run's integrity report: "
@@ -852,7 +854,7 @@ with tab_leader:
                     callout_box(
                         f"<b>{winner_row['model']}</b> has the {direction} {metric_choice}: "
                         f"<b>{_fmt_num(winner_row[metric_choice], decimals=2)}</b>",
-                        "trust", icon="🏆",
+                        "trust",
                     ),
                     unsafe_allow_html=True,
                 )
@@ -867,7 +869,7 @@ with tab_errors:
     )
 
     if not models_sel:
-        st.markdown(callout_box("Select at least one model.", "info", icon="ℹ️"), unsafe_allow_html=True)
+        st.markdown(callout_box("Select at least one model.", "info"), unsafe_allow_html=True)
     else:
         m0 = models_sel[0]
         g = df_t[df_t["model"] == m0].copy()
@@ -944,7 +946,7 @@ with tab_intervals:
                     "<b>This run does not record the advertised coverage level.</b> "
                     + _ispec.nominal_source
                     + " Coverage below is a measurement, not a verdict.",
-                    "caution", icon="⚠️"),
+                    "caution"),
                 unsafe_allow_html=True)
 
         cov_tbl = coverage_by_model(df_t, _ispec)
@@ -1153,9 +1155,8 @@ with tab_integrity:
             else:
                 _iv_status, _iv_text = "trust", f"OK TO USE — Skill {skill_pct:.2f}% ≥ {skill_threshold}%"
 
-            _iv_icon = {"trust": "✅", "caution": "⚠️", "fail": "❌"}.get(_iv_status, "ℹ️")
             st.markdown(
-                callout_box(f"<b>Verdict:</b> {_iv_icon} {_iv_text}", _iv_status),
+                callout_box(f"<b>Verdict:</b> {_iv_text}", _iv_status),
                 unsafe_allow_html=True,
             )
 
@@ -1174,7 +1175,6 @@ with tab_integrity:
                     _align_st = "fail"
                 st.markdown(
                     metric_card("Alignment", _align_text,
-                                icon={True: "✅", False: "❌", None: "⬜"}[alignment_ok],
                                 status=_align_st),
                     unsafe_allow_html=True,
                 )
@@ -1185,7 +1185,7 @@ with tab_integrity:
             with col2:
                 mae_model = integrity.get("mae_model", np.nan)
                 st.markdown(
-                    metric_card("Model MAE", _fmt_large(mae_model), icon="📐", status="neutral"),
+                    metric_card("Model MAE", _fmt_large(mae_model), status="neutral"),
                     unsafe_allow_html=True,
                 )
 
@@ -1195,8 +1195,7 @@ with tab_integrity:
                 if not (np.isnan(mae_persist) or np.isnan(mae_model)):
                     _bm_delta = f"Δ {_fmt_large(mae_persist - mae_model)}"
                 st.markdown(
-                    metric_card("Baseline MAE", _fmt_large(mae_persist), delta=_bm_delta,
-                                icon="📏", status="neutral"),
+                    metric_card("Baseline MAE", _fmt_large(mae_persist), delta=_bm_delta, status="neutral"),
                     unsafe_allow_html=True,
                 )
 
@@ -1215,18 +1214,18 @@ with tab_integrity:
                     callout_box(
                         f"<b>Run status: {run_status}.</b> This model does not beat the persistence "
                         f"baseline at horizon {integrity.get('horizon', 'N/A')}.",
-                        "fail", icon="⚠️",
+                        "fail",
                     ),
                     unsafe_allow_html=True,
                 )
             elif run_status == "SUCCESS":
                 st.markdown(
-                    callout_box(f"<b>Run Status: {run_status}</b>", "trust", icon="✅"),
+                    callout_box(f"<b>Run Status: {run_status}</b>", "trust"),
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
-                    callout_box(f"<b>Run Status: {run_status}</b>", "info", icon="ℹ️"),
+                    callout_box(f"<b>Run Status: {run_status}</b>", "info"),
                     unsafe_allow_html=True,
                 )
 
@@ -1271,13 +1270,13 @@ with tab_integrity:
                     callout_box(
                         f"<b>Lag Warning:</b> Best error at shift={integrity.get('best_shift', 0)} "
                         "(should be 0). This suggests horizon misalignment.",
-                        "fail", icon="🔴",
+                        "fail",
                     ),
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(
-                    callout_box("<b>Shift Check:</b> Best alignment at shift=0 (correct)", "trust", icon="✅"),
+                    callout_box("<b>Shift Check:</b> Best alignment at shift=0 (correct)", "trust"),
                     unsafe_allow_html=True,
                 )
 
@@ -1286,7 +1285,7 @@ with tab_integrity:
                     callout_box(
                         "<b>Leakage Warning:</b> Shuffled target performance suspiciously close "
                         "to normal. This may indicate data leakage.",
-                        "fail", icon="🔴",
+                        "fail",
                     ),
                     unsafe_allow_html=True,
                 )
@@ -1294,7 +1293,7 @@ with tab_integrity:
                 shuffled_mae = integrity.get("mae_shuffled_target", np.nan)
                 if not np.isnan(shuffled_mae):
                     st.markdown(
-                        callout_box("<b>Leakage Check:</b> Passed (no leakage detected)", "trust", icon="✅"),
+                        callout_box("<b>Leakage Check:</b> Passed (no leakage detected)", "trust"),
                         unsafe_allow_html=True,
                     )
 
@@ -1347,7 +1346,7 @@ with tab_integrity:
 
         except Exception as e:
             st.markdown(
-                callout_box(f"Could not parse integrity report: {e}", "fail", icon="❌"),
+                callout_box(f"Could not parse integrity report: {e}", "fail"),
                 unsafe_allow_html=True,
             )
             import traceback
@@ -1357,7 +1356,7 @@ with tab_integrity:
             callout_box(
                 "No integrity report found. This report is generated by ML pipelines "
                 "and includes shift checks, baseline comparisons, and leakage tests.",
-                "info", icon="ℹ️",
+                "info",
             ),
             unsafe_allow_html=True,
         )
@@ -1376,7 +1375,7 @@ with tab_feat_imp:
     if fi_path.exists():
         fi_df = pd.read_csv(fi_path)
         if fi_df.empty:
-            st.markdown(callout_box("Feature importance file is empty.", "info", icon="ℹ️"), unsafe_allow_html=True)
+            st.markdown(callout_box("Feature importance file is empty.", "info"), unsafe_allow_html=True)
         else:
             fi_models = sorted(fi_df["model"].unique())
             fi_model_sel = st.selectbox("Model", fi_models, index=0, key="fi_model_sel")
@@ -1414,7 +1413,7 @@ with tab_feat_imp:
         st.markdown(
             callout_box(
                 "No feature importance data found. Run a B-ML experiment to generate this.",
-                "info", icon="ℹ️",
+                "info",
             ),
             unsafe_allow_html=True,
         )
@@ -1441,7 +1440,7 @@ with tab_ensemble:
     if st.button("Build Ensemble", type="primary", key="ens_build_btn"):
         if len(_ens_selected) < 2:
             st.markdown(
-                callout_box("Select at least 2 runs to create an ensemble.", "fail", icon="⚠️"),
+                callout_box("Select at least 2 runs to create an ensemble.", "fail"),
                 unsafe_allow_html=True,
             )
         else:
@@ -1460,7 +1459,7 @@ with tab_ensemble:
 
                 if ens_preds.empty:
                     st.markdown(
-                        callout_box("No ensemble predictions generated. Check run compatibility.", "caution", icon="⚠️"),
+                        callout_box("No ensemble predictions generated. Check run compatibility.", "caution"),
                         unsafe_allow_html=True,
                     )
                 else:
@@ -1468,7 +1467,7 @@ with tab_ensemble:
                         callout_box(
                             f"Ensemble built: <b>{len(ens_preds)}</b> predictions across "
                             f"<b>{ens_preds['model'].nunique()}</b> methods.",
-                            "trust", icon="✅",
+                            "trust",
                         ),
                         unsafe_allow_html=True,
                     )
@@ -1507,7 +1506,7 @@ with tab_ensemble:
                     )
             except Exception as e:
                 st.markdown(
-                    callout_box(f"Ensemble failed: {e}", "fail", icon="❌"),
+                    callout_box(f"Ensemble failed: {e}", "fail"),
                     unsafe_allow_html=True,
                 )
                 import traceback
@@ -1522,7 +1521,7 @@ with tab_downloads:
 
     csv_bytes = df_t.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "📥 Download filtered predictions (CSV)",
+        "Download filtered predictions (CSV)",
         data=csv_bytes,
         file_name=f"{sel_run}_filtered_predictions.csv",
         key="button12",
@@ -1536,7 +1535,7 @@ with tab_downloads:
             for img in sorted(plots_dir.glob("*.png")):
                 zf.writestr(img.name, img.read_bytes())
         st.download_button(
-            "📥 Download all static plots (ZIP)",
+            "Download all static plots (ZIP)",
             data=buf.getvalue(),
             file_name=f"plots_{sel_run}_{choice_key}.zip",
             key="button15",

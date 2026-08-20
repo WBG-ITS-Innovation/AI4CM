@@ -1,4 +1,4 @@
-# pages/04_Compare.py — Cross-Run Comparison
+# pages/05_Compare.py — Cross-Run Comparison
 from __future__ import annotations
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -19,25 +19,32 @@ except ImportError:
 
 from ui_styles import inject_design_system, plotly_chrome  # presentation only
 from i18n import install as install_language  # language toggle + pending-review note
-from ui_styles import page_intro  # the one-or-two-sentence intro every page opens with
+from ui_styles import page_intro
+from ui_styles import page_orientation  # the same two questions on every page  # the one-or-two-sentence intro every page opens with
 from ui_styles import render_app_header  # presentation only
-st.set_page_config(page_title="Compare · Treasury Forecast", page_icon="⚖️", layout="wide")
+from ui_styles import render_brand  # the one brand header, in the sidebar
+st.set_page_config(page_title="Compare · Treasury Forecast", layout="wide")
 inject_global_css()
 inject_design_system()
 
 # The language toggle and, in Georgian, the standing note that the translation has
 # not been reviewed by a native speaker. One call per page; everything else the
 # reader sees is translated inside the shared helpers.
+render_brand()
 install_language()
 render_app_header("Compare runs", "Put several runs side by side on the same target and horizon")
 page_intro(
     "This page puts two or more experimental runs side by side on the same axes, so a "
     "difference between them can be seen rather than assumed."
 )
-st.markdown(
-    page_header("📊 Compare Runs",
-                "Select 2-6 runs to compare forecasts, metrics, and find the best model"),
-    unsafe_allow_html=True,
+page_orientation(
+    can_do=(
+        "Put two to six experimental runs on the same axes and see which is actually better "
+        "rather than which you expected to be."
+    ),
+    numbers_from=(
+        "The run folders you select. Each figure is read from the run that produced it."
+    ),
 )
 
 # -------------------- helpers --------------------

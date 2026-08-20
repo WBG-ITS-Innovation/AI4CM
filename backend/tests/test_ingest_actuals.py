@@ -265,7 +265,7 @@ def test_the_scorecard_page_calls_this_module_and_implements_nothing_of_its_own(
     reach is the one that gets used. So the page must call ``validate`` and ``install`` and
     must not carry its own schema, date or SHA comparison.
     """
-    page = (REPO / "frontend" / "pages" / "02_Scorecard.py").read_text(encoding="utf-8")
+    page = (REPO / "frontend" / "pages" / "08_Scorecard.py").read_text(encoding="utf-8")
     assert "from ingest_actuals import" in page
     assert "validate(candidate)" in page
     assert "install(candidate" in page

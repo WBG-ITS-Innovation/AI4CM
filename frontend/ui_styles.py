@@ -126,8 +126,12 @@ def page_header(title: str, subtitle: str = "") -> str:
 
 
 def info_tip(text: str) -> str:
-    """Return HTML for an inline info tip box."""
-    return f'<div class="info-tip">💡 {text}</div>'
+    """Return HTML for an inline info tip box.
+
+    No glyph. The box already has a tint and a border saying it is an aside, so a lightbulb
+    beside it repeated that in a picture and nothing else.
+    """
+    return f'<div class="info-tip">{text}</div>'
 
 
 def glossary_table(rows: list) -> str:
@@ -601,10 +605,13 @@ button[data-testid="stBaseButton-secondary"] {
 }
 
 /* ── Radio pills ────────────────────────────────────────── */
+/* The [role="radiogroup"] step is load-bearing: without it this bordered the widget's own
+   label and its help-tooltip wrapper too, and the tooltip wrapper holds an icon and no
+   text, so it rendered as an empty pill. See test_radio_pills_are_scoped_to_the_options. */
 [data-testid="stRadio"] > div {
     gap: 6px;
 }
-[data-testid="stRadio"] label {
+[data-testid="stRadio"] [role="radiogroup"] label {
     border-radius: 8px;
     border: 1.5px solid #e2e8f0;
     padding: 6px 16px;
@@ -726,16 +733,6 @@ h1 {{ font-size: {TYPE['display'][0]}px; line-height: {TYPE['display'][1]}px;
 h2 {{ font-size: {TYPE['title'][0]}px; line-height: {TYPE['title'][1]}px;
       letter-spacing: -0.011em; }}
 h3 {{ font-size: {TYPE['lede'][0]}px; line-height: {TYPE['lede'][1]}px; }}
-
-/* ── app header: logo + name + subtitle ─────────────────────────────────────── */
-.ds-appbar {{ display:flex; align-items:center; gap:14px; padding:2px 0 12px;
-  border-bottom:1px solid var(--hairline); margin-bottom:16px; }}
-.ds-appbar .ds-logo {{ flex:0 0 auto; width:44px; height:44px; display:block; }}
-.ds-appbar .ds-logo svg {{ width:100%; height:100%; display:block; }}
-.ds-appbar .ds-name {{ font-size:{TYPE['lede'][0]}px; font-weight:650; color:var(--ink);
-  line-height:1.2; }}
-.ds-appbar .ds-sub {{ font-size:{TYPE['tiny'][0]}px; color:var(--muted); line-height:1.35;
-  max-width:{MEASURE_CH}ch; }}
 
 .ds-card {{ background:#fff; border:1px solid var(--hairline); border-radius:10px;
   padding:14px; margin-bottom:8px; }}
@@ -953,6 +950,25 @@ def page_intro(text: str) -> None:
     _st.markdown(f'<p class="page-intro">{_translate(text)}</p>', unsafe_allow_html=True)
 
 
+def page_orientation(*, can_do: str = "", numbers_from: str = "") -> None:
+    """The two questions every page answers after its intro, in the same shape every time.
+
+    "What you can do here" and "Where these numbers come from". Both optional, because not
+    every page has numbers: the guide page has none, and the data page's numbers are the
+    reader's own file.
+
+    A helper rather than free markdown on each page so the labels cannot drift into nine
+    variations of the same heading, which is what they were.
+    """
+    import streamlit as _st
+
+    if can_do:
+        _st.markdown(f"**{_translate('What you can do here.')}** {_translate(can_do)}")
+    if numbers_from:
+        _st.markdown(
+            f"**{_translate('Where these numbers come from.')}** {_translate(numbers_from)}")
+
+
 #: Every term a reader might meet, and what it means in words they already have.
 #:
 #: One definition each, used by the tooltips, the expanders and the guide page, so a term
@@ -966,9 +982,10 @@ GLOSSARY = {
         "data refits it without ever re-choosing it."
     ),
     "exploratory": (
-        "A run somebody launched to see what would happen. It is never published, never "
-        "written to the official forecast, and never entered in the scorecard, and every "
-        "page that produces one says so while it is showing it."
+        "A run you launched yourself to see what a model would do. It is measured on the "
+        "training and development data only, it is never published, it is never written to the "
+        "official forecast, and it never enters the scorecard. Every page that produces one "
+        "says so while it is showing it."
     ),
     "baseline": (
         "A deliberately simple rule that every model is measured against, such as assuming "
@@ -977,7 +994,9 @@ GLOSSARY = {
     ),
     "skill": (
         "How much smaller a model's typical error is than the baseline's, as a percentage. "
-        "40% means its errors are 40% smaller than assuming the last known value repeats."
+        "The baseline holds the last known figure flat, so at this project's horizon of five "
+        "working days it is the figure from five working days earlier. 40% means the model's "
+        "errors are 40% smaller than that."
     ),
     "MASE": (
         "A model's error divided by the error of repeating the same weekday from the "
@@ -990,9 +1009,9 @@ GLOSSARY = {
         "seen."
     ),
     "sealed window": (
-        "The most recent stretch of history, held back and read once at the end. It is the "
-        "single clean final reading this project has, so no experiment is allowed to touch "
-        "it and any that tries is refused."
+        "The most recent stretch of history the models never saw while being chosen. We keep "
+        "it untouched so the final score is honest. It can only be spent once, so no "
+        "experiment may be measured on it, and any that tries is refused."
     ),
     "gate": (
         "A check a forecast must pass before it may be published, such as being more "
@@ -1000,10 +1019,11 @@ GLOSSARY = {
         "attached to its verdict, and none can be switched off from this interface."
     ),
     "withheld": (
-        "A verdict meaning the numbers are not offered as a forecast. Either a simple rule "
-        "of thumb was more accurate, in which case they should not be used at all, or the "
-        "model could not show it anticipates individual days, in which case they are a "
-        "guide to the typical level and nothing more."
+        "Withheld means we do not offer the numbers as a forecast. It happens for one of two "
+        "reasons. Either a simple rule of thumb was more accurate, so the numbers should not "
+        "be used at all. Or the model could not show that it anticipates individual days, so "
+        "the numbers are a guide to the typical level and nothing more. The page always says "
+        "which of the two applies."
     ),
     "P10": "The low end of the published range. The actual figure should fall below it "
            "about one day in ten.",
@@ -1011,11 +1031,51 @@ GLOSSARY = {
            "below it.",
     "P90": "The high end of the published range. The actual figure should fall above it "
            "about one day in ten.",
+    "train and dev": (
+        "The two earliest stretches of the history. Train is what a model learns from. Dev is "
+        "the next stretch, used to compare models and pick between them. Everything you launch "
+        "from the Lab is measured on these two and nothing later."
+    ),
+    "horizon h": (
+        "How many working days ahead a forecast reaches. At h=1 it predicts the next working "
+        "day; at h=5 it predicts five working days out. The further ahead it reaches, the wider "
+        "its honest range has to be. Official forecasts use h=5 and only h=5, because that is "
+        "the one horizon everything here was measured at."
+    ),
+    "run folder": (
+        "The folder one run writes everything into, named for what it ran and when. It holds "
+        "the predictions, the metrics, the leaderboard, the plots, and a record of the exact "
+        "configuration it ran with. Nothing is overwritten: a second run gets its own folder."
+    ),
     "pending": (
         "A published forecast whose day has not been reported yet, so there is no actual "
         "figure to score it against. It is listed rather than hidden."
     ),
 }
+
+
+# One definition per term, enforced rather than intended.
+#
+# Two terms were defined twice, in HELP and again in GLOSSARY, with different wording. A
+# reader met "withheld" in a tooltip describing one of its two reasons and met it again in an
+# expander describing both, and had no way to know they were the same word. Neither was wrong;
+# they simply were not the same sentence, which is what the house style asks for.
+#
+# GLOSSARY is the definition. HELP keeps its own entries for the terms GLOSSARY does not
+# carry, and defers for the ones it does. test_ui_copy asserts the two never diverge again.
+for _shared in set(HELP) & set(GLOSSARY):
+    HELP[_shared] = GLOSSARY[_shared]
+del _shared
+
+
+def definition(term: str) -> str:
+    """One glossary definition, translated, for use inline in a sentence.
+
+    ``glossary_note`` puts definitions behind an expander and ``term_help`` puts them in a
+    tooltip. This is for the third case: a page that needs to state a definition in the body
+    text, where it must be the SAME sentence rather than a paraphrase of it.
+    """
+    return _translate(GLOSSARY[term]) if term in GLOSSARY else ""
 
 
 def term_help(*terms: str) -> str:
@@ -1123,41 +1183,99 @@ def plotly_chrome(fig, *, showlegend: bool = True, yaxis_tickformat: str = "",
 # with name and subtitle, because a missing mark must not take the page down.
 # ══════════════════════════════════════════════════════════════════════════════
 
-APP_NAME = "Treasury Forecast Lab"
-APP_SUBTITLE = ("Daily cash-flow forecasting for the Georgian Treasury — research and "
-                "evaluation workbench")
+#: The app's name, as one string, shown once per page in the sidebar brand.
+#:
+#: PLACEHOLDER. The final wording is awaiting stakeholder sign-off. It is deliberately one
+#: string rather than a composed lockup so that changing it is this one line plus its
+#: translation, and so a translator sees the whole name in context rather than two fragments.
+#:
+#: No comma and no dash: it reads as a single name, which is what a wordmark is, and it sets
+#: on one line under the seal without needing punctuation to hold it together.
+WORDMARK = "Georgian State Treasury Forecast Lab"
 
 from pathlib import Path as _Path
 
 _LOGO_PATH = _Path(__file__).resolve().parent / "assets" / "logo.svg"
 
 
-def _logo_svg() -> str:
-    """Inline the logo verbatim. Returns "" when the file is absent."""
-    try:
-        raw = _LOGO_PATH.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-    # Strip only an XML prolog/doctype, which cannot appear mid-document. The <svg> element and
-    # everything inside it — paths, fills, viewBox — is passed through untouched.
-    import re as _re
-    raw = _re.sub(r"<\?xml[^>]*\?>", "", raw)
-    raw = _re.sub(r"<!DOCTYPE[^>]*>", "", raw)
-    return raw.strip()
+def brand_css(wordmark: str) -> str:
+    """The stylesheet for the sidebar brand: a light plaque, then the wordmark.
+
+    Two decisions here are not cosmetic.
+
+    **Why the plaque is light.** The sidebar is dark navy, and the emblem is gold on dark navy
+    with white detail. On the dark sidebar its navy passages very nearly disappear. The
+    instruction is that the mark is used as provided and never recoloured, so the fix is to
+    change what sits behind it rather than the mark itself.
+
+    **Why the wordmark is a pseudo-element on the nav.** Streamlit builds the sidebar as
+    stSidebarHeader, then stSidebarNav, then stSidebarUserContent, and an ordinary
+    ``st.sidebar`` call lands in the third of those, below the navigation. Only two things
+    reach above it: ``st.logo``, which writes into the header, and CSS on the nav itself. So
+    the seal goes through ``st.logo`` and the wordmark is drawn on the nav's ::before, which
+    puts it directly under the seal and directly above the list of pages.
+    """
+    return f"""
+<style>
+/* the plaque the seal sits on, and the wordmark under it, as one light band */
+[data-testid="stSidebarHeader"] {{
+  background: {TOK['bg']} !important;
+  padding-top: 12px !important;
+  padding-bottom: 4px !important;
+}}
+[data-testid="stSidebarHeader"] [data-testid="stLogo"] {{
+  height: 46px !important; max-height: 46px !important; width: auto !important;
+  margin: 0 0 0 4px !important;
+}}
+[data-testid="stSidebarNav"] {{ position: relative; }}
+[data-testid="stSidebarNav"]::before {{
+  content: "{wordmark}";
+  display: block;
+  background: {TOK['bg']};
+  color: {TOK['ink']} !important;
+  font-size: {TYPE['small'][0]}px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.006em;
+  padding: 0 16px 12px 16px;
+  margin: -1px 0 10px 0;
+  border-bottom: 1px solid {TOK['hairline']};
+}}
+</style>
+"""
+
+
+def render_brand() -> None:
+    """The one brand header for the whole app: the seal, then the wordmark, above the nav.
+
+    Called once per page, after ``st.set_page_config``. Rendered per page because Streamlit
+    reruns each page script on its own; the reader sees one brand in one place.
+
+    ``st.logo`` is handed the emblem's path, so the file is served exactly as it sits on disk:
+    nothing redraws, recolours, crops or regenerates it. If it is absent the wordmark still
+    renders, because a missing mark must not take the sidebar down.
+    """
+    import streamlit as st
+
+    if _LOGO_PATH.exists():
+        st.logo(str(_LOGO_PATH), size="large")
+    # Assigned first, then passed by name. ui_copy's collector reads call arguments, and a
+    # stylesheet written inline would be gathered as page prose and held to the sentence rules.
+    css = brand_css(_translate(WORDMARK, domain="mixed"))
+    st.markdown(css, unsafe_allow_html=True)
 
 
 def app_header(page_title: str = "", page_subtitle: str = "") -> str:
-    """The header for every page: logo, app name, one-line subtitle.
+    """One page title and one subtitle, as plain text. No mark.
 
-    ``page_title``/``page_subtitle`` override the app-level strings for a specific page.
+    The emblem used to sit here, which meant it appeared beside every page name: "Scorecard"
+    and "Lab" each carried a Treasury seal, as though each page were separately issued. The
+    mark belongs to the app, so it is shown once, in the sidebar, by :func:`render_brand`.
+
+    This renders the page's only heading. Every page previously drew a second, larger title
+    of its own immediately below this one, saying much the same thing with an emoji attached.
     """
-    logo = _logo_svg()
-    logo_html = f'<span class="ds-logo">{logo}</span>' if logo else ""
-    name = _translate(page_title or APP_NAME, domain="mixed")
-    sub = _translate(page_subtitle or APP_SUBTITLE, domain="mixed")
-    return (f'<div class="ds-appbar">{logo_html}'
-            f'<span><span class="ds-name">{name}</span><br>'
-            f'<span class="ds-sub">{sub}</span></span></div>')
+    return page_header(page_title or WORDMARK, page_subtitle)
 
 
 def render_app_header(page_title: str = "", page_subtitle: str = "") -> None:

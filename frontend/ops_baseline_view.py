@@ -86,6 +86,25 @@ DEFAULT_DATA = BACKEND / "data" / "processed" / "master_daily_clean_treasury.csv
 
 #: Plain-words form of ``ops_baseline.REASON_STOCK``. The wording follows that module's reasoning
 #: rather than restating its sentence, because this one is read by a non-specialist.
+def _t(text: str) -> str:
+    """The selected language's version of ``text``, or ``text`` itself.
+
+    These five strings reached the reader untranslated: they are module constants returned to
+    a caller that renders them, so nothing on the page had a chance to translate them and the
+    Georgian coverage figure could not see them either.
+
+    Translated here, at the point of return, rather than at each call site. Two pages render
+    them and both would have had to remember; one place cannot be forgotten. Imported inside
+    the function, so this module still imports without streamlit or the i18n layer present.
+    """
+    try:
+        from i18n import t
+
+        return t(text)
+    except Exception:                              # noqa: BLE001 - copy, not logic
+        return text
+
+
 REASON_STOCK = (
     "There is no Ops baseline for a balance. The Treasury's planning method works by taking a "
     "year's total and splitting it across the months, and a balance is a level on a day rather "
@@ -204,11 +223,11 @@ def unavailable_reason(target: str, base_dir: Path) -> Optional[str]:
     Checked before any work, so the cases that need no computation do not pay for it.
     """
     if _is_stock(target):
-        return REASON_STOCK
+        return _t(REASON_STOCK)
     if not (Path(base_dir) / "predictions_long.csv").exists():
-        return REASON_NO_PREDICTIONS
+        return _t(REASON_NO_PREDICTIONS)
     if _ops_module() is None:
-        return REASON_NO_BACKEND
+        return _t(REASON_NO_BACKEND)
     return None
 
 
@@ -242,7 +261,7 @@ def compute(base_dir: Path, target: str,
         keep = target_dates.notna()
         target_dates, origins = target_dates[keep], origins[keep]
         if not len(target_dates):
-            return None, REASON_NO_PREDICTIONS
+            return None, _t(REASON_NO_PREDICTIONS)
 
         # Recorded, not refused: a report over the holdout is allowed and is logged. Usually a
         # no-op, because UI-launched runs are bound to train and dev.
@@ -263,10 +282,11 @@ def compute(base_dir: Path, target: str,
             if pd.notna(value):
                 values[td] = float(value)
     except Exception as exc:                           # noqa: BLE001 - a chart, not logic
-        return None, f"The Ops baseline could not be worked out: {type(exc).__name__}: {exc}"
+        return None, (_t("The Ops baseline could not be worked out.")
+                      + f" {type(exc).__name__}: {exc}")
 
     if not values:
-        return None, REASON_NO_WINDOW
+        return None, _t(REASON_NO_WINDOW)
     return pd.Series(values).sort_index(), None
 
 
