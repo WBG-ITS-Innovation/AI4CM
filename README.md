@@ -233,7 +233,7 @@ Two commands, one per environment.
 ./backend/.venv/bin/python -m pytest -q
 ```
 
-**Expect 1329 passed, 19 skipped.** Takes about 10 minutes.
+**Expect 1329 passed, 20 skipped.** Takes about 10 minutes.
 
 ```
 ./frontend/.venv/bin/python -m pytest frontend/tests -q
@@ -243,8 +243,9 @@ Two commands, one per environment.
 
 The first command collects **both** suites, because `pytest.ini` lists
 `backend/tests` and `frontend/tests` as its test paths. Under the backend interpreter the
-frontend tests that need Streamlit skip themselves cleanly, which is most of the 19
-skips.
+frontend tests that need Streamlit skip themselves cleanly, which is half of the 20
+skips. The other half is a lint that skips per helper module when the module has no i18n
+import to check.
 The second command runs the frontend suite under the interpreter that has Streamlit, where
 they all execute. So the two numbers are not comparable and neither is a subset of the
 other.
