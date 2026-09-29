@@ -1,86 +1,90 @@
-"""A gate verdict has three states, and the page must not flatten it to two.
+"""A gate verdict has three states, and no page may flatten it to two.
 
 The bug this holds down
 -----------------------
 ``dev_credentials.gates.<name>.passed`` is tri-state. ``true`` and ``false`` are
-verdicts; ``null`` means the check was never run. Every champion recipe in the
-registry carries ``coverage.passed = null``, because those models report no
-prediction intervals, so their calibration could not be measured.
+verdicts; ``null`` means the check was never run. Every champion recipe in the registry
+carries ``coverage.passed = null``, because those models report no prediction intervals,
+so their calibration could not be measured.
 
-The page used to render the field with ``"passed" if g.get("passed") else "failed"``,
-which reports "failed" for all three of them -- a result the Lab never obtained.
-Worse, the reason line printed directly beneath said the opposite: "this model
-reports no prediction intervals, so their calibration was not measured". The badge
-argued with its own caption, and the badge is the part a reader believes.
+Two pages rendered the field with ``"passed" if g.get("passed") else "failed"``, which
+reports "failed" for all three of them -- a result the Lab never obtained. Both then
+printed the reason immediately afterwards: "this model reports no prediction intervals,
+so their calibration was not measured". The verdict argued with its own caption, and the
+verdict is the part a reader believes.
 
-These tests are about the mapping only. They deliberately avoid rendering the page,
-so they need neither Streamlit nor a populated ``forecasts/published/``.
+It was fixed on the Forecast page first and missed on the Documentation page, because the
+mapping was written inline in both. That is why it now lives in one place, and why the
+last test here scans every page rather than the two known ones.
 """
 from __future__ import annotations
 
-import ast
+import re
+import sys
 from pathlib import Path
 
 import pytest
 
 FRONTEND = Path(__file__).resolve().parents[1]
-PAGE = FRONTEND / "pages" / "07_Forecast.py"
-SOURCE = PAGE.read_text(encoding="utf-8")
+sys.path.insert(0, str(FRONTEND))
+
+PAGES = sorted((FRONTEND / "pages").glob("*.py"))
+
+#: The shape of the bug: a truthiness test over `passed` cannot tell False from None.
+COLLAPSE = re.compile(r'\(\s*["\']passed["\']\s*\)\s*if\s+\w+\.get\(\s*["\']passed["\']\s*\)')
 
 
-def _gate_verdict_fn():
-    """Pull ``_gate_verdict`` (and the table it reads) out of the page and make it callable.
-
-    Executing the module itself would run the whole Streamlit page. Lifting the two
-    definitions out keeps the test on the real source -- not a copy of it -- while staying
-    independent of any data the page would otherwise need.
-    """
-    tree = ast.parse(SOURCE)
-    wanted = {"_GATE_WORDS_EN", "_gate_verdict"}
-    chunks = []
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in wanted:
-            chunks.append(ast.get_source_segment(SOURCE, node))
-        elif isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id in wanted for t in node.targets):
-            chunks.append(ast.get_source_segment(SOURCE, node))
-    if len(chunks) < 2:
-        pytest.fail(
-            "the Forecast page has no tri-state gate mapping: expected module-level "
-            "`_GATE_WORDS_EN` and `_gate_verdict`, found " + str(len(chunks)) + " of 2")
-    ns = {"_translate": lambda s: s}       # identity: this test is about the mapping
-    exec("\n\n".join(chunks), ns)          # noqa: S102 - the source under test
-    return ns["_gate_verdict"]
+def _helper():
+    try:
+        from format_gel import gate_verdict
+    except ImportError:
+        pytest.fail("format_gel has no `gate_verdict`: gate outcomes are still being "
+                    "mapped with a truthiness test inside the pages")
+    return gate_verdict
 
 
 def test_a_gate_that_was_never_tested_is_not_reported_as_failed():
     """``None`` is the whole point: it must not land on either verdict."""
-    verdict = _gate_verdict_fn()
+    verdict = _helper()
     assert verdict(None) == "not tested"
     assert verdict(None) != "failed"
     assert verdict(None) != "passed"
 
 
 def test_true_and_false_still_read_as_before():
-    """The fix must not disturb the two states that were already right."""
-    verdict = _gate_verdict_fn()
+    verdict = _helper()
     assert verdict(True) == "passed"
     assert verdict(False) == "failed"
 
 
 def test_an_unrecognised_value_is_not_reported_as_a_pass():
     """An artifact that grows a new value must fail safe, not claim a verdict it lacks."""
-    verdict = _gate_verdict_fn()
+    verdict = _helper()
     assert verdict("maybe") == "not tested"
 
 
-def test_the_page_no_longer_collapses_the_gate_to_a_boolean():
-    """The original expression, named so it cannot come back unnoticed.
-
-    A truthiness test over ``passed`` cannot distinguish ``False`` from ``None``; any
-    return of this shape is the bug returning.
-    """
-    collapsed = '_translate("passed") if g.get("passed") else _translate("failed")'
-    assert collapsed not in SOURCE, (
+def test_the_forecast_page_no_longer_collapses_the_gate_to_a_boolean():
+    source = (FRONTEND / "pages" / "07_Forecast.py").read_text(encoding="utf-8")
+    assert not COLLAPSE.search(source), (
         "07_Forecast.py is collapsing a tri-state gate with a truthiness test again; "
         "`passed=None` renders as 'failed'")
+
+
+def test_the_documentation_page_no_longer_collapses_the_gate_to_a_boolean():
+    source = (FRONTEND / "pages" / "09_Documentation.py").read_text(encoding="utf-8")
+    assert not COLLAPSE.search(source), (
+        "09_Documentation.py is collapsing a tri-state gate with a truthiness test again; "
+        "`passed=None` renders as 'failed'")
+
+
+def test_no_page_re_implements_the_gate_mapping():
+    """The generalisation of the two tests above.
+
+    The Documentation page kept the bug for as long as it did because the mapping was
+    written out inline in each page, so fixing one said nothing about the other. Scanning
+    every page means a third copy cannot appear quietly.
+    """
+    offenders = [p.name for p in PAGES if COLLAPSE.search(p.read_text(encoding="utf-8"))]
+    assert not offenders, (
+        "these pages map a tri-state gate with a truthiness test instead of calling "
+        f"format_gel.gate_verdict: {offenders}")

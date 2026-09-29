@@ -26,6 +26,23 @@ NOT_VERIFIED = "not independently verified"
 UNIT_LABEL = "million lari"
 UNIT_SHORT = "M GEL"
 
+#: Gate outcomes are tri-state, and the third state is not a failure. ``None`` means the
+#: check was never run -- for ``coverage`` that is every champion recipe, because a model
+#: reporting no prediction intervals has no calibration to measure. An unrecognised value
+#: belongs here too: a gate we cannot read is a gate we have not verified, never a pass.
+GATE_WORDS_EN = {True: "passed", False: "failed", None: "not tested"}
+
+
+def gate_verdict(passed: Any) -> str:
+    """The word for a gate outcome, in the reader's language. ``None`` is not a failure.
+
+    Lives here, and not in the page that renders it, because it was written out inline in
+    two pages and fixing one said nothing about the other: the Documentation page went on
+    reporting "failed" for unmeasured checks after the Forecast page had stopped.
+    """
+    from i18n import t as _t
+    return _t(GATE_WORDS_EN.get(passed, "not tested"))
+
 
 def is_missing(value: Any) -> bool:
     """True for None, NaN, empty string, and the strings pandas writes for nulls."""

@@ -113,7 +113,7 @@ def load_all() -> Optional[Dict]:
         return None
 
 
-from format_gel import NOT_REPORTED, UNIT_LABEL, pct_points  # noqa: E402
+from format_gel import NOT_REPORTED, UNIT_LABEL, gate_verdict, pct_points  # noqa: E402
 from format_gel import gel_millions as m  # noqa: E402
 
 
@@ -173,20 +173,6 @@ _VERDICT_WORDS_EN = {
 def _verdict_words(code: str) -> str:
     """A verdict in the reader's own words, in the reader's own language."""
     return _translate(_VERDICT_WORDS_EN.get(code, code))
-
-
-#: Gate outcomes are tri-state, and the third state is not a failure. ``None`` means the
-#: check was never run -- for ``coverage`` that is every champion recipe, because a model
-#: reporting no prediction intervals has no calibration to measure. Rendering that as
-#: "failed" asserts a result the Lab never obtained, and contradicts the reason line printed
-#: directly beneath it. An unrecognised value falls here too: a gate we cannot read is a
-#: gate we have not verified, never a pass.
-_GATE_WORDS_EN = {True: "passed", False: "failed", None: "not tested"}
-
-
-def _gate_verdict(passed) -> str:
-    """The word for a gate outcome, in the reader's language. ``None`` is not a failure."""
-    return _translate(_GATE_WORDS_EN.get(passed, "not tested"))
 
 
 class _VerdictWords(dict):
@@ -684,7 +670,7 @@ with _tab_read:
         gcols = st.columns(len(gates))
         for col, (key, g) in zip(gcols, gates.items()):
             with col:
-                verdict = _gate_verdict(g.get("passed"))
+                verdict = gate_verdict(g.get("passed"))
                 st.markdown(f"**{g.get('name', key)}**: {verdict}")
                 st.caption(g.get("reason_plain", ""))
 
