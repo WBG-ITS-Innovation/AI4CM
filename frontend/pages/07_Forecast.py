@@ -113,7 +113,7 @@ def load_all() -> Optional[Dict]:
         return None
 
 
-from format_gel import NOT_REPORTED, UNIT_LABEL, pct_points  # noqa: E402
+from format_gel import NOT_REPORTED, UNIT_LABEL, gate_verdict, pct_points  # noqa: E402
 from format_gel import gel_millions as m  # noqa: E402
 
 
@@ -670,7 +670,7 @@ with _tab_read:
         gcols = st.columns(len(gates))
         for col, (key, g) in zip(gcols, gates.items()):
             with col:
-                verdict = _translate("passed") if g.get("passed") else _translate("failed")
+                verdict = gate_verdict(g.get("passed"))
                 st.markdown(f"**{g.get('name', key)}**: {verdict}")
                 st.caption(g.get("reason_plain", ""))
 

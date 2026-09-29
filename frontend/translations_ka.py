@@ -73,6 +73,7 @@ TRANSLATIONS = {
     # worse than an untranslated one a reader can still read in English.
     "passed": "გაიარა",
     "failed": "ვერ გაიარა",
+    "not tested": "არ შემოწმებულა",
     "Results": "შედეგები",
     "Yes": "დიახ",
     "No": "არა",

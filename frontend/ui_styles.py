@@ -790,6 +790,39 @@ def ds_metric(label: str, value: str, *, sub: str = "", missing: bool = False) -
             f'<p class="ds-value">{value}</p>{subhtml}</div>')
 
 
+def color_with_alpha(color: str, alpha: float) -> str:
+    """``color`` as an ``rgba()`` string at ``alpha``, whatever notation it arrives in.
+
+    Plotly's qualitative palettes are not all one notation -- ``Set2`` is ``rgb()`` strings
+    while the design tokens in this module are hex -- so a caller that assumes either one
+    breaks on the other. The interval band assumed hex and raised ``ValueError`` on every
+    draw, because the palette it was handed is entirely ``rgb()``.
+
+    Raises ``ValueError`` on anything it cannot read. Substituting a default colour would
+    turn a palette change into a silently wrong chart, and a shaded band is not worth that.
+    """
+    text = str(color).strip()
+    if text.startswith("#"):
+        digits = text[1:]
+        if len(digits) == 3:                      # #abc is shorthand for #aabbcc
+            digits = "".join(c * 2 for c in digits)
+        if len(digits) != 6:
+            raise ValueError(f"unrecognised hex colour: {color!r}")
+        try:
+            r, g, b = (int(digits[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            raise ValueError(f"unrecognised hex colour: {color!r}") from None
+    elif text.lower().startswith("rgb"):
+        try:
+            inner = text[text.index("(") + 1:text.rindex(")")]
+            r, g, b = (int(round(float(part))) for part in inner.split(",")[:3])
+        except (ValueError, IndexError):
+            raise ValueError(f"unrecognised rgb colour: {color!r}") from None
+    else:
+        raise ValueError(f"unrecognised colour notation: {color!r}")
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def gate_badge_tri(state: str, *, label: str = "") -> str:
     """Tri-state gate badge: passed / failed / never verified.
 

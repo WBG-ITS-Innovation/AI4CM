@@ -65,6 +65,7 @@ from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "backend"))
 
 
+from format_gel import gate_verdict  # noqa: E402
 from format_gel import gel_millions as _gel_m  # noqa: E402
 from format_gel import (NOT_REPORTED, UNIT_LABEL, gel_millions, number, pct,  # noqa: E402
                         pct_points, ratio)
@@ -142,7 +143,7 @@ def _render_registry() -> None:
 
             st.markdown("**Checks**")
             for key, g in cred["gates"].items():
-                verdict = _t("passed") if g.get("passed") else _t("failed")
+                verdict = gate_verdict(g.get("passed"))
                 st.markdown(f"- **{g.get('name', key)}**, {verdict}. "
                             f"{g.get('reason_plain', '')}")
                 if g.get("corroboration"):

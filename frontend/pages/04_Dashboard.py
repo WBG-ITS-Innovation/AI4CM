@@ -19,6 +19,7 @@ from ui_styles import (
     COLORS,
     inject_design_system, ds_metric, gate_badge_tri, reading_this_chart,
     empty_state, plotly_layout, plotly_chrome, HELP, HOVER_BAR_PCT,
+    color_with_alpha,
 )
 from format_gel import (NOT_REPORTED, NOT_VERIFIED, UNIT_LABEL, gel_millions,
                         is_missing, number, pct, pct_points)
@@ -707,7 +708,7 @@ with tab_overlay:
                 go.Scatter(
                     x=s_pi_lo.index, y=s_pi_lo.values, name="PI lo", mode="lines",
                     fill="tonexty", line=dict(width=0),
-                    fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.15)",
+                    fillcolor=color_with_alpha(color, 0.15),
                     showlegend=False, hoverinfo="skip",
                 ),
             ])
