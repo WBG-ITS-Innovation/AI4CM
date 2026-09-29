@@ -13,7 +13,7 @@
 #   same day recreates the same dated folder from scratch.
 #
 # Overridable via environment variables (defaults in parentheses):
-#   FAMILIES        which families to run   (A_STAT B_ML E_QUANTILE C_DL)
+#   FAMILIES        which families to run   (A_STAT B_ML C_DL E_QUANTILE)
 #   TG_TARGET       target series           (Revenues)
 #   TG_CADENCE      Daily/Weekly/Monthly    (Daily)
 #   TG_HORIZON      forecast horizon        (5)
@@ -43,7 +43,11 @@ fi
 source "$VENV_ACTIVATE"
 
 # ── Configuration (all overridable via the environment) ──
-FAMILIES="${FAMILIES:-A_STAT B_ML E_QUANTILE C_DL}"
+# C_DL runs before E_QUANTILE deliberately. The script is `set -e`, so the first family
+# to abort ends the run, and E_QUANTILE currently aborts: its evaluation window points
+# into the sealed holdout, which selection refuses. That is an open decision, not a typo,
+# so until it is settled C_DL goes first rather than being lost to an unrelated failure.
+FAMILIES="${FAMILIES:-A_STAT B_ML C_DL E_QUANTILE}"
 TG_TARGET="${TG_TARGET:-Revenues}"
 TG_CADENCE="${TG_CADENCE:-Daily}"
 TG_HORIZON="${TG_HORIZON:-5}"
@@ -130,7 +134,11 @@ run_family() {
       ;;
     B_ML)
       runner="run_b_ml_univariate.py"
-      overrides='{"folds":1,"min_train_years":4}'
+      # Bound evaluation to the selectable window. B_ML crowns a champion, and
+      # `assert_selection_free` sits immediately before `select_best_model`: with no
+      # eval_end the folds run to the end of the data, every row past 2024-12-31 is TEST
+      # or LIVE, and the whole run is refused. DEV ends 2024-12-31 (evaluation_windows.py).
+      overrides='{"folds":1,"min_train_years":4,"eval_end":"2024-12-31"}'
       ;;
     E_QUANTILE)
       runner="run_e_quantile_daily_univariate.py"

@@ -63,7 +63,11 @@ def runnable_families() -> list[str]:
 # ── enumerability ───────────────────────────────────────────────────────────────────────
 
 def test_the_runner_family_list_is_readable():
-    assert runnable_families() == ["A_STAT", "B_ML", "E_QUANTILE", "C_DL"]
+    # The order is load-bearing and is asserted, with its reason, by
+    # test_runner_script_vars.test_a_later_family_is_not_blocked_by_an_earlier_abort:
+    # the script is `set -e`, so C_DL runs before E_QUANTILE rather than being lost to
+    # an E_QUANTILE abort. This test is about the list being readable and complete.
+    assert runnable_families() == ["A_STAT", "B_ML", "C_DL", "E_QUANTILE"]
 
 
 def test_every_champion_crowning_family_is_enumerable(pool):

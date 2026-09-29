@@ -124,6 +124,46 @@ def zip_outputs(out_dir: Path) -> bytes:
 # Cross-run comparison helpers
 # ---------------------------------------------------------------------------
 
+def best_metric_row(metr, target=None, horizon=None):
+    """The row for a run's best model, or ``(None, reason)`` saying why there is not one.
+
+    Returns ``(row, None)`` on success and ``(None, reason)`` otherwise, where ``reason`` is
+    a sentence fit to show a reader. Nothing here raises: a run that cannot be compared is a
+    normal state of the world, and the caller needs to say so rather than fall over.
+
+    **Why a long-format run is skipped rather than pivoted.** Every E_QUANTILE run writes
+    ``metrics_long.csv`` with ``model,fold,metric,quantile,value``, which has a ``model``
+    column and no ``MAE``. Indexing ``MAE`` behind a guard that only checked for ``model``
+    is what raised ``KeyError: 'MAE'``. Pivoting it would not help: that file carries
+    ``pinball`` and ``coverage_p10_p90`` only, so none of the columns this table ranks by
+    (MAE, RMSE, sMAPE, R2) exist in it at all, and a pivot would contribute a row of blanks
+    implying a comparison that never happened.
+    """
+    if metr is None or getattr(metr, "empty", True):
+        return None, "No metrics file was written for this run."
+
+    m = metr.copy()
+    if target is not None and "target" in m.columns:
+        m = m[m["target"] == target]
+    if horizon is not None and "horizon" in m.columns:
+        m = m[m["horizon"] == horizon]
+    if m.empty:
+        return None, "This run has no metrics for the selected target and horizon."
+
+    # Without a model column there is nothing to rank, and the first row is the run's only
+    # row -- the behaviour this helper was extracted from, kept deliberately.
+    if "model" not in m.columns:
+        return m.iloc[0], None
+
+    if "MAE" not in m.columns:
+        return None, ("This run reports metrics in long format, with no MAE column to rank "
+                      "models by, so it is not in the table.")
+    if not m["MAE"].notna().any():
+        return None, "Every MAE in this run is blank, so its models cannot be ranked."
+
+    return m.loc[m["MAE"].idxmin()], None
+
+
 def load_run_outputs(run_dir: Path) -> dict:
     """Load standard outputs (predictions, metrics, leaderboard, config) from a run.
 

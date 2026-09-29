@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from utils_frontend import list_runs, load_run_outputs, RUNS_ROOT
+from utils_frontend import best_metric_row, list_runs, load_run_outputs, RUNS_ROOT
 
 try:
     from ui_styles import inject_global_css, page_header
@@ -187,23 +187,12 @@ with tab_metrics:
     st.caption("Side-by-side metrics for each run's best model.")
 
     metric_rows = []
+    not_compared = []          # (run, why) -- named below the table, never dropped in silence
     for run_name, data in runs_with_preds.items():
-        metr = data.get("metr")
-        if metr is None or metr.empty:
+        best_row, why = best_metric_row(data.get("metr"), tgt, hz)
+        if best_row is None:
+            not_compared.append((run_name, why))
             continue
-        m = metr.copy()
-        if "target" in m.columns:
-            m = m[m["target"] == tgt]
-        if "horizon" in m.columns:
-            m = m[m["horizon"] == hz]
-        if m.empty:
-            continue
-
-        # Get best model by MAE
-        if "model" in m.columns:
-            best_row = m.loc[m["MAE"].idxmin()]
-        else:
-            best_row = m.iloc[0]
 
         row = {"Run": run_name, "Best Model": best_row.get("model", "N/A")}
         for metric in ["MAE", "RMSE", "sMAPE", "R2", "Monthly_TOL10_Accuracy",
@@ -238,6 +227,13 @@ with tab_metrics:
             st.plotly_chart(fig_m, use_container_width=True, config={"displaylogo": False})
     else:
         st.info("No metrics available for the selected target/horizon combination.")
+
+    # A run missing from the table is a fact about the run, not about the table. Saying which
+    # runs are absent and why is the difference between an incomplete comparison and one that
+    # looks complete.
+    if not_compared:
+        st.caption("**Not in this table.** "
+                   + " ".join(f"`{run}` — {why}" for run, why in not_compared))
 
 # -------------------- Tab 3: Winner Summary --------------------
 with tab_winner:
