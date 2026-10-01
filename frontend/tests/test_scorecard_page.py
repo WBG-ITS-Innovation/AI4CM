@@ -67,13 +67,23 @@ def _text(at: AppTest) -> str:
 
 def _synthetic_scorecard(path: Path, n_days: int = 5, skill: float = 30.0,
                          hit: bool = True) -> Path:
-    """Clearly-synthetic scored rows. Every identifier says so."""
+    """Clearly-synthetic scored rows. Every identifier says so.
+
+    ``skill`` is honoured in the ERRORS, not only in the per-row column: the persistence error
+    on every row is the model's error scaled so that ``(persistence MAE - MAE) / persistence
+    MAE`` equals ``skill``. Until 2026-10-01 the fixture wrote ``skill`` into the row column
+    while its own errors implied +80% on every row, which only went unnoticed because the page
+    averaged the column rather than reading the aggregate the scorer defines.
+    """
     rows = []
     for target, base in (("Revenues", 4.0e7), ("Expenditure", 5.0e7)):
         for i, day in enumerate(pd.bdate_range("2025-08-07", periods=n_days)):
             p50 = base * (1 + 0.02 * i)
             actual = base * (1 + 0.03 * i)
-            persistence = base * (1 + 0.08 * i)
+            model_error = abs(actual - p50)
+            # persistence error such that (pae - ae) / pae == skill / 100 on every row
+            persistence_error = model_error / (1.0 - skill / 100.0)
+            persistence = actual + persistence_error
             ops = base * (1 + 0.10 * i)
             rows.append({
                 "schema_version": SCORECARD_SCHEMA_VERSION,
@@ -480,3 +490,91 @@ def test_the_verdict_uses_no_metric_the_scorer_did_not_already_write():
     code = "\n".join(ast.get_source_segment(source, n) or "" for n in body)
     for invented in ("polyfit", "rolling", "ttest", "pvalue", "corr(", "std()", "ewm("):
         assert invented not in code, f"the verdict computes something new: {invented!r}"
+
+
+# ---------------------------------------------------------------------------
+# 5. One definition of "better than the naive rule"
+#
+# The scorer defines skill per target as (persistence MAE - MAE) / persistence MAE, in
+# summarize_scorecard. The page used to average the per-row skill column instead, and the
+# health verdict turned on that average. The two disagreed by up to forty points on the same
+# rows in the 2026-09-30 clone exercise (scoring-loop audit, finding F2), because one row with
+# a near-zero persistence error carries a row skill in the hundreds of negative percent and
+# swamps the mean. The aggregate is insensitive to it.
+# ---------------------------------------------------------------------------
+
+def _scorecard_with_one_near_zero_persistence_row(path: Path) -> Path:
+    """Five Revenues rows: the model beats persistence on aggregate, one row says otherwise.
+
+    Four rows: model error 10M against a persistence error of 20M. One row: model error 10M
+    against a persistence error of 10 thousand. Aggregate skill is (16.002M - 10M) / 16.002M,
+    about +37.5%. The mean of the five row skills is about -19,950%.
+    """
+    rows = []
+    base = 4.0e7
+    for i, day in enumerate(pd.bdate_range("2025-08-07", periods=5)):
+        actual = base
+        p50 = base - 1.0e7
+        persistence_error = 2.0e7 if i < 4 else 1.0e4
+        persistence = actual + persistence_error
+        ae, pae = abs(actual - p50), persistence_error
+        rows.append({
+            "schema_version": SCORECARD_SCHEMA_VERSION,
+            "issue_date": "2025-08-06", "target": "Revenues",
+            "recipe_id": "SYNTHETIC-EXAMPLE", "horizon": i + 1,
+            "origin_date": "2025-08-06", "origin_value": persistence,
+            "target_date": str(day.date()),
+            "p10": p50 * 0.5, "p50": p50, "p90": p50 * 1.5, "interval_nominal": 0.8,
+            "y_true": actual, "abs_error": ae, "inside_interval": True,
+            "persistence_pred": persistence, "persistence_abs_error": pae,
+            "skill_vs_ruler_pct": (pae - ae) / pae * 100.0,
+            "persistence_source": "synthetic",
+            "ops_pred": None, "ops_abs_error": None, "skill_vs_ops": None,
+            "ops_source": "synthetic",
+            "scored_in_window": "live", "publication_verdict": "publishable",
+            "point_model": "SYNTHETIC", "interval_model": "SYNTHETIC",
+            "target_transform": "raw", "data_sha_at_issue": "0" * 8,
+            "git_sha_at_issue": "0" * 8, "scored_at_data_sha": "0" * 8,
+        })
+    pd.DataFrame(rows, columns=list(SCORECARD_COLUMNS)).to_csv(path, index=False)
+    return path
+
+
+def test_one_near_zero_persistence_row_does_not_flip_the_health_verdict(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI4CM_SCORECARD",
+                       str(_scorecard_with_one_near_zero_persistence_row(tmp_path / "sc.csv")))
+    text = _text(_render())
+    assert "Holding up." in text, (
+        "the verdict flipped on the average of daily skills; it must read the aggregate")
+    assert "Degrading." not in text
+
+
+def test_the_per_target_skill_is_the_scorers_aggregate_not_an_average_of_daily_skills(
+        tmp_path, monkeypatch):
+    from published_forecasts import summarize_scorecard
+
+    sc = _scorecard_with_one_near_zero_persistence_row(tmp_path / "sc.csv")
+    monkeypatch.setenv("AI4CM_SCORECARD", str(sc))
+    expected = summarize_scorecard(pd.read_csv(sc))["Revenues"]["skill_vs_ruler_pct"]
+    assert 37.0 < expected < 38.0, expected        # the fixture is what it says it is
+
+    metrics = [mt for mt in _render().metric if mt.label == "Better than the naive rule by"]
+    assert len(metrics) == 1
+    assert metrics[0].value == f"{expected:.1f}%", (
+        f"the page shows {metrics[0].value}, the scorer's aggregate is {expected:.1f}%")
+
+
+def test_no_surviving_average_of_daily_skills_goes_unlabelled():
+    """If the page still averages the row column anywhere, the label must say so."""
+    source = PAGE.read_text(encoding="utf-8")
+    averaged = "skill_vs_ruler_pct\"].dropna()" in source or 'skill_vs_ruler_pct"].mean()' in source
+    if averaged:
+        assert "average of daily skills" in source.lower() or "averaged over" in source.lower()
+
+
+def test_the_per_target_block_says_re_issues_count_separately(tmp_path, monkeypatch):
+    """Two issues from one origin are two rows per day, so n can weight one origin twice."""
+    monkeypatch.setenv("AI4CM_SCORECARD", str(_synthetic_scorecard(tmp_path / "sc.csv")))
+    text = _text(_render())
+    assert "counts as a separate prediction" in text
+    assert "from 1 issue(s)" in text
