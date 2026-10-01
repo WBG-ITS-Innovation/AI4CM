@@ -332,11 +332,27 @@ def official_run(target: str, data_path: Path, horizon: int = VALIDATED_HORIZON)
     if not hz["validated"]:
         raise NotOfficial(hz["explanation"])
 
+    r = st["recipe"]
+
+    # The recipe's OWN horizon, not only the requested one. Every credential a recipe carries
+    # was earned at the horizon in its params; attaching them to a forward run at another
+    # horizon is the mislabelling this module's docstring warns about, and until 2026-10-01
+    # nothing compared the two numbers (inference-horizon map, §2.7). Absence is not a
+    # mismatch: a recipe that declares no horizon is judged on the other grounds above.
+    declared = (r.get("params") or {}).get("horizon")
+    if declared is not None and int(declared) != VALIDATED_HORIZON:
+        raise NotOfficial(
+            f"Refusing an official run for {target!r}: its recipe {r['id']!r} declares "
+            f"horizon {int(declared)} in its parameters, but official forecasts are validated "
+            f"at horizon {VALIDATED_HORIZON}. The recipe's credentials were measured at "
+            f"{int(declared)} business days and would be attached to a {VALIDATED_HORIZON}-day "
+            f"forecast they do not describe. Re-run its selection at {VALIDATED_HORIZON}, or "
+            f"use exploratory mode, where no credential is claimed.")
+
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from forward_forecast import Champion, build_provenance, run_forward
 
-    r = st["recipe"]
     champ = Champion(
         target=target, point_model=r["point_model"],
         fiscal_groups=tuple(r["feature_groups"]),
@@ -385,6 +401,55 @@ def exploratory_run(target: str, model: str, data_path: Path,
                              forecasts=fc, reasons=reasons)
 
 
+def current_verdict(target: str, registry: Optional[Dict] = None) -> Optional[str]:
+    """The registry's publication verdict for ``target``, or None when it has no recipe.
+
+    ``registry`` lets a caller pass an already-loaded (or doctored, in a test) registry; by
+    default the tracked ``registry/recipes.json`` is read. Absence is reported as None rather
+    than raised, because a target with no recipe is refused elsewhere, on different grounds.
+    """
+    try:
+        reg = registry if registry is not None else _load_registry()
+        for r in reg.get("recipes", []):
+            if r.get("target") == target:
+                return (r.get("publication") or {}).get("verdict")
+    except Exception:                              # noqa: BLE001 - absence is not a refusal
+        return None
+    return None
+
+
+def _load_registry() -> Dict:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from registry import load_registry
+    return load_registry()
+
+
+def refuse_withheld(target: str, registry: Optional[Dict] = None) -> None:
+    """Raise ``NotOfficial`` when ``target``'s current verdict is ``withheld``.
+
+    THE ONE GUARD every publish path goes through. `withheld` means a documented alternative is
+    more accurate, so publishing the numbers at all would invite a worse decision than not
+    publishing them. That is a different claim from `withheld_as_forecast`, where the numbers
+    remain the best central-tendency estimate and only the event claim is withheld -- those still
+    publish, labelled.
+
+    Until 2026-10-01 this check lived inline in :func:`publish_official`, and the runner
+    (``run_forward_forecast.py --publish``) called ``published_forecasts.publish`` directly, so the
+    two paths disagreed: measured in the disposable clone, the page refused Expenditure and State
+    budget balance while the runner published both (scoring-loop audit, finding F3). The wording
+    is kept in this one place so the two paths cannot drift again; ``test_runner_publish_guard``
+    asserts the sentence appears in exactly one module.
+    """
+    if current_verdict(target, registry) == "withheld":
+        raise NotOfficial(
+            f"Refusing to publish {target!r}: its current verdict is 'withheld', which "
+            f"means a documented trivial benchmark is more accurate than this model. "
+            f"Publishing the numbers would invite a worse decision than publishing nothing. "
+            f"('withheld_as_forecast' still publishes -- there the numbers are the best "
+            f"estimate available and only the event claim is withheld.)")
+
+
 def publish_official(result, *, published_root: Optional[Path] = None,
                      forward_dir: Optional[Path] = None,
                      issue_date: Optional[str] = None) -> Path:
@@ -393,23 +458,8 @@ def publish_official(result, *, published_root: Optional[Path] = None,
     The type check is the boundary: an exploratory result cannot be published by passing a flag,
     because it is a different type with no publish path.
     """
-    # P2 follow-up: `withheld` means a documented alternative is more accurate, so publishing the
-    # numbers at all would invite a worse decision than not publishing them. That is a different
-    # claim from `withheld_as_forecast`, where the numbers remain the best central-tendency
-    # estimate and only the event claim is withheld -- those still publish, labelled.
     if getattr(result, "is_official", False):
-        from registry import recipe_for
-        try:
-            verdict = recipe_for(result.target)["publication"]["verdict"]
-        except Exception:                          # noqa: BLE001 - absence is not a refusal
-            verdict = None
-        if verdict == "withheld":
-            raise NotOfficial(
-                f"Refusing to publish {result.target!r}: its current verdict is 'withheld', which "
-                f"means a documented trivial benchmark is more accurate than this model. "
-                f"Publishing the numbers would invite a worse decision than publishing nothing. "
-                f"('withheld_as_forecast' still publishes -- there the numbers are the best "
-                f"estimate available and only the event claim is withheld.)")
+        refuse_withheld(result.target)
 
     if not getattr(result, "is_official", False):
         raise NotOfficial(

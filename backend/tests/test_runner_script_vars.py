@@ -95,12 +95,40 @@ def test_b_ml_bounds_evaluation_to_the_selectable_window():
         f"holdout at {TEST_START}")
 
 
+def test_e_quantile_selects_only_inside_the_dev_window():
+    """E_QUANTILE chooses a best model, so its evaluation window must sit inside DEV.
+
+    Its override used to be ``{"eval_start": "2025-01-01"}`` with no end: a window aimed into
+    the sealed holdout, which ``assert_selection_free`` refused on every daily run
+    (2026-09-29 audit, open decision; resolved 2026-10-01 as Option A). The window is now
+    ``DEV.start .. DEV.end``, which on the business-day index gives 262 evaluation points in
+    53 five-day blocks, clearing the ~150 the script's comment asks for. Both bounds are
+    compared against the window constants, so moving the split moves this test with it.
+    """
+    import json
+    import sys
+    sys.path.insert(0, str(SCRIPT.resolve().parents[1] / "backend"))
+    from evaluation_windows import DEV, TEST_START
+
+    overrides = json.loads(_overrides_for("E_QUANTILE"))
+    assert "eval_start" in overrides and "eval_end" in overrides, (
+        "E_QUANTILE must bound its evaluation at both ends; a missing end runs to the end of "
+        "the data, a missing start lets the tiler fold wherever it likes")
+    assert overrides["eval_start"] >= DEV.start, (
+        f"E_QUANTILE starts evaluating at {overrides['eval_start']}, before DEV ({DEV.start})")
+    assert overrides["eval_end"] <= DEV.end < TEST_START, (
+        f"E_QUANTILE evaluates to {overrides['eval_end']}, which reaches past DEV ({DEV.end}) "
+        f"toward the sealed holdout at {TEST_START}")
+
+
 def test_a_later_family_is_not_blocked_by_an_earlier_abort():
     """The script runs under ``set -e``, so family order decides what a failure costs.
 
-    E_QUANTILE currently aborts (its own eval window points into TEST, which is an open
-    decision, not fixed here). While it sits ahead of C_DL in the default order, that abort
-    also costs the C_DL run, which is unrelated to it and would otherwise succeed.
+    E_QUANTILE aborted on every default run until its window was bounded to DEV
+    (``test_e_quantile_selects_only_inside_the_dev_window``). While it sat ahead of C_DL in
+    the default order, that abort also cost the C_DL run, which is unrelated to it. The order
+    is kept: any family's abort should cost only the families after it, and the one with an
+    open history of aborting belongs last.
     """
     text = SCRIPT.read_text()
     default = re.search(r'FAMILIES="\$\{FAMILIES:-([^}"]*)\}"', text)
