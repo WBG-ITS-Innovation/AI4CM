@@ -19,8 +19,8 @@ import pandas as pd
 BACKEND = Path(__file__).resolve().parent
 sys.path.insert(0, str(BACKEND))
 
-from forward_forecast import (DEFAULT_OUT, Champion, build_provenance, run_forward,  # noqa: E402
-                             write_artifacts)
+from forward_forecast import (DEFAULT_OUT, Champion, build_provenance,  # noqa: E402
+                             holdout_ledger_length, run_forward, write_artifacts)
 from registry import load_registry  # noqa: E402
 
 DATA = str(BACKEND / "data" / "processed" / "master_daily_clean_treasury.csv")
@@ -44,6 +44,9 @@ def champions_from_registry() -> list:
 
 def main(publish: bool = False) -> int:
     champs = champions_from_registry()
+    # The holdout ledger's length before anything is fit. build_provenance reads it again
+    # afterwards; the difference is test_window_touched, measured rather than asserted.
+    ledger_before = holdout_ledger_length()
     raw = pd.read_csv(DATA)
     print(f"[forward] data through {pd.to_datetime(raw['date']).max().date()}, "
           f"{len(raw)} rows")
@@ -60,7 +63,7 @@ def main(publish: bool = False) -> int:
                   f"P50={r['p50']:>18,.0f}  [{r['p10']:>18,.0f} .. {r['p90']:>18,.0f}]")
 
     forecasts = pd.concat(frames, ignore_index=True)
-    prov = build_provenance(DATA, champs)
+    prov = build_provenance(DATA, champs, ledger_before=ledger_before)
 
     # Gate verdicts are DEV credentials, carried by recipe_id -- never recomputed on
     # forward dates, which have no truth.

@@ -334,7 +334,8 @@ def official_run(target: str, data_path: Path, horizon: int = VALIDATED_HORIZON)
 
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from forward_forecast import Champion, build_provenance, run_forward
+    from forward_forecast import (Champion, build_provenance, holdout_ledger_length,
+                                  run_forward)
 
     r = st["recipe"]
     champ = Champion(
@@ -344,10 +345,13 @@ def official_run(target: str, data_path: Path, horizon: int = VALIDATED_HORIZON)
         recipe_id=r["id"], scaling=r["scaling"],
         transform=r.get("params", {}).get("target_transform", "raw"),
     )
+    # The holdout ledger's length before anything is fit. build_provenance reads it again
+    # afterwards; the difference is test_window_touched.
+    ledger_before = holdout_ledger_length()
     raw = pd.read_csv(data_path)
     sink: List = []
     fc = run_forward(raw, champ, estimator_sink=sink)
-    prov = build_provenance(str(data_path), [champ])
+    prov = build_provenance(str(data_path), [champ], ledger_before=ledger_before)
     gates = {r["id"]: {"target": target,
                        "gates": r.get("dev_credentials", {}).get("gates", {}),
                        "status": r["status"],
