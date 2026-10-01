@@ -114,7 +114,15 @@ NOMINAL_COVERAGE = 0.80
 #:      (``skill_vs_ruler_pct``) and the Treasury's current planning method -- because "better
 #:      than a naive repeat" and "better than what they do today" are different questions and
 #:      only the second is client-facing. Reporting only, never gating.
-SCORECARD_SCHEMA_VERSION = 2
+#: 3 -- (2026-10-01) ``recipe_status``, beside ``publication_verdict``. The verdict column was
+#:      documented as "the gate verdict in force at issue" and was being filled with the
+#:      recipe's registry STATUS ("candidate -- pre-tuning"), which both publish paths write
+#:      into ``gates.json`` under the key ``status``. Measured in the disposable clone: every
+#:      scored row carried the status under the verdict's name (scoring-loop audit, F1).
+#:      ``publication_verdict`` now holds the verdict the issue's own recorded gate flags imply
+#:      (``_verdict_from_recorded_gates``), blank when the issue recorded no flags; the status
+#:      travels under its own name. Rows written under version 2 are not rewritten.
+SCORECARD_SCHEMA_VERSION = 3
 
 #: One scored prediction per row: one target, one horizon, from one issue.
 #:
@@ -174,7 +182,11 @@ SCORECARD_SCHEMA_VERSION = 2
 #:                           the row says which rather than leaving it to be inferred.
 #:
 #: WHAT PRODUCED IT, AND UNDER WHAT CLAIM
-#:   publication_verdict  the gate verdict in force at issue
+#:   publication_verdict  the gate verdict in force at issue, reconstructed from the gate flags
+#:                        the issue's own gates.json records (``_verdict_from_recorded_gates``).
+#:                        Blank when the issue recorded no flags: nothing measured is not a pass.
+#:   recipe_status        the recipe's registry status at issue ("candidate -- pre-tuning"), a
+#:                        different fact from the verdict, which it used to be mistaken for
 #:   point_model          which model produced ``p50``
 #:   interval_model       which model produced ``p10``/``p90``. Distinct from ``point_model``
 #:                        and not cosmetic: measured on the sealed window at the same 80%
@@ -206,7 +218,7 @@ SCORECARD_COLUMNS: Sequence[str] = (
     "ops_pred", "ops_abs_error", "skill_vs_ops", "ops_source",
     "scored_in_window",
     # what produced it, and under what claim
-    "publication_verdict", "point_model", "interval_model", "target_transform",
+    "publication_verdict", "recipe_status", "point_model", "interval_model", "target_transform",
     # reproducibility
     "data_sha_at_issue", "git_sha_at_issue", "scored_at_data_sha",
 )
@@ -682,10 +694,17 @@ def score_published(data_path: Path,
                 truth_cache[target] = _truth_series(data_path, target)
             rec = recipe_by_target.get(target, {})
             rid = rec.get("recipe_id", "")
+            # Two facts from the issue's gates.json, under two names. `status` is the recipe's
+            # registry status, which is what both publish paths write there. The verdict is
+            # reconstructed from the recorded gate flags; it used to be filled with the status
+            # (schema note 3). An issue that recorded no flags gets no verdict, not a pass.
             verdict = ""
+            status = ""
             for g in gates.values():
                 if isinstance(g, dict) and g.get("target") == target:
-                    verdict = g.get("status", "")
+                    status = g.get("status", "")
+                    flags = g.get("gates") or {}
+                    verdict = _verdict_from_recorded_gates(flags) if flags else ""
             base = {
                 "schema_version": SCORECARD_SCHEMA_VERSION,
                 "issue_date": man.get("issue_date", d.name),
@@ -705,6 +724,7 @@ def score_published(data_path: Path,
                 # 0.80, so a change to the quantiles cannot silently redefine the hit flag.
                 "interval_nominal": issue_nominal,
                 "publication_verdict": verdict,
+                "recipe_status": status,
                 "point_model": row.get("point_model", rec.get("point_model", "")),
                 "interval_model": row.get("interval_model", rec.get("interval_model", "")),
                 "target_transform": row.get("target_transform",
@@ -839,11 +859,20 @@ def _verdict_from_recorded_gates(gates: Dict) -> str:
     """Reconstruct the issue-time verdict from the `passed` flags the artifact stores.
 
     `gates.json` records each gate's outcome but never recorded the publication verdict, so
-    this derives it the way the pre-P2 policy did: a failed signal gate withheld the claim
-    while leaving the numbers usable; anything else passing was publishable.
+    this derives it from the flags, under the severity the recorded gate set implies:
+
+    * a failed ``leakage`` gate is ``withheld`` under every policy;
+    * a failed ``accuracy_vs_naive`` gate is ``withheld`` -- that gate exists only in post-P2
+      issues, and under P2 it is the binding accuracy gate (``publication_gates._SEVERITY``).
+      Until 2026-10-01 this function applied the pre-P2 severity to every issue, so a post-P2
+      issue that failed accuracy would have read one step too lenient;
+    * a failed ``signal`` gate withholds the claim while leaving the numbers usable;
+    * any other failure likewise; everything passing is ``publishable``.
+
+    Pre-P2 issues carry no ``accuracy_vs_naive`` flag, so their derivation is unchanged.
     """
     if any(g.get("passed") is False for n, g in gates.items()
-           if n in ("leakage",)):
+           if n in ("leakage", "accuracy_vs_naive")):
         return "withheld"
     if gates.get("signal", {}).get("passed") is False:
         return "withheld_as_forecast"
