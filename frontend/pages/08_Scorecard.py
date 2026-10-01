@@ -364,12 +364,19 @@ def _as_table(g: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _health_verdict(g: pd.DataFrame) -> str:
+def _health_verdict(g: pd.DataFrame, skill_pct: Optional[float]) -> str:
     """Healthy or degrading, from what the scorer already recorded. No new measurement.
 
-    Two questions, both answered from columns that are already in the scorecard:
+    Two questions, both answered from what the scorer already wrote:
 
-      * is it still beating the shared benchmark? ``skill_vs_ruler_pct`` above zero;
+      * is it still beating the shared benchmark? ``skill_pct`` above zero, where ``skill_pct``
+        is the scorer's own per-target aggregate, ``summarize_scorecard``'s
+        ``skill_vs_ruler_pct``: the average persistence error against the average model error.
+        Until 2026-10-01 this averaged the per-row ``skill_vs_ruler_pct`` column instead, and one
+        row with a near-zero persistence error, whose row skill runs to hundreds of negative
+        percent, could flip the verdict on its own while the aggregate stayed positive
+        (scoring-loop audit, finding F2). The two definitions sat under one label; now there is
+        one, and it is the scorer's.
       * is the published range still covering what it claims? ``inside_interval`` near the
         advertised level.
 
@@ -378,8 +385,7 @@ def _health_verdict(g: pd.DataFrame) -> str:
     rows is worse than no verdict. So this says what it can see and says how much it saw.
     """
     n = len(g)
-    skill = g["skill_vs_ruler_pct"].dropna()
-    beats = float(skill.mean()) if len(skill) else None
+    beats = float(skill_pct) if skill_pct is not None and pd.notna(skill_pct) else None
     hit = float(g["inside_interval"].astype(bool).mean()) if n else None
     nominal = (float(g["interval_nominal"].dropna().iloc[0])
                if "interval_nominal" in g.columns and g["interval_nominal"].notna().any()
@@ -446,15 +452,29 @@ if rows.empty or "y_true" not in rows.columns or rows["y_true"].notna().sum() ==
         + " " + _t("The rows that are waiting are listed above.")
     )
 else:
+    # The per-target skill figure is the scorer's own aggregate, read from the same function
+    # that writes load_scoring()'s summary. Computed here from the rows on screen rather than
+    # taken from that summary so a substituted scorecard (AI4CM_SCORECARD) is summarised too.
+    from published_forecasts import summarize_scorecard
+
     scored = rows[rows["y_true"].notna()].copy()
+    _summary = summarize_scorecard(scored)
     st.caption(
         f"{len(scored)} scored prediction(s). {UNIT_LABEL.capitalize()}, except where a "
         f"percentage is shown."
     )
     for target, g in scored.groupby("target"):
         g = g.sort_values("target_date")
+        _agg = _summary.get(str(target), {})
+        _skill_pct = _agg.get("skill_vs_ruler_pct")
         st.markdown(section_header(str(target), f"{len(g)} scored prediction(s)"),
                     unsafe_allow_html=True)
+        st.caption(
+            f"{len(g)} " + _t("scored prediction(s) from") + f" {g['issue_date'].nunique()} "
+            + _t("issue(s). A forecast re-issued from the same origin counts as a separate "
+                 "prediction, so one origin can be weighted several times in the figures "
+                 "below.")
+        )
 
         s1, s2, s3 = st.columns(3)
         with s1:
@@ -468,13 +488,16 @@ else:
                            "so a figure close to 80% is what a well calibrated range looks "
                            "like. Well below it means the range is too narrow.")
         with s3:
-            _skill = g["skill_vs_ruler_pct"].dropna()
             st.metric("Better than the naive rule by",
-                      f"{_skill.mean():.1f}%" if len(_skill) else NOT_REPORTED,
-                      help="Averaged over this target's scored days. The naive rule is "
-                           "assuming the value from five working days earlier repeats.")
+                      f"{_skill_pct:.1f}%" if _skill_pct is not None and pd.notna(_skill_pct)
+                      else NOT_REPORTED,
+                      help="The average error over this target's scored days, measured "
+                           "against the average error of the naive rule. This is the same "
+                           "definition every other skill figure in this project uses. The "
+                           "naive rule is assuming the value from five working days earlier "
+                           "repeats.")
 
-        st.markdown(_health_verdict(g), unsafe_allow_html=False)
+        st.markdown(_health_verdict(g, _skill_pct), unsafe_allow_html=False)
 
         st.plotly_chart(_chart(g, str(target)), use_container_width=True,
                         config={"displaylogo": False})

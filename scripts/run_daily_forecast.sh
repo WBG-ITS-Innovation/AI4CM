@@ -43,10 +43,11 @@ fi
 source "$VENV_ACTIVATE"
 
 # ── Configuration (all overridable via the environment) ──
-# C_DL runs before E_QUANTILE deliberately. The script is `set -e`, so the first family
-# to abort ends the run, and E_QUANTILE currently aborts: its evaluation window points
-# into the sealed holdout, which selection refuses. That is an open decision, not a typo,
-# so until it is settled C_DL goes first rather than being lost to an unrelated failure.
+# The script is `set -e`, so the first family to abort ends the run. C_DL was moved ahead
+# of E_QUANTILE on 2026-09-30 while E_QUANTILE's window still pointed into the sealed
+# holdout and aborted every default run. That window is bounded to DEV now (see its
+# branch below), and the order is kept: an abort should cost only the families after it,
+# and the one with a history of aborting belongs last.
 FAMILIES="${FAMILIES:-A_STAT B_ML C_DL E_QUANTILE}"
 TG_TARGET="${TG_TARGET:-Revenues}"
 TG_CADENCE="${TG_CADENCE:-Daily}"
@@ -142,10 +143,18 @@ run_family() {
       ;;
     E_QUANTILE)
       runner="run_e_quantile_daily_univariate.py"
-      # Evaluate on the shared benchmark window (same as A_STAT/B_ML), not a
-      # hand-picked 2 folds at the series end: skill/coverage need ~150 points
-      # to mean anything.
-      overrides='{"eval_start":"2025-01-01","min_train_years":4}'
+      # Selection never reads the holdout (decision of 2026-10-01, Option A of the
+      # 2026-09-29 audit). This family chooses a best model, so its evaluation window
+      # sits entirely inside DEV: 2024-01-01 .. 2024-12-31, both bounds inclusive by
+      # target date (evaluation_windows.DEV). On the business-day index that is 262
+      # evaluation points in 53 five-day blocks, which clears the ~150 points skill and
+      # coverage need to mean anything. The previous window began 2025-01-01, inside the
+      # sealed holdout, so assert_selection_free refused every default run.
+      #
+      # The TEST-window coverage figure is not produced here. It comes later, in the
+      # scoring session, through the logged report path (require_test_access with
+      # purpose="report"), which is the one sanctioned way to read the holdout.
+      overrides='{"eval_start":"2024-01-01","eval_end":"2024-12-31","min_train_years":4}'
       ;;
     C_DL)
       runner="run_c_dl_quick_univariate.py"
