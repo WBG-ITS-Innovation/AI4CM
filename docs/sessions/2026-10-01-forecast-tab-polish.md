@@ -8,9 +8,11 @@ not on this branch; its findings are quoted here by section where they are relie
 regeneration ran here. The one forward run for evidence ran in the disposable clone on
 synthetic data. Every fix was written failing-first and walked through before the next began.
 
-Five items were asked for. Items 3, 4 and 5 are done. Items 1 and 2 are decisions the brief
-reserved for the user; both are presented at the end of this record with their trade-offs and
-a recommendation, and nothing was written for either.
+Five items were asked for. Items 3, 4 and 5 were done first. Items 1 and 2 were decisions the
+brief reserved for the user; they were presented with their trade-offs (the sections below,
+kept as presented), the user chose option (b) for the tab and the drift test for the
+constant, and both were then implemented failing-first. The implementation and its evidence
+are in "Decisions taken and applied" at the end of this record.
 
 ---
 
@@ -234,14 +236,17 @@ the forecast machinery and dispatches by subprocess, and a future heavy import a
 
 | Suite | Baseline | After |
 |---|---|---|
-| Frontend, `frontend/.venv`, `frontend/tests` | 727 passed, 16 skipped | **727 passed, 16 skipped** |
-| Backend, `backend/.venv`, both test paths | 1345 passed, 20 skipped | **1367 passed, 20 skipped** (1345 + 22), 9 minutes 35 seconds, no segmentation fault |
+| Frontend, `frontend/.venv`, `frontend/tests` | 727 passed, 16 skipped | after items 3 to 5: **727 passed, 16 skipped**; after items 1 and 2: **730 passed, 16 skipped** (727 + 3) |
+| Backend, `backend/.venv`, both test paths | 1345 passed, 20 skipped | after items 3 to 5: **1367 passed, 20 skipped** (1345 + 22), 9 minutes 35 seconds; after items 1 and 2: **1382 passed, 21 skipped** (1345 + 37), 10 minutes 10 seconds; no segmentation fault in either run |
 
-The frontend tally is unchanged because the three new test files live under `backend/tests`;
-the `frontend/tests` invocation does not collect them. The Documentation test was also run
-under the frontend interpreter directly and passes there (6 passed), since it needs no torch.
+After items 3 to 5 the frontend tally was unchanged because those three test files live under
+`backend/tests`, which the `frontend/tests` invocation does not collect; the Documentation
+test was also run under the frontend interpreter directly and passes there (6 passed), since it
+needs no torch. The backend run's extra skip after items 1 and 2 is the new frontend page test
+file, which skips under the backend interpreter as every page test does.
 
-New tests, 22 in all:
+New tests, 37 in all (22 for items 3 to 5, listed here; 15 for items 1 and 2, listed in their
+sections at the end of this record):
 
 * `backend/tests/test_runner_horizon_defaults.py` (10):
   `test_the_runners_with_a_default_are_the_ones_expected`,
@@ -275,6 +280,99 @@ intermittent and environmental, and the full-suite result below is what counts.
 1. `run_a_stat.py falls back to the validated horizon; every runner default pinned`
 2. `Documentation page: the C_DL defaults table states the code's defaults`
 3. `test_window_touched is measured from the holdout ledger, not written as a literal`
-4. this record
+4. this record, first version
+5. `Forecast page: the reading tab shows the newest artifact per line and names its source`
+6. `Drift test: the page's VALIDATED_HORIZON literal must equal the backend constant`
+7. this record, completed
 
-Items 1 and 2 await the user's choice; nothing was written for either.
+---
+
+# Decisions taken and applied, 2026-10-01, later session
+
+The user chose option (b) for the reading tab and the drift test for the horizon constant.
+Both were implemented failing-first on this branch, in that order, with the same rules as
+above: no pipeline, scorer or artifact regeneration here; the one publish for evidence ran in
+the clone.
+
+## 1. The reading tab shows the newest artifact per line, labelled (option b)
+
+**Read-side only.** Nothing new writes anywhere; `forward/latest` keeps its one writer, the
+runner. The page's `load_all` now calls `insights.load_newest_forecasts` instead of
+`load_forward_artifacts`, which is unchanged and still serves `scripts/build_treasury_report.py`
+and `backend/tests/test_insights.py` the runner's own artifact.
+
+**The pick**, in `backend/insights.py` under "THE NEWEST ARTIFACT PER TARGET":
+
+* Candidates are the forward directory (`forward_forecast.csv` + `forward_provenance.json`)
+  and every published issue (`forecast.csv` + `provenance.json`, the same files renamed by
+  `published_forecasts.publish`).
+* They are ordered by the artifact's own `generated_at_utc`. Never by directory name: the
+  runner names an issue by its data date and the page by wall clock, so names do not order.
+  An artifact whose provenance cannot say when it was made sorts last; it cannot claim to be
+  newest. A tie prefers the published copy, the immutable record, which is exactly the case
+  of a runner issue, since `publish` copies the runner's provenance verbatim.
+* Per target, the newest candidate holding that target wins. Every row gains `source`,
+  `source_dir`, `generated_at_utc` and `data_through`; the result keeps `forecasts`,
+  `provenance` and `dir` (those of the newest artifact chosen) so the narrative builder and
+  the footer work unchanged, and adds `sources` and `provenance_by_target`.
+* With no forward run and no published issue it raises the same `FileNotFoundError`, with the
+  same instruction, as before.
+
+**The labels**, in `frontend/pages/07_Forecast.py`: a caption under the four header metrics
+names every artifact in play with its data date; "Data through" shows the newest data date
+among them and its help text says lines can differ; and each line's heading is followed by
+`Source: <label>, generated <date>, data through <date>.` The empty-state warning now says
+neither a forward run nor a published issue was found.
+
+**Clone evidence.** The clone held a forward run from earlier today (three targets, data
+through 2025-08-20) and three published issues. One more page-path publish of Revenues was
+made, dated 2026-10-01, so the store became newer than the forward run for that line only:
+
+```
+Revenues               published issue 2026-10-01   generated 2026-10-01T01:39:22  data through 2025-08-20
+Expenditure            forward run                  generated 2026-10-01T01:18:28  data through 2025-08-20
+State budget balance   forward run                  generated 2026-10-01T01:18:28  data through 2025-08-20
+```
+
+and the page, rendered, printed under the header "The figures below are the newest artifact
+available for each line: forward run (data through 2025-08-20); published issue 2026-10-01
+(data through 2025-08-20)." and under the three lines "Source: published issue 2026-10-01,
+generated 2026-10-01, data through 2025-08-20." then "Source: forward run, generated
+2026-10-01, data through 2025-08-20." twice. On this machine the real store's newest Revenues
+issue (2026-08-16, 00:44 UTC) is thirteen minutes older than the runner's artifact (00:57
+UTC), so the real page shows the forward run for every line, labelled as such.
+
+**Tests.** `backend/tests/test_forward_reading_sources.py` (12), on temporary fixtures only:
+`test_a_newer_published_issue_wins_for_its_target_and_the_forward_run_keeps_the_rest`,
+`test_an_older_published_issue_does_not_displace_a_newer_forward_run`,
+`test_the_pick_is_by_generation_time_never_by_directory_name`,
+`test_a_tie_in_generation_time_prefers_the_published_copy`,
+`test_every_row_carries_its_source_and_data_date`,
+`test_the_sources_block_names_dir_generation_and_data_date_per_target`,
+`test_the_provenance_returned_is_the_newest_chosen_artifacts_and_each_is_kept_per_target`,
+`test_with_no_published_store_the_forward_run_is_used_unchanged`,
+`test_with_no_forward_run_the_published_store_alone_serves`,
+`test_with_neither_the_loader_raises_the_same_actionable_error`,
+`test_an_artifact_without_a_generation_time_never_beats_one_with`,
+`test_the_runner_artifact_loader_still_reads_only_the_forward_directory`.
+`frontend/tests/test_forecast_reading_sources.py` (3), on the real page, skipping when the
+machine holds no artifact: `test_every_line_shown_says_its_source_and_data_date`,
+`test_the_source_captions_match_the_loaders_choice`,
+`test_the_header_says_where_the_numbers_come_from`. All failed first: the backend ones on a
+missing function, the frontend ones on a missing caption.
+
+**Left as it was, on purpose.** The treasury report still reads the runner's artifact alone;
+the brief named the reading tab. The footer's "regenerate with" command still names the runner,
+which is still the way to regenerate all three lines at once.
+
+## 2. One validated horizon: the drift test
+
+`backend/tests/test_validated_horizon_agrees.py` (3). `page_literal` reads
+`frontend/pages/07_Forecast.py` as text and requires exactly one module-level
+`VALIDATED_HORIZON = <n>`; `test_the_page_literal_equals_the_backend_constant` compares it to
+`forecast_modes.VALIDATED_HORIZON`. The two agree today, so that test passes on day one; the
+failing case is proven by `test_the_check_fails_on_a_drifted_literal`, which applies the same
+check to a doctored copy of the page's text with the literal moved by five.
+`test_no_third_copy_of_the_literal_exists` scans `frontend/`, `frontend/pages/`, `backend/`
+and `scripts/` and requires exactly the two known files, so a third copy cannot drift
+unchecked. No module was added and no import crosses the interpreter boundary.
