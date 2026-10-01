@@ -245,8 +245,11 @@ test was also run under the frontend interpreter directly and passes there (6 pa
 needs no torch. The backend run's extra skip after items 1 and 2 is the new frontend page test
 file, which skips under the backend interpreter as every page test does.
 
-New tests, 37 in all (22 for items 3 to 5, listed here; 15 for items 1 and 2, listed in their
-sections at the end of this record):
+New tests, 40 in all: 22 for items 3 to 5, listed here, and 18 for items 1 and 2, listed in
+their sections at the end of this record (12 + 3 in `backend/tests`, 3 in `frontend/tests`).
+The backend suite collects 37 of them; the 3 frontend page tests run only under the frontend
+interpreter. An earlier version of this paragraph said 37 in all and 15 for items 1 and 2,
+which counted the backend-collected tests only; corrected 2026-10-01.
 
 * `backend/tests/test_runner_horizon_defaults.py` (10):
   `test_the_runners_with_a_default_are_the_ones_expected`,
