@@ -385,6 +385,55 @@ def exploratory_run(target: str, model: str, data_path: Path,
                              forecasts=fc, reasons=reasons)
 
 
+def current_verdict(target: str, registry: Optional[Dict] = None) -> Optional[str]:
+    """The registry's publication verdict for ``target``, or None when it has no recipe.
+
+    ``registry`` lets a caller pass an already-loaded (or doctored, in a test) registry; by
+    default the tracked ``registry/recipes.json`` is read. Absence is reported as None rather
+    than raised, because a target with no recipe is refused elsewhere, on different grounds.
+    """
+    try:
+        reg = registry if registry is not None else _load_registry()
+        for r in reg.get("recipes", []):
+            if r.get("target") == target:
+                return (r.get("publication") or {}).get("verdict")
+    except Exception:                              # noqa: BLE001 - absence is not a refusal
+        return None
+    return None
+
+
+def _load_registry() -> Dict:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from registry import load_registry
+    return load_registry()
+
+
+def refuse_withheld(target: str, registry: Optional[Dict] = None) -> None:
+    """Raise ``NotOfficial`` when ``target``'s current verdict is ``withheld``.
+
+    THE ONE GUARD every publish path goes through. `withheld` means a documented alternative is
+    more accurate, so publishing the numbers at all would invite a worse decision than not
+    publishing them. That is a different claim from `withheld_as_forecast`, where the numbers
+    remain the best central-tendency estimate and only the event claim is withheld -- those still
+    publish, labelled.
+
+    Until 2026-10-01 this check lived inline in :func:`publish_official`, and the runner
+    (``run_forward_forecast.py --publish``) called ``published_forecasts.publish`` directly, so the
+    two paths disagreed: measured in the disposable clone, the page refused Expenditure and State
+    budget balance while the runner published both (scoring-loop audit, finding F3). The wording
+    is kept in this one place so the two paths cannot drift again; ``test_runner_publish_guard``
+    asserts the sentence appears in exactly one module.
+    """
+    if current_verdict(target, registry) == "withheld":
+        raise NotOfficial(
+            f"Refusing to publish {target!r}: its current verdict is 'withheld', which "
+            f"means a documented trivial benchmark is more accurate than this model. "
+            f"Publishing the numbers would invite a worse decision than publishing nothing. "
+            f"('withheld_as_forecast' still publishes -- there the numbers are the best "
+            f"estimate available and only the event claim is withheld.)")
+
+
 def publish_official(result, *, published_root: Optional[Path] = None,
                      forward_dir: Optional[Path] = None,
                      issue_date: Optional[str] = None) -> Path:
@@ -393,23 +442,8 @@ def publish_official(result, *, published_root: Optional[Path] = None,
     The type check is the boundary: an exploratory result cannot be published by passing a flag,
     because it is a different type with no publish path.
     """
-    # P2 follow-up: `withheld` means a documented alternative is more accurate, so publishing the
-    # numbers at all would invite a worse decision than not publishing them. That is a different
-    # claim from `withheld_as_forecast`, where the numbers remain the best central-tendency
-    # estimate and only the event claim is withheld -- those still publish, labelled.
     if getattr(result, "is_official", False):
-        from registry import recipe_for
-        try:
-            verdict = recipe_for(result.target)["publication"]["verdict"]
-        except Exception:                          # noqa: BLE001 - absence is not a refusal
-            verdict = None
-        if verdict == "withheld":
-            raise NotOfficial(
-                f"Refusing to publish {result.target!r}: its current verdict is 'withheld', which "
-                f"means a documented trivial benchmark is more accurate than this model. "
-                f"Publishing the numbers would invite a worse decision than publishing nothing. "
-                f"('withheld_as_forecast' still publishes -- there the numbers are the best "
-                f"estimate available and only the event claim is withheld.)")
+        refuse_withheld(result.target)
 
     if not getattr(result, "is_official", False):
         raise NotOfficial(
