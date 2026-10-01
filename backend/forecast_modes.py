@@ -332,11 +332,27 @@ def official_run(target: str, data_path: Path, horizon: int = VALIDATED_HORIZON)
     if not hz["validated"]:
         raise NotOfficial(hz["explanation"])
 
+    r = st["recipe"]
+
+    # The recipe's OWN horizon, not only the requested one. Every credential a recipe carries
+    # was earned at the horizon in its params; attaching them to a forward run at another
+    # horizon is the mislabelling this module's docstring warns about, and until 2026-10-01
+    # nothing compared the two numbers (inference-horizon map, §2.7). Absence is not a
+    # mismatch: a recipe that declares no horizon is judged on the other grounds above.
+    declared = (r.get("params") or {}).get("horizon")
+    if declared is not None and int(declared) != VALIDATED_HORIZON:
+        raise NotOfficial(
+            f"Refusing an official run for {target!r}: its recipe {r['id']!r} declares "
+            f"horizon {int(declared)} in its parameters, but official forecasts are validated "
+            f"at horizon {VALIDATED_HORIZON}. The recipe's credentials were measured at "
+            f"{int(declared)} business days and would be attached to a {VALIDATED_HORIZON}-day "
+            f"forecast they do not describe. Re-run its selection at {VALIDATED_HORIZON}, or "
+            f"use exploratory mode, where no credential is claimed.")
+
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from forward_forecast import Champion, build_provenance, run_forward
 
-    r = st["recipe"]
     champ = Champion(
         target=target, point_model=r["point_model"],
         fiscal_groups=tuple(r["feature_groups"]),
