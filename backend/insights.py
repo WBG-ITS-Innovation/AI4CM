@@ -361,3 +361,122 @@ def load_forward_artifacts(out_dir: Optional[Path] = None) -> Dict:
     prov_p = d / "forward_provenance.json"
     prov = json.loads(prov_p.read_text()) if prov_p.exists() else None
     return {"forecasts": df.to_dict("records"), "provenance": prov, "dir": str(d)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THE NEWEST ARTIFACT PER TARGET, FOR THE READING TAB
+#
+# `load_forward_artifacts` reads one directory, the runner's. A page-launched official run
+# publishes into forecasts/published/<issue>/ and never writes there, so the Forecast page's
+# reading tab kept showing the runner's artifact of weeks before (inference-horizon map, §1.3).
+#
+# Decision of 2026-10-01, read-side only: no second writer for forward/latest. This picks, per
+# target, the newest of the forward run and every published issue, by the artifact's own
+# `generated_at_utc`. Never by directory name: the runner names an issue by its data date and
+# the page by wall clock, so names do not order. A provenance that cannot say when it was made
+# is treated as oldest, because it cannot claim to be newest. A tie prefers the published copy,
+# which is the immutable record; the runner's own publish copies its provenance verbatim, so a
+# published runner issue ties with forward/latest exactly.
+#
+# Every row carries where it came from and what data it was built from, so a stale artifact is
+# visible as such rather than hidden under a current-looking page.
+# ══════════════════════════════════════════════════════════════════════════════
+
+SOURCE_FORWARD = "forward run"
+SOURCE_PUBLISHED = "published issue"
+
+#: Appended to each forecast row by `load_newest_forecasts`, beside the artifact's own columns.
+SOURCE_COLUMNS = ("source", "source_dir", "generated_at_utc", "data_through")
+
+
+def _candidate(kind: str, label: str, d: Path, csv_name: str, prov_name: str) -> Optional[Dict]:
+    """One artifact directory as a candidate, or None when it holds no forecast."""
+    import pandas as pd
+
+    csv = d / csv_name
+    if not csv.exists():
+        return None
+    prov_p = d / prov_name
+    prov = json.loads(prov_p.read_text()) if prov_p.exists() else {}
+    df = pd.read_csv(csv)
+    generated = str(prov.get("generated_at_utc") or "")
+    stamp = pd.to_datetime(generated, utc=True, errors="coerce") if generated else pd.NaT
+    data_through = (prov.get("data") or {}).get("latest_data_date")
+    if not data_through and "origin_date" in df.columns and len(df):
+        data_through = str(pd.to_datetime(df["origin_date"]).max().date())
+    return {"kind": kind, "label": label, "dir": str(d), "frame": df, "provenance": prov,
+            "generated_at_utc": generated, "stamp": stamp, "data_through": data_through}
+
+
+def load_newest_forecasts(forward_dir: Optional[Path] = None,
+                          published_root: Optional[Path] = None) -> Dict:
+    """The newest forecast per target across the forward run and the published store.
+
+    Returns the same keys as :func:`load_forward_artifacts` (``forecasts``, ``provenance``,
+    ``dir``) so the page's existing code keeps working, plus:
+
+    * ``sources``: per target, ``{kind, label, dir, generated_at_utc, data_through}``;
+    * ``provenance_by_target``: the chosen artifact's provenance for each target;
+    * every forecast row carries ``source``, ``source_dir``, ``generated_at_utc`` and
+      ``data_through``.
+
+    ``provenance`` and ``dir`` are those of the newest artifact chosen for any target. Raises
+    the same ``FileNotFoundError`` as before when neither a forward run nor a published issue
+    exists, so a fresh clone gets the same instruction.
+    """
+    import pandas as pd
+
+    from forward_forecast import DEFAULT_OUT
+    from published_forecasts import PUBLISHED_ROOT, list_published
+
+    fwd = Path(forward_dir or DEFAULT_OUT)
+    root = Path(published_root or PUBLISHED_ROOT)
+
+    candidates: List[Dict] = []
+    c = _candidate(SOURCE_FORWARD, SOURCE_FORWARD, fwd, "forward_forecast.csv",
+                   "forward_provenance.json")
+    if c is not None:
+        candidates.append(c)
+    for issue in list_published(root):
+        c = _candidate(SOURCE_PUBLISHED, f"{SOURCE_PUBLISHED} {issue.name}", issue,
+                       "forecast.csv", "provenance.json")
+        if c is not None:
+            candidates.append(c)
+    if not candidates:
+        raise FileNotFoundError(
+            f"no forward run at {fwd} and no published issue under {root}. Generate one with:\n"
+            f"  ./backend/.venv/bin/python backend/run_forward_forecast.py"
+        )
+
+    # Newest first. An unstamped artifact sorts last; on a tie the published copy comes first.
+    def _key(cand: Dict):
+        stamp = cand["stamp"]
+        return (0 if pd.isna(stamp) else 1, stamp if not pd.isna(stamp) else pd.Timestamp(0, tz="UTC"),
+                1 if cand["kind"] == SOURCE_PUBLISHED else 0)
+
+    ordered = sorted(candidates, key=_key, reverse=True)
+
+    chosen: Dict[str, Dict] = {}
+    for cand in ordered:
+        for target in cand["frame"]["target"].unique():
+            chosen.setdefault(str(target), cand)
+
+    frames = []
+    sources: Dict[str, Dict] = {}
+    prov_by_target: Dict[str, Dict] = {}
+    for target, cand in chosen.items():
+        rows = cand["frame"][cand["frame"]["target"] == target].copy()
+        rows["source"] = cand["label"]
+        rows["source_dir"] = cand["dir"]
+        rows["generated_at_utc"] = cand["generated_at_utc"]
+        rows["data_through"] = cand["data_through"]
+        frames.append(rows)
+        sources[target] = {"kind": cand["kind"], "label": cand["label"], "dir": cand["dir"],
+                           "generated_at_utc": cand["generated_at_utc"],
+                           "data_through": cand["data_through"]}
+        prov_by_target[target] = cand["provenance"]
+
+    newest = next(c for c in ordered if any(v is c for v in chosen.values()))
+    merged = pd.concat(frames, ignore_index=True)
+    return {"forecasts": merged.to_dict("records"), "provenance": newest["provenance"],
+            "dir": newest["dir"], "sources": sources, "provenance_by_target": prov_by_target}
