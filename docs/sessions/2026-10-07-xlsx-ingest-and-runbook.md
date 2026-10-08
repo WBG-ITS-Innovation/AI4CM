@@ -1,4 +1,4 @@
-# Excel ingest, the weekly runbook, and the parked work drafted as issues
+# Excel ingest, the weekly runbook, and the parked work filed as issues
 
 **Date:** 2026-10-07
 **Branch:** `feat/xlsx-ingest-and-runbook`, cut from `main` at `4b34dac`.
@@ -251,13 +251,13 @@ Not changed.
 
 ---
 
-## Part 3. The parked work, drafted as issues
+## Part 3. The parked work, filed as issues
 
 **Status: drafted 2026-10-07, approved as drafted 2026-10-08.** Each body points at its record
 section and carries no real value. On 2026-10-07 `gh` was not on this session's shell path, so
 nothing was sent then. Filing status is under "Filing" at the end of this part.
 
-**1. GBQuantile quantiles skip _enforce_monotone; crossings uncounted on the official forward path**
+**1. GBQuantile quantiles skip _enforce_monotone; crossings uncounted on the official forward path** [#32]
 Labels: `parked-until-agent-phase2`. Rank first.
 GBQuantile fits each quantile independently in `backend/e_quantile_daily_pipeline.py` and returns
 a hardcoded crossed count of 0, so a P10 above the P50, or a P50 above the P90, is neither repaired
@@ -266,7 +266,7 @@ all three targets in the 2026-09-29 clone, so this sits on the client path, and 
 observed in a newer quantile model that does route through the repair. See
 `docs/sessions/2026-09-29-lab-audit.md`, "Phase A3", finding 2, and "What the live runs add", point 4.
 
-**2. ops_monthly_baseline shifts 12 years inside a per-month groupby, all NaN, plus the latent twin fallback in c_dl_pipeline**
+**2. ops_monthly_baseline shifts 12 years inside a per-month groupby, all NaN, plus the latent twin fallback in c_dl_pipeline** [#33]
 Labels: `parked-until-agent-phase2`.
 `ops_monthly_baseline` in `backend/b_ml_pipeline.py` applies `shift(12)` inside a groupby by
 calendar month, where each group holds one row per year, so it shifts twelve years rather than
@@ -275,14 +275,14 @@ the same construct when fewer than three complete years exist; no current series
 branch. See `docs/sessions/2026-09-29-lab-audit.md`, "Phase A3", finding 1, and
 `docs/sessions/2026-09-30-scoring-loop-audit.md`, §2.6 F6.
 
-**3. ResidualRF repairs crossings and reports zero**
+**3. ResidualRF repairs crossings and reports zero** [#34]
 Labels: `parked-until-agent-phase2`.
 The ResidualRF path in `backend/e_quantile_daily_pipeline.py` makes its quantiles monotone with an
 elementwise maximum and then returns a hardcoded crossed count of 0. The module's own docstring
 names the cost: constant crossing is how a misconfigured quantile model looks from outside, and a
 zero count hides it. See `docs/sessions/2026-09-29-lab-audit.md`, "Phase A3", finding 3.
 
-**4. Sealed-window champion-vs-ops table has no regenerating script and its ops read left no ledger entry; add a logged writer**
+**4. Sealed-window champion-vs-ops table has no regenerating script and its ops read left no ledger entry; add a logged writer** [#35]
 Labels: `parked-until-agent-phase2`.
 `reports/sealed_window_champion_vs_ops.csv` cannot be regenerated from code in the repository, and
 the sealed window read behind its ops column has no ledger entry. Add a small writer, in
@@ -290,7 +290,7 @@ the sealed window read behind its ops column has no ledger entry. Add a small wr
 the ops baseline and calls `log_sealed_window_read`, then cite it from the 2026-08-18 record. See
 `docs/sessions/2026-09-30-scoring-loop-audit.md`, §1.4 and §2.6 F4.
 
-**5. A_STAT leaderboard and predictions_long disagree on the persistence baseline row**
+**5. A_STAT leaderboard and predictions_long disagree on the persistence baseline row** [#36]
 Labels: `parked-until-agent-phase2`.
 A_STAT scores "Persistence (baseline)" in `leaderboard.csv` but writes no rows for it to
 `predictions_long.csv`, so a consumer joining the two loses the baseline without notice; the
@@ -298,7 +298,7 @@ artifact contract check printed this as a warning in the 2026-09-29 clone run. E
 predictions or drop it from the leaderboard with a stated reason. See
 `docs/sessions/2026-09-29-lab-audit.md`, "Phase B", "A_STAT's warning".
 
-**6. Interval coverage has never been measured; obtain the TEST-window figure through the logged report path so the gate stops reading not tested**
+**6. Interval coverage has never been measured; obtain the TEST-window figure through the logged report path so the gate stops reading not tested** [#37]
 Labels: `parked-until-agent-phase2`.
 Every recipe in `registry/recipes.json` records the coverage gate as not tested, so the pages say
 "not tested" and the runbook has to say the 8 in 10 range is unmeasured. The 2026-10-01 decision
@@ -306,7 +306,7 @@ Every recipe in `registry/recipes.json` records the coverage gate as not tested,
 logged report path, `require_test_access`; that read has not been made. See
 `docs/sessions/2026-09-29-lab-audit.md`, "Phase A2" (c) and "OPEN DECISION", and `docs/RUNBOOK.md`.
 
-**7. A_STAT and C_DL evaluate on post-seal rows with no selection guard and no window label; set one evaluation-window policy for all four families**
+**7. A_STAT and C_DL evaluate on post-seal rows with no selection guard and no window label; set one evaluation-window policy for all four families** [#38]
 Labels: `parked-until-agent-phase2`.
 In the daily script, B_ML and E_QUANTILE are bounded to DEV, while A_STAT and C_DL evaluate on rows
 after the seal with no selection guard; only some of those reads reach the ledger, and neither
@@ -314,14 +314,14 @@ family's artifacts name the window they were computed on. Decide one policy for 
 where each may evaluate, which reads are report reads, and how each artifact labels its window.
 See `docs/sessions/2026-09-30-inference-horizon-map.md`, §1.4, Flow B.
 
-**8. backend/tests has no conftest**
+**8. backend/tests has no conftest** [#39]
 Labels: `test-infra`. Reworded 2026-10-08 to stay inside its item (see "Filing"); approved as reworded.
 There is no `conftest.py` anywhere in the repository, so 72 of the 79 backend test files (counted
 2026-10-07) repeat their own `sys.path` setup, and the two backend ingest test files each define
 their own synthetic frame helper. A conftest in `backend/tests` would hold the path setup and a
 synthetic stand-in for the canonical file. See `docs/sessions/2026-09-29-lab-audit.md`, "Phase A1".
 
-**9. Adopt ui_styles.gate_badge_tri for gate verdicts or retire it**
+**9. Adopt ui_styles.gate_badge_tri for gate verdicts or retire it** [#40]
 Labels: `design`.
 The three state gate is shown two ways. The Forecast page and one Documentation section render
 it as translated text through `format_gel.gate_verdict()`; the Dashboard and another Documentation
@@ -330,14 +330,14 @@ everywhere changes the Forecast page's visual form and must keep the translation
 means moving the Dashboard to the text form. See `docs/sessions/2026-09-29-lab-audit.md`, "Fixes
 applied (2026-09-30)", fix 1.
 
-**10. Georgian translation of docs/RUNBOOK.md, produced and reviewed by a Georgian speaker**
+**10. Georgian translation of docs/RUNBOOK.md, produced and reviewed by a Georgian speaker** [#41]
 Labels: `documentation`. The brief named `docs`; the repository's existing `documentation` label
 was used instead, by decision of 2026-10-08.
 The weekly runbook exists in English only, and it was deliberately not machine translated. A
 Georgian version should be written and reviewed by a Georgian speaker, keeping the runbook's style
 rules and its UNKNOWN markers. See `docs/sessions/2026-10-07-xlsx-ingest-and-runbook.md`, "Part 2".
 
-**11. AGENT_ARTIFACT_CONTRACT.md section 7 no longer matches what the Lab writes**
+**11. AGENT_ARTIFACT_CONTRACT.md section 7 no longer matches what the Lab writes** [#42]
 Labels: `documentation`. Added 2026-10-08 by the user, body verbatim, filed last. Its citations
 were checked read only before filing: `ec0accf` is the contract's last change (2026-08-19), its
 section 7 is `forecasts/published/<issue_date>/`, `backend/forward_forecast.py:334-393` carries
@@ -373,7 +373,23 @@ not create `docs`, and label issue 10 with the existing `documentation`. Issue 8
 reworded. Issue 11 added, verbatim, label `documentation`, filed last. All eleven filed in rank
 order with `gh` invoked at its absolute path.
 
-**Issue numbers:** not yet assigned.
+**Filed 2026-10-08.** The three labels were created, then all eleven issues were filed in rank
+order, and each was read back from GitHub: title equal to the approved one, label as decided. No
+`docs` label exists.
+
+| Rank | Issue | Label |
+| --- | --- | --- |
+| 1 | #32 | `parked-until-agent-phase2` |
+| 2 | #33 | `parked-until-agent-phase2` |
+| 3 | #34 | `parked-until-agent-phase2` |
+| 4 | #35 | `parked-until-agent-phase2` |
+| 5 | #36 | `parked-until-agent-phase2` |
+| 6 | #37 | `parked-until-agent-phase2` |
+| 7 | #38 | `parked-until-agent-phase2` |
+| 8 | #39 | `test-infra` |
+| 9 | #40 | `design` |
+| 10 | #41 | `documentation` |
+| 11 | #42 | `documentation` |
 
 ---
 
