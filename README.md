@@ -413,6 +413,7 @@ scripts/          setup and run helpers, and one-off analyses
 
 | Document | What it covers |
 |---|---|
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | The weekly routine for a Treasury officer: the one upload, the official forecast, and what not to do |
 | [docs/ADDING_A_MODEL.md](docs/ADDING_A_MODEL.md) | Putting a new model on the shelf, and how to check it is reachable |
 | [docs/REFRESH_AND_RETRAIN.md](docs/REFRESH_AND_RETRAIN.md) | What happens to the model when new figures arrive, and what does not |
 | [docs/DATA_SEMANTICS.md](docs/DATA_SEMANTICS.md) | What each column means, and the traps in the source data |
