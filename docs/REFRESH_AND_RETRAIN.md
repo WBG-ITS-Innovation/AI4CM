@@ -31,7 +31,8 @@ may be measured on it, and any that tries is refused.
 You upload a data file on the Scorecard page. In order:
 
 1. The file is checked. It must carry every column the current file has, its dates must be
-   readable and unrepeated, and its last day must be later than the last day already held.
+   readable and unrepeated, every day already held must still be in it, and its last day must
+   be later than the last day already held.
 2. You see what will change, and nothing is written until you confirm.
 3. On confirmation, the file in use is copied to a timestamped backup and the upload takes its
    place.

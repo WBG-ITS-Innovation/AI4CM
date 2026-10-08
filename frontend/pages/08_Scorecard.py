@@ -543,18 +543,23 @@ st.caption(_t(
 ))
 
 uploaded = st.file_uploader(
-    "Updated data file (CSV)", type=["csv"],
+    "Updated data file (CSV or Excel)", type=["csv", "xlsx"],
     help="It must contain every column the current file has, and its dates must reach past "
-         "the last day already held. Anything else is refused with the reason stated.")
+         "the last day already held. For an Excel workbook only the first sheet is read. "
+         "Anything else is refused with the reason stated.")
 
 if uploaded is not None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     candidate = UPLOAD_DIR / uploaded.name
     candidate.write_bytes(uploaded.getbuffer())
 
-    from ingest_actuals import IngestRefused, install, validate
+    from ingest_actuals import IngestRefused, install, land, validate
 
-    check = validate(candidate)
+    # A workbook's first sheet becomes a CSV beside it and a CSV comes back untouched, so
+    # what is checked, and later installed, is always a CSV. A workbook that cannot be used
+    # comes back as a refusal and is rendered exactly like a failed check.
+    candidate, refused = land(candidate)
+    check = refused if refused is not None else validate(candidate)
     summary = check.summary or {}
 
     st.markdown("**What this file would change**")
@@ -620,8 +625,11 @@ if uploaded is not None:
 
 with st.expander("What happens when a file is uploaded"):
     st.markdown(
-        "1. The file is read and checked. It must contain every column the current data has, "
-        "its dates must be readable and unrepeated, and its last day must be later than the "
+        "1. The file is read and checked. An Excel workbook is first converted to CSV from its "
+        "first sheet, so the data kept is always a CSV. A CSV is used exactly as uploaded. "
+        "It must contain every column the current data has, "
+        "its dates must be readable and unrepeated, every day already held must still be in it, "
+        "and its last day must be later than the "
         "last day already held. A file that is byte for byte identical to the one installed "
         "is refused, because installing it would change nothing.\n"
         "2. Values that changed on days already held are counted and reported. Revised "

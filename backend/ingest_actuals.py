@@ -15,7 +15,7 @@ the single path: the page calls it, the command line calls it, and there is noth
 
 What "valid" means here
 -----------------------
-Four things must hold before anything is written, and each corresponds to a way a load
+Five things must hold before anything is written, and each corresponds to a way a load
 has gone wrong or plausibly could:
 
 * **Schema.** Every column the canonical file holds must still be present. A recipe that
@@ -24,11 +24,23 @@ has gone wrong or plausibly could:
 * **It must extend the record.** New actuals exist to add dates. A file whose last date is
   not later than the one already installed adds no truth, so scoring it would produce the
   same scorecard and quietly suggest that nothing arrived.
+* **It must hold the whole record.** Every date already held must be in the new file.
+  Installing replaces the whole history, so a file holding only the newest days, or one
+  with a stretch missing, would leave every later refit training on what remained. Until
+  2026-10-07 nothing checked this, and such a file passed.
 * **It must differ.** Identical bytes means the same file was uploaded twice. Installing it
   would rotate a backup and change nothing.
 * **Revisions are reported, never silent.** Where an overlapping date's value changed, the
   count is reported and the reader confirms it. Actuals genuinely do get revised, so this
   is a fact to state rather than a reason to refuse.
+
+Excel workbooks
+---------------
+Officers keep the master export in Excel, so an upload may be a workbook. It is converted to
+a CSV once, on arrival, by :func:`land`, and that CSV then goes through the same ``validate``
+and ``install`` as any other upload. Neither of those reads a workbook, so the canonical file
+stays a CSV whichever format arrived, and a CSV upload is still checked and copied byte for
+byte. Only the first worksheet is read.
 
 What this module deliberately does NOT do
 -----------------------------------------
@@ -43,7 +55,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -57,6 +69,9 @@ CANONICAL = BACKEND / "data" / "processed" / "master_daily_clean_treasury.csv"
 BACKUP_DIR = BACKEND / "data" / "processed" / "backups"
 
 DATE_COLUMN = "date"
+
+#: Uploads :func:`land` converts to CSV. Anything else is handed to ``validate`` as it came.
+WORKBOOK_SUFFIXES = (".xlsx",)
 
 
 class IngestRefused(RuntimeError):
@@ -163,6 +178,85 @@ def _count_revisions(current: pd.DataFrame, candidate: pd.DataFrame) -> int:
     return int(differs.to_numpy().sum())
 
 
+def _listed(names: List, limit: int = 6) -> str:
+    shown = ", ".join(str(n) for n in names[:limit])
+    return shown + (f" and {len(names) - limit} others" if len(names) > limit else "")
+
+
+def land(upload: Path, canonical: Optional[Path] = None) -> Tuple[Path, Optional[IngestCheck]]:
+    """Turn an upload into the CSV that :func:`validate` and :func:`install` read.
+
+    Returns ``(candidate, refusal)``. ``refusal`` is ``None`` when there is a CSV to check, and
+    otherwise an :class:`IngestCheck` carrying the reason, so a caller renders it exactly as it
+    renders a failed validation.
+
+    A CSV comes back untouched and nothing is written, so it is still checked and installed
+    byte for byte. A workbook's first worksheet is written to a CSV beside it, named after the
+    whole workbook name (``master.xlsx`` lands as ``master.xlsx.csv``), so a CSV the officer
+    keeps under the workbook's stem is never overwritten.
+
+    Why only the first sheet: a workbook's other sheets are notes, pivots or last week's copy
+    as often as they are data, and choosing among them would be a guess. The first sheet must
+    therefore hold every column the current data has. When it does not, the refusal names the
+    sheets in order and the columns it found, which is what an officer needs to fix it.
+    """
+    upload = Path(upload)
+    if upload.suffix.lower() not in WORKBOOK_SUFFIXES or not upload.exists():
+        return upload, None
+
+    canon = Path(canonical or CANONICAL)
+    refused = IngestCheck(candidate=str(upload))
+    try:
+        with pd.ExcelFile(upload, engine="openpyxl") as book:
+            sheets = [str(s) for s in book.sheet_names]
+            first = book.parse(0)
+    except ImportError:
+        refused.blockers.append(
+            "This installation cannot read Excel files yet, because the openpyxl package it "
+            "needs is not installed. Upload the CSV export instead, or ask whoever maintains "
+            "this installation to install its listed requirements again."
+        )
+        return upload, refused
+    except Exception as exc:                     # noqa: BLE001 - a workbook fails in many ways
+        refused.blockers.append(
+            f"{upload.name} could not be opened as an Excel workbook. If it is protected with "
+            f"a password, remove the password and save it again, or upload the CSV export "
+            f"instead. The reader reported: {str(exc).rstrip('.')}."
+        )
+        return upload, refused
+
+    if canon.exists():
+        current = _read(canon)
+        missing = [c for c in current.columns if c not in first.columns]
+        if missing:
+            found = _listed(list(first.columns), 10) if len(first.columns) else (
+                "none, because the sheet is empty")
+            refused.blockers.append(
+                f"Only the first sheet of {upload.name} is read, and that sheet, "
+                f"'{sheets[0]}', is missing {len(missing)} of the {len(current.columns)} "
+                f"columns the current data has: {_listed(missing)}. The columns found on "
+                f"'{sheets[0]}' are: {found}. The sheets in this workbook, in order, are: "
+                + ", ".join(f"'{s}'" for s in sheets)
+                + ". If the data is on another sheet, move that sheet to the front and save "
+                  "the workbook again, or upload the CSV export instead."
+            )
+            return upload, refused
+
+        # Excel stores every number the same way, and pandas hands back a column whose
+        # values are all whole numbers as integers. The CSV export writes those amounts with
+        # a decimal point, so they read back as floating point, and the file being replaced
+        # records which columns are which. Restoring the type it holds keeps a workbook upload
+        # reading exactly as its CSV twin does. No value, row or column order is touched.
+        for col in first.columns:
+            if (col in current.columns and pd.api.types.is_float_dtype(current[col])
+                    and pd.api.types.is_integer_dtype(first[col])):
+                first[col] = first[col].astype("float64")
+
+    landed = upload.with_name(upload.name + ".csv")
+    first.to_csv(landed, index=False)
+    return landed, None
+
+
 def validate(candidate: Path, canonical: Optional[Path] = None) -> IngestCheck:
     """Check a candidate actuals file without writing anything.
 
@@ -245,6 +339,22 @@ def validate(candidate: Path, canonical: Optional[Path] = None) -> IngestCheck:
             f"{candidate.name} ends on {last_new.date()}, and the data already held ends "
             f"on {last_now.date()}. New actuals have to extend the record, otherwise there "
             f"is no new truth to score any forecast against."
+        )
+
+    held_dates = set(current[DATE_COLUMN].dropna())
+    absent = sorted(held_dates - set(new[DATE_COLUMN].dropna()))
+    if absent:
+        def _span(df: pd.DataFrame) -> str:
+            dates = df[DATE_COLUMN].dropna()
+            start = f" starting on {dates.min().date()}" if not dates.empty else ""
+            return f"{len(df):,} rows{start}"
+
+        check.blockers.append(
+            f"{candidate.name} holds {_span(new)}, but the data already held has "
+            f"{_span(current)}. {len(absent):,} of the days already held are not in this "
+            f"file, the first of them {absent[0].date()}. Installing replaces the whole "
+            f"history, so an upload must be the complete export: every day already held "
+            f"plus the new days. Upload the complete export rather than a part of it."
         )
 
     sha_now, sha_new = _sha(canon), _sha(candidate)
@@ -356,20 +466,23 @@ def _cli() -> int:
 
     ap = argparse.ArgumentParser(
         description="Validate, and optionally install, a new actuals file.")
-    ap.add_argument("--file", required=True, help="the candidate CSV")
+    ap.add_argument("--file", required=True,
+                    help="the candidate file: a CSV, or an Excel workbook (.xlsx) whose first "
+                         "sheet is converted to a CSV beside it before checking")
     ap.add_argument("--install", action="store_true",
                     help="install it after validation; without this, only checks")
     ap.add_argument("--score", action="store_true",
                     help="score published forecasts against the installed data afterwards")
     args = ap.parse_args()
 
-    check = validate(Path(args.file))
+    candidate, refused = land(Path(args.file))
+    check = refused if refused is not None else validate(candidate)
     out: Dict = {"check": check.as_dict()}
     if args.install:
         if not check.ok:
             print(json.dumps(out, default=str))
             return 1
-        out["install"] = install(Path(args.file)).as_dict()
+        out["install"] = install(candidate).as_dict()
         if args.score:
             from published_forecasts import score_published
 

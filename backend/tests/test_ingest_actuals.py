@@ -159,6 +159,50 @@ def test_a_missing_file_is_explained_rather_than_raised(tmp_path, canon):
     assert "was not found" in check.blockers[0]
 
 
+# ---------------------------------------------------------------------------
+# An upload is the complete export plus the new days, never a slice of it
+#
+# Installing replaces the whole canonical file. Until 2026-10-07 a file holding only the newest
+# days passed every check, because nothing compared the upload's history with the history
+# held, and installing it would have left every later refit training on the fragment.
+# ---------------------------------------------------------------------------
+
+def test_a_fragment_with_every_column_and_a_newer_last_date_is_refused(tmp_path, canon):
+    fragment = _frame("2024-04-01", "2024-04-12")
+    check = validate(_write(tmp_path, fragment), canon)
+    assert not check.ok, "a slice of the record passed every check"
+    assert any("complete export" in b for b in check.blockers)
+
+
+def test_the_complete_export_plus_new_days_still_passes(tmp_path, canon):
+    """And the revisions counter still works on the dates both files hold."""
+    df = _frame("2024-01-01", "2024-04-30")
+    df.loc[3, "Revenues"] = 42.0
+    check = validate(_write(tmp_path, df), canon)
+    assert check.ok, check.blockers
+    assert check.summary["revisions"] == 1
+
+
+def test_a_full_file_missing_one_historical_date_is_refused(tmp_path, canon):
+    df = _frame("2024-01-01", "2024-04-30")
+    dropped = df.loc[10, "date"]
+    check = validate(_write(tmp_path, df.drop(index=10)), canon)
+    assert not check.ok
+    assert any("complete export" in b and dropped in b for b in check.blockers), (
+        f"the refusal must name the first missing date, {dropped}")
+
+
+def test_the_fragment_refusal_states_both_sides(tmp_path, canon):
+    fragment = _frame("2024-04-01", "2024-04-12")
+    held = pd.read_csv(canon)
+    [message] = [b for b in validate(_write(tmp_path, fragment), canon).blockers
+                 if "complete export" in b]
+    assert f"{len(fragment):,} rows starting on 2024-04-01" in message
+    assert f"{len(held):,} rows starting on {held['date'].min()}" in message
+    assert message.endswith(".")
+    assert "--" not in message and "—" not in message
+
+
 @pytest.mark.parametrize("case", ["missing_column", "no_extension", "identical",
                                   "duplicate_dates", "no_date_column"])
 def test_every_refusal_is_a_finished_sentence(tmp_path, canon, case):
