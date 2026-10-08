@@ -117,10 +117,14 @@ def test_provenance_records_the_sealed_window_and_the_scaling_decision():
     which is the correct behaviour: the artifact must never describe a scaling decision that
     does not match the model that was actually fitted.
     """
+    from forward_forecast import holdout_ledger_length
+
     champ = Champion(target="Revenues", point_model="LightGBM_L1",
                      fiscal_groups=(GROUP_A,), recipe_id="r1", transform="ratio",
                      scaling="ratio-to-trailing-level (WS4 winner)")
-    prov = build_provenance(str(DATA), [champ])
+    # The flag is measured against the ledger now, so the caller supplies the reading taken
+    # before the run. Nothing between the two readings reads the holdout here.
+    prov = build_provenance(str(DATA), [champ], ledger_before=holdout_ledger_length())
     assert prov["test_window_touched"] is False
     assert prov["run_kind"] == "forward_forecast"
     assert prov["data"]["sha256"]

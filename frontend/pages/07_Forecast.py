@@ -88,7 +88,11 @@ def load_all() -> Optional[Dict]:
         import insights as ins
         from registry import load_registry
 
-        art = ins.load_forward_artifacts()
+        # The newest artifact per target across the runner's forward directory and the
+        # published store, each row labelled with its source and data date. The tab used to
+        # read the runner's directory alone, which a page-launched official run never writes,
+        # so it kept showing an artifact weeks old (decision of 2026-10-01: read-side only).
+        art = ins.load_newest_forecasts()
         reg = load_registry()
         narr = ins.build_narrative_text(art["forecasts"], reg, art["provenance"])
 
@@ -108,6 +112,8 @@ def load_all() -> Optional[Dict]:
             "registry": reg,
             "narrative": narr,
             "dir": art["dir"],
+            "sources": art["sources"],
+            "provenance_by_target": art["provenance_by_target"],
         }
     except FileNotFoundError:
         return None
@@ -124,8 +130,10 @@ from format_gel import gel_millions as m  # noqa: E402
 data = load_all()
 if data is None:
     st.warning(
-        "**No forward run found.** This page shows predictions for future dates, which are "
-        "generated on demand rather than committed to the repository.\n\n"
+        "**No forecast found.** This page shows predictions for future dates, read from the "
+        "newest of the runner's forward directory and the published store. Neither holds one "
+        "on this machine; both are generated on demand rather than committed to the "
+        "repository.\n\n"
         f"Generate one with:\n```bash\n{GEN_CMD}\n```"
     )
     st.stop()
@@ -512,10 +520,24 @@ with _tab_read:
                   help="How far ahead the forecast runs, counted in Georgian working days. "
                        "Weekends and public holidays are skipped.")
     with c4:
-        st.metric("Data through", str(pd.to_datetime(
-            prov.get("data", {}).get("latest_data_date", fc["origin_date"].max())).date()),
-                  help="The last date present in the source data. The forecast covers dates "
-                       "after this, so no actual values exist for them yet.")
+        _through = sorted(str(s.get("data_through") or "") for s in data["sources"].values())
+        st.metric("Data through",
+                  _through[-1] if _through and _through[-1] else
+                  str(pd.to_datetime(fc["origin_date"].max()).date()),
+                  help="The last date present in the source data behind the newest line shown. "
+                       "Each line states its own data date below, because lines can come from "
+                       "different artifacts. The forecast covers dates after this, so no actual "
+                       "values exist for them yet.")
+
+    # Which artifact each line comes from, said once here and again under each line. The tab
+    # shows the newest artifact available per line, from the runner's forward directory or
+    # the published store, so a stale one is named as such rather than hidden.
+    _src_bits = sorted({f"{s['label']} (data through {s.get('data_through') or NOT_REPORTED})"
+                        for s in data["sources"].values()})
+    st.caption(
+        "The figures below are the newest artifact available for each line: "
+        + "; ".join(_src_bits) + "."
+    )
 
     st.info(data["narrative"]["narrative"]["scope"])
     st.markdown(data["narrative"]["narrative"]["signal_finding"])
@@ -536,6 +558,16 @@ with _tab_read:
 
         st.markdown(section_header(target, f"{rec['point_model']} · recipe {rec['id']}"),
                     unsafe_allow_html=True)
+
+        # Where this line's numbers come from, and what data they were built from. Stated per
+        # line because the newest artifact can differ between lines: a page-launched official
+        # run publishes one target, the runner's forward directory holds all three.
+        _src = data["sources"].get(target, {})
+        st.caption(
+            f"Source: {_src.get('label', NOT_REPORTED)}, generated "
+            f"{str(_src.get('generated_at_utc') or NOT_REPORTED)[:10]}, data through "
+            f"{_src.get('data_through') or NOT_REPORTED}."
+        )
 
         # Verdict banner — never hidden. Each verdict now opens with one sentence saying what
         # the verdict IS, because "withheld as a forecast" and "withheld" are terms of art here

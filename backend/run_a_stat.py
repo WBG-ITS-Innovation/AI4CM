@@ -395,7 +395,10 @@ def main():
     model   = (env["TG_MODEL_FILTER"] or "NAIVE").upper()
     target  = env["TG_TARGET"]
     cadence = (env["TG_CADENCE"] or "Monthly").capitalize()
-    horizon = int(env["TG_HORIZON"] or 6)
+    # 5 is the validated horizon, the one every ruler, recipe and gate is measured at. This
+    # fell back to 6 until 2026-10-01; harmless only because every caller sets TG_HORIZON.
+    # test_runner_horizon_defaults.py pins every runner's fallback to the same number.
+    horizon = int(env["TG_HORIZON"] or 5)
     data    = env["TG_DATA_PATH"]
     dcol    = env["TG_DATE_COL"] or "date"
     outroot = Path(env["TG_OUT_ROOT"]).resolve()

@@ -342,10 +342,24 @@ def overrides_b() -> Dict:
     }
 
 def defaults_c():
+    """What the C family actually defaults to, per cadence.
+
+    Lookback, epochs and batch size are ``ConfigDL``'s own defaults in
+    ``backend/c_dl_pipeline.py`` (``seq_len_daily`` 64, ``seq_len_weekly`` 52,
+    ``seq_len_monthly`` 36, ``epochs`` 30, ``batch_size`` 128), and the runner's
+    ``ov.get(...)`` fallbacks repeat the same numbers. The horizon is the runner's: it always
+    replaces the pipeline's list with ``[TG_HORIZON]`` for the active cadence, and its fallback
+    is the validated horizon of five.
+
+    Until 2026-10-01 this table said daily lookback 90, horizon 14, epochs 50, batch 64, and
+    the weekly and monthly rows were wrong in the same way; none of those numbers appears in
+    the code. ``backend/tests/test_documentation_c_dl_defaults.py`` now compares every cell to
+    ``ConfigDL`` and the runner, so the table cannot drift from the defaults again.
+    """
     return {
-        "daily":   {"lookback": 90,  "horizon": 14, "epochs": 50,  "batch_size": 64},
-        "weekly":  {"lookback": 104, "horizon": 8,  "epochs": 80,  "batch_size": 32},
-        "monthly": {"lookback": 60,  "horizon": 12, "epochs": 100, "batch_size": 16},
+        "daily":   {"lookback": 64, "horizon": 5, "epochs": 30, "batch_size": 128},
+        "weekly":  {"lookback": 52, "horizon": 5, "epochs": 30, "batch_size": 128},
+        "monthly": {"lookback": 36, "horizon": 5, "epochs": 30, "batch_size": 128},
     }
 
 def table_c() -> pd.DataFrame:
@@ -541,6 +555,13 @@ In small or noisy datasets, simpler families may outperform deep learning.
     )
     st.subheader("Defaults by cadence")
     st.dataframe(pd.DataFrame(defaults_c()).T.rename_axis("cadence"), use_container_width=True)
+    st.caption(
+        "Lookback, epochs and batch size are the pipeline's own defaults. The horizon is the "
+        "runner's fallback when the Lab passes none, which is the validated horizon of five; "
+        "the Lab always passes the horizon you choose. The pipeline also carries horizon lists "
+        "of its own, reached only when no horizon is given at all: 1, 5, 20 for daily, 1, 4, 12 "
+        "for weekly and 1, 3, 6 for monthly."
+    )
 
     st.subheader("Parameter reference")
     q = st.text_input("Filter C-family parameters (search)", "", key="filter_c")

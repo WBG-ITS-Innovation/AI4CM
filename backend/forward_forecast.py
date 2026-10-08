@@ -313,9 +313,53 @@ def run_forward(raw: pd.DataFrame,
     return df
 
 
-def build_provenance(data_path: str, champions: Sequence[Champion]) -> Dict:
+def holdout_ledger_length() -> int:
+    """How many reads the holdout ledger records right now; 0 when it does not exist.
+
+    The ledger is ``evaluation_windows.TEST_ACCESS_LOG``, one line per read of the sealed
+    window, appended by ``require_test_access`` whatever the purpose. A caller takes this
+    reading before fitting anything and hands it to :func:`build_provenance`, which takes it
+    again afterwards. The path is looked up at call time, not import time, so a test can point
+    the ledger at a file of its own.
+    """
+    from evaluation_windows import TEST_ACCESS_LOG
+    try:
+        with TEST_ACCESS_LOG.open(encoding="utf-8") as fh:
+            return sum(1 for _ in fh)
+    except OSError:
+        return 0
+
+
+def build_provenance(data_path: str, champions: Sequence[Champion], *,
+                     ledger_before: int) -> Dict:
+    """The provenance record, with ``test_window_touched`` measured rather than asserted.
+
+    Until 2026-10-01 the flag was the literal ``False``. The claim was true by construction,
+    since a forward run reads no truth, but nothing computed it, so any future change that
+    introduced a holdout read would have been published under a record still saying "no"
+    (inference-horizon map, §1.3). Now the flag is whether the holdout ledger grew between
+    ``ledger_before``, the caller's reading taken before any model was fit, and the reading
+    taken here. The two readings and their difference travel in ``holdout_ledger`` so the flag
+    can be audited rather than believed.
+    """
+    from evaluation_windows import TEST_ACCESS_LOG
     from provenance import describe_code, describe_environment, describe_input
+
     di = describe_input(data_path)
+    ledger_after = holdout_ledger_length()
+    reads = ledger_after - int(ledger_before)
+    touched = reads > 0
+
+    if touched:
+        truth_note = (
+            f"The holdout ledger grew by {reads} entr{'y' if reads == 1 else 'ies'} during "
+            f"this run (see holdout_ledger). A forward forecast reads no truth, so a read "
+            f"here needs explaining before this artifact is used.")
+    else:
+        truth_note = (
+            "Forward forecast: every target date is strictly beyond the last date in the "
+            "data, so no truth was read and no accuracy was computed here.")
+
     return {
         "run_kind": "forward_forecast",
         "generated_at_utc": pd.Timestamp.now("UTC").isoformat(),
@@ -332,10 +376,15 @@ def build_provenance(data_path: str, champions: Sequence[Champion]) -> Dict:
                      "exog_blocks": sorted(c.exog_blocks),
                      "target_transform": c.transform,
                      "scaling": c.scaling} for c in champions],
-        "test_window_touched": False,
+        "test_window_touched": bool(touched),
+        "holdout_ledger": {
+            "path": str(TEST_ACCESS_LOG),
+            "lines_before": int(ledger_before),
+            "lines_after": int(ledger_after),
+            "reads_during_run": int(reads),
+        },
         "notes": [
-            "Forward forecast: every target date is strictly beyond the last date in the "
-            "data, so no truth was read and no accuracy was computed here.",
+            truth_note,
             "Quality gate verdicts are carried from the DEV (2024) credentials run and "
             "linked by recipe_id. The 2025 holdout remains sealed.",
             "Target scaling is raw; workstream 4 (scaling comparison) has not run.",
